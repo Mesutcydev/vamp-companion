@@ -33,10 +33,17 @@ repository. Concurrent changes in the original checkout were left intact.
 
 - Companion UI checks: the initial runner was stopped before bootstrapping
   because its signature was not trusted. A locally signed rerun is required.
-- Unchanged iOS regression tests in the dedicated companion QA simulator.
+- Unchanged iOS regression tests: compilation completed in the dedicated
+  companion QA simulator, but the launch service died before the suite could
+  run (`NSMachErrorDomain -308`, server died). A clean rerun is required.
 - Developer ID Release signing, notarization, stapling, and Gatekeeper checks.
 - ZIP/checksum publication and public-download verification before publishing
   the signed companion appcast.
+
+The sandbox's automatic approval review timed out twice before the locally
+signed Mac UI rerun could execute. Testing, signing/notarization, and publication
+remain pending the explicit approval request. No public release or appcast has
+been published.
 
 Live provider-account access, physical iPhone workflows, real model inference
 from iOS, simultaneous running Mac apps, and physical sleep/wake behavior need
