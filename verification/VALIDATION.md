@@ -25,25 +25,34 @@ repository. Concurrent changes in the original checkout were left intact.
   and Tailscale policy tests remain in the backend suite.
 - Download finalization, activation, pause/resume persistence, imports, agent
   execution, streaming, stop, and provider routing passed their backend checks.
+- GitHub validation with Xcode 26.6 also passed the entire backend suite
+  (1,132 tests, 51 skipped), and the Mac window-close/reopen UI test passed.
+- The unchanged iOS regression suite passed on GitHub: 48 unit tests and
+  12 UI tests (five optional UI scenarios skipped), with zero failures. The
+  unchanged iOS device Release configuration also built successfully.
+- Native manual checks reached Models, Devices, Settings, and the compact
+  provider sheet. The live companion listened on 9675 while the original app
+  continued listening on its separate 9471/9473/9475 ports. The companion's
+  host remained running after the close command; an unauthenticated status
+  request correctly returned HTTP 401.
 - All 93 frozen iOS source, test, asset, and distribution files match the
   inherited snapshot. All inherited iOS targets and release scheme settings
   match as well. The dependency lockfile matches the original revisions.
 
 ## Pending gates
 
-- Companion UI checks: the initial runner was stopped before bootstrapping
-  because its signature was not trusted. A locally signed rerun is required.
-- Unchanged iOS regression tests: compilation completed in the dedicated
-  companion QA simulator, but the launch service died before the suite could
-  run (`NSMachErrorDomain -308`, server died). A clean rerun is required.
+- Companion navigation UI check: GitHub exposed an off-screen provider-sheet
+  Done button because provider cards were not in a scroll view. The corrected
+  layout and centered model empty state are awaiting rerun and visual checks.
 - Developer ID Release signing, notarization, stapling, and Gatekeeper checks.
 - ZIP/checksum publication and public-download verification before publishing
   the signed companion appcast.
 
-The sandbox's automatic approval review timed out twice before the locally
-signed Mac UI rerun could execute. Testing, signing/notarization, and publication
-remain pending the explicit approval request. No public release or appcast has
-been published.
+The user authorized validation and release outside the sandbox after its
+automatic approval review timed out. Initial local UI runners were stopped
+before bootstrap, and the dedicated local iOS simulator timed out during boot;
+the GitHub iOS run supplies the completed regression evidence. No public release
+or signed appcast has been published yet.
 
 Live provider-account access, physical iPhone workflows, real model inference
 from iOS, simultaneous running Mac apps, and physical sleep/wake behavior need

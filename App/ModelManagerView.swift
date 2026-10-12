@@ -497,6 +497,8 @@ private struct LocalModelsSection: View {
         LazyVStack(alignment: .leading, spacing: Spacing.lg) {
             if sections.isEmpty {
                 ContentUnavailableView(installedOnly ? "No downloaded models" : "No matching models", systemImage: "shippingbox", description: Text(installedOnly ? "Find a model in Discover and download it to get started." : "Try a different name or model family."))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
             } else {
                 ForEach(sections) { section in
                     LazyVStack(alignment: .leading, spacing: 10) {

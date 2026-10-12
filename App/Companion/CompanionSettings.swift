@@ -160,7 +160,10 @@ struct CompanionProviderSheet: View {
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
             }.padding(20)
             Divider()
-            ProvidersTab(includesSafetyOptions: false)
+            ScrollView {
+                ProvidersTab(includesSafetyOptions: false)
+                    .padding(20)
+            }
         }
         .frame(width: 660, height: 580)
         .background(Theme.workspaceCanvas)
