@@ -48,6 +48,14 @@ repository. Concurrent changes in the original checkout were left intact.
 - The complete public model fixture imported through the native file panel.
   Its 351.4 MB snapshot was copied into companion-managed storage, retained
   the original fixture, matched its weights checksum, and loaded successfully.
+- The notarized release resumed the interrupted catalog download and completed
+  the full Qwen3 0.6B snapshot with its Mac window closed. All model files were
+  finalized in companion storage, the weights hash matched, and the download
+  manifest was removed. Reopening the window preserved its state. The downloaded
+  model then loaded and explicitly unloaded through the release interface.
+- Quit removed the companion's listener on 9675 while the original app remained
+  running on 9475. Relaunching the notarized app restored its saved hosting
+  choice on 9675, alongside the original app.
 - The Developer ID archive and Apple notarization submission succeeded.
   The exported app is stapled and Gatekeeper reports `Notarized Developer ID`.
   The public ZIP extraction, release entitlements, and Sparkle archive/feed
@@ -64,8 +72,12 @@ repository. Concurrent changes in the original checkout were left intact.
   Sparkle signature: 15,242,748 bytes, SHA-256
   `5559a9efec1204dae96bbf1e96c7d859dcb5dcab76975c7983fa1cd038280c5f`.
 - The signed companion appcast was staged only after public archive verification.
-  GitHub Pages is configured to publish this repository's `site/` directory;
-  the live feed and page are the remaining publication checks.
+  [GitHub Pages deployment](https://github.com/Mesutcydev/vamp-companion/actions/runs/38297193917)
+  succeeded. The [download page](https://mesutcydev.github.io/vamp-companion/)
+  and [signed feed](https://mesutcydev.github.io/vamp-companion/appcast.xml)
+  returned successfully; the live feed exactly matches its signed source and
+  its Sparkle signature verifies. The page points to the verified Mac archive
+  and the existing iOS distribution.
 
 The user authorized validation and release outside the sandbox after its
 automatic approval review timed out. Initial local UI runners were stopped
@@ -73,7 +85,10 @@ before bootstrap, and the dedicated local iOS simulator timed out during boot;
 the GitHub iOS run supplies the completed regression evidence. The release
 assets have passed local and public archive verification.
 
+## Remaining hardware and account checks
+
 Live provider-account access, physical iPhone workflows, real model inference
-from iOS, simultaneous running Mac apps, and physical sleep/wake behavior need
-separate live verification. Fixture tests do not certify those hardware and
-account-dependent scenarios. No original app data is used as a test fixture.
+from iOS, full concurrent account/session workflows in both Mac apps, and
+physical sleep/wake behavior need separate live verification. Fixture tests do
+not certify those hardware and account-dependent scenarios. No original app
+data is used as a test fixture.
