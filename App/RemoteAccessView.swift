@@ -1,0 +1,535 @@
+import AppKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
+import SwiftUI
+
+/// Host-side pairing surface for the Beetcode browser controller. The QR only
+/// contains a short-lived pairing code; the browser exchanges it for a token
+/// before it can read or continue any session.
+struct RemoteAccessView: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var settings = SettingsStore.shared
+    /// True when hosted in a sheet (pairing from the sidebar or first run).
+    /// False when this is the Devices destination, which is a page: a page has
+    /// nothing to dismiss, so Done/close chrome there is a modal's control
+    /// stranded on a normal screen.
+    var presentedAsSheet: Bool = true
+    @State private var copied = false
+    @State private var accessibilityGranted = false
+    @State private var screenRecordingGranted = false
+    // Whether this session asked for Screen Recording. Distinguishes "never granted" from
+    // "granted, but it only takes effect on relaunch". Accessibility needs no equivalent —
+    // AXIsProcessTrusted() goes true for the running process as soon as it is granted.
+    @State private var requestedScreenRecording = false
+
+    var body: some View {
+        Group {
+            if presentedAsSheet {
+                content
+            } else {
+                // A page scrolls: pairing, permissions and sessions are taller
+                // than one pane, and a page must never clip its own actions.
+                ScrollView { content }
+            }
+        }
+        .padding(24)
+        // A sheet needs a floor; a page has to fit whatever the pane gives it.
+        .frame(minWidth: presentedAsSheet ? 560 : 0,
+               minHeight: presentedAsSheet ? 560 : 0)
+        .background { Theme.workspaceCanvas }
+        .task {
+            while !Task.isCancelled {
+                appState.refreshRemoteSessionStatus()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+        .onExitCommand { if presentedAsSheet { dismiss() } }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: Spacing.lg) {
+            header
+            if !settings.remoteSessionEnabled {
+                disabledState
+            } else if appState.remoteSessionRunning {
+                runningState
+            } else if let error = appState.remoteSessionError {
+                errorState(error)
+            } else {
+                HStack(spacing: Spacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Starting the remote session host…")
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: Spacing.md) {
+            ZStack {
+                RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                    .fill(Theme.wash(Theme.accent))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "iphone")
+                    .font(.app(size: 22, weight: .semibold ))
+                    .foregroundStyle(Theme.accentText)
+                Image(systemName: "qrcode")
+                    .font(.app(size: 9, weight: .bold ))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(3)
+                    .background(Theme.surface, in: Circle())
+                    .overlay(Circle().stroke(Theme.hairline, lineWidth: 0.5))
+                    .offset(x: 9, y: 9)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(presentedAsSheet ? "Remote Vamp Assistant sessions" : "Devices")
+                    .font(presentedAsSheet
+                          ? .title3.weight(.semibold)
+                          : .app(size: 22, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(presentedAsSheet
+                     ? "Scan once, then continue the same coding sessions from a phone or tablet."
+                     : "Pair a device to continue this Mac's sessions from a phone or tablet, and choose what it may share or control.")
+                    .font(.callout)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+            if presentedAsSheet {
+                Button {
+                    dismiss()
+                } label: {
+                    Label("Done", systemImage: "xmark")
+                }
+                .buttonStyle(LFCapsuleButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                .help("Close remote sessions")
+                .accessibilityLabel("Close remote sessions")
+            }
+        }
+    }
+
+    private var disabledState: some View {
+        return VStack(alignment: .leading, spacing: Spacing.md) {
+            Text("Remote access is off")
+                .font(.headline)
+                .foregroundStyle(Theme.textPrimary)
+            Text("Vamp Assistant will listen only when you turn this on. The browser surface is session-aware and never exposes the terminal CLI or the local model API.")
+                .font(.callout)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                settings.remoteSessionEnabled = true
+            } label: {
+                Label("Enable remote access", systemImage: "power")
+            }
+            .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+        }
+        .padding(18)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+    }
+
+    private var runningState: some View {
+        let expiresLabel = appState.remotePairingExpiresAt.map(Self.expiryText) ?? "soon"
+        let browserLabel = appState.remotePairedClientCount == 1 ? "browser" : "browsers"
+        return VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack {
+                Label("Ready to pair", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(Theme.success)
+                    .font(.headline)
+                Spacer()
+                Toggle("Enabled", isOn: $settings.remoteSessionEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            HStack(alignment: .top, spacing: Spacing.lg) {
+                if let pairingURL = appState.remotePairingURL {
+                    RemoteQRCodeView(value: pairingURL)
+                        .frame(width: 210, height: 210)
+                } else {
+                    RoundedRectangle(cornerRadius: Radius.md, style: .continuous)
+                        .fill(Theme.surfaceInset)
+                        .frame(width: 210, height: 210)
+                        .overlay { Text("No network address found")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .padding(18) }
+                }
+
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    Text("Scan with your phone camera")
+                        .font(.headline)
+                        .foregroundStyle(Theme.textPrimary)
+                    networkHint
+                    Text("Pairing code")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                    Text(appState.remotePairingCode)
+                        .font(.app(size: 28, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Theme.textPrimary)
+                        .textSelection(.enabled)
+                    Text("Expires \(expiresLabel)")
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textTertiary)
+                    if let url = appState.remoteSessionURL {
+                        Text(url)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(Theme.textSecondary)
+                            .textSelection(.enabled)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider().overlay(Theme.hairline)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Sharing permissions")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                Toggle(isOn: $settings.remoteClipboardSharingEnabled) {
+                    Label("Clipboard exchange", systemImage: "doc.on.clipboard")
+                }
+                Toggle(isOn: $settings.remoteFileSharingEnabled) {
+                    Label("File transfer", systemImage: "folder.badge.plus")
+                }
+                Toggle(isOn: $settings.remoteMacControlEnabled) {
+                    Label("Mac Control from iPhone", systemImage: "display.and.arrow.down")
+                }
+                .onChange(of: settings.remoteMacControlEnabled) { _, enabled in
+                    guard enabled else {
+                        appState.remoteSessionHost.disableMacControl()
+                        return
+                    }
+                    if !ComputerPermission.accessibilityGranted {
+                        ComputerPermission.requestAccessibility()
+                    }
+                    if !ComputerPermission.screenRecordingGranted {
+                        ComputerPermission.requestScreenRecording()
+                        requestedScreenRecording = true
+                    }
+                }
+                Toggle(isOn: $settings.remoteMacUnlockEnabled) {
+                    Label("Remote Unlock from iPhone", systemImage: "lock.open.fill")
+                }
+                .disabled(!settings.remoteMacControlEnabled)
+                if settings.remoteMacControlEnabled {
+                    Text("Off by default. A paired iPhone can submit your Mac login password only through Tailscale while the Mac is locked. The password is never stored or logged.")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if settings.remoteMacControlEnabled {
+                    remotePermissionRows
+                }
+            }
+            .font(.callout)
+
+            Divider().overlay(Theme.hairline)
+            HStack(spacing: Spacing.sm) {
+                Button {
+                    copyPairingURL()
+                } label: {
+                    Label(copied ? "Copied" : "Copy link", systemImage: copied ? "checkmark" : "link")
+                }
+                .buttonStyle(LFCapsuleButtonStyle())
+                .disabled(appState.remotePairingURL == nil)
+                Button("New code", systemImage: "arrow.clockwise") {
+                    appState.rotateRemotePairingCode()
+                }
+                .buttonStyle(LFCapsuleButtonStyle())
+                Spacer()
+                Button("Revoke all browsers", role: .destructive) {
+                    confirmRevokeAll()
+                }
+                .buttonStyle(LFCapsuleButtonStyle(tone: .destructive))
+            }
+            Text("\(appState.remotePairedClientCount) paired \(browserLabel)")
+                .font(.caption2)
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(18)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var networkHint: some View {
+        Group {
+            switch appState.remoteNetworkKind {
+            case .tailscale:
+                Label(settings.remoteSessionAllowLAN
+                      ? "Ready on Tailscale and trusted local networks. Pairing is still required."
+                      : "Connected through Tailscale. Traffic stays on your tailnet.",
+                      systemImage: "lock.shield.fill")
+                    .foregroundStyle(Theme.success)
+            case .localNetwork:
+                Label("Local-network fallback is enabled. Use only on trusted private Wi‑Fi.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(Theme.warning)
+            case nil:
+                Label("Waiting for a reachable network address…", systemImage: "network.slash")
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func errorState(_ error: String) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            Label("Remote host could not start", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.warning)
+                .font(.headline)
+            Text(error)
+                .font(.callout)
+                .foregroundStyle(Theme.textSecondary)
+                .textSelection(.enabled)
+            Button("Retry") { appState.retryRemoteSessionHost() }
+                .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+        }
+    }
+
+    /// Where remote access actually stands on the two permissions it cannot work without.
+    ///
+    /// The Mac Control toggle fired both TCC requests and then said nothing at all, so a granted
+    /// permission and a denied one looked identical — and streaming just returned nothing.
+    /// Screen Recording is the worse of the two: `CGPreflightScreenCaptureAccess()` cannot return
+    /// true for an already-running process, so after granting it correctly in System Settings the
+    /// app still reads "not granted" until it is relaunched. Without saying so, that reads as a
+    /// grant that failed, and the obvious response — click Grant again — never helps.
+    @ViewBuilder
+    private var remotePermissionRows: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            permissionRow(
+                label: "Accessibility",
+                granted: accessibilityGranted,
+                pending: false,
+                grant: { ComputerPermission.requestAccessibility() })
+            permissionRow(
+                label: "Screen Recording",
+                granted: screenRecordingGranted,
+                pending: requestedScreenRecording && !screenRecordingGranted,
+                grant: {
+                    ComputerPermission.requestScreenRecording()
+                    requestedScreenRecording = true
+                })
+        }
+        .padding(.top, Spacing.xs)
+        .onAppear(perform: refreshPermissions)
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in refreshPermissions() }
+    }
+
+    private func permissionRow(
+        label: String,
+        granted: Bool,
+        pending: Bool,
+        grant: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: Spacing.sm) {
+            Circle()
+                .fill(granted ? Theme.accentBright : (pending ? Color.orange : Theme.textTertiary))
+                .frame(width: 7, height: 7)
+            Text(label)
+            Spacer()
+            if granted {
+                Text("Granted").foregroundStyle(Theme.textSecondary)
+            } else if pending {
+                Text("Quit and reopen to finish")
+                    .foregroundStyle(Theme.textSecondary)
+            } else {
+                Button("Grant…", action: grant).controlSize(.small)
+            }
+        }
+        .font(.callout)
+    }
+
+    private func refreshPermissions() {
+        accessibilityGranted = ComputerPermission.accessibilityGranted
+        screenRecordingGranted = ComputerPermission.screenRecordingGranted
+    }
+
+    private func copyPairingURL() {
+        guard let value = appState.remotePairingURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
+    }
+
+    /// Revoking every paired browser is as destructive as deleting a chat;
+    /// ask first.
+    private func confirmRevokeAll() {
+        let count = appState.remotePairedClientCount
+        guard count > 0 else { return }
+        let alert = NSAlert()
+        alert.messageText = count == 1
+            ? "Revoke this paired browser?"
+            : "Revoke all \(count) paired browsers?"
+        alert.informativeText = "Every paired device loses access immediately and must pair again with a new code. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Revoke")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        appState.revokeRemoteClients()
+    }
+
+    private static func expiryText(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+/// One-time capability consent shown before the remote listener is enabled.
+/// The user can keep session control while independently declining clipboard
+/// or file access; the host enforces both choices on every request.
+struct RemoteAccessConsentView: View {
+    let onCancel: () -> Void
+    let onAllow: (_ clipboard: Bool, _ files: Bool) -> Void
+
+    @State private var allowClipboard = false
+    @State private var allowFiles = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.app(size: 22, weight: .semibold ))
+                    .foregroundStyle(Theme.accentText)
+                    .frame(width: 46, height: 46)
+                    .background(Theme.wash(Theme.accent), in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Allow Remote Sessions?")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Paired devices can continue your Vamp Assistant sessions while this Mac and the remote host are on.")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(spacing: 0) {
+                capabilityRow(
+                    icon: "bubble.left.and.bubble.right.fill",
+                    title: "Control sessions",
+                    detail: "Read chats, send prompts, and approve agent actions.",
+                    trailing: AnyView(Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Theme.success)))
+                Divider().padding(.leading, 50)
+                capabilityRow(
+                    icon: "doc.on.clipboard",
+                    title: "Clipboard exchange",
+                    detail: "Copy text between this Mac and a paired device.",
+                    trailing: AnyView(Toggle("", isOn: $allowClipboard).labelsHidden()))
+                Divider().padding(.leading, 50)
+                capabilityRow(
+                    icon: "folder.badge.plus",
+                    title: "File transfer",
+                    detail: "Share files up to 20 MB through Vamp Assistant Remote Downloads.",
+                    trailing: AnyView(Toggle("", isOn: $allowFiles).labelsHidden()))
+            }
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Radius.lg, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Radius.lg, style: .continuous)
+                .strokeBorder(Theme.hairline, lineWidth: 0.75))
+
+            Label("Only paired devices on an allowed LAN or Tailscale network are accepted. You can change or revoke access later.", systemImage: "network.badge.shield.half.filled")
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button("Not now", action: onCancel)
+                    .buttonStyle(LFCapsuleButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button {
+                    onAllow(allowClipboard, allowFiles)
+                } label: {
+                    Label("Allow Remote Sessions", systemImage: "checkmark")
+                }
+                .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .background(.ultraThinMaterial)
+    }
+
+    private func capabilityRow(
+        icon: String,
+        title: String,
+        detail: String,
+        trailing: AnyView
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.app(size: 15, weight: .semibold ))
+                .foregroundStyle(Theme.accentText)
+                .frame(width: 36, height: 36)
+                .background(Theme.wash(Theme.accent), in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer(minLength: 12)
+            trailing
+        }
+        .padding(14)
+    }
+}
+
+private struct RemoteQRCodeView: View {
+    let value: String
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .padding(12)
+                    // Intentionally NOT themed: a QR code needs a white quiet
+                    // zone to scan. Theming this to the dark surface would make
+                    // the code unreadable to the phone's camera.
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: Radius.md, style: .continuous))
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: value) { image = Self.makeImage(from: value) }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Vamp Assistant remote pairing QR code")
+    }
+
+    private static let context = CIContext()
+
+    private static func makeImage(from value: String) -> NSImage? {
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(value.utf8)
+        filter.correctionLevel = "M"
+        guard let output = filter.outputImage else { return nil }
+        let extent = output.extent.integral
+        let scale = 640 / max(extent.width, extent.height)
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: scaled.extent.width, height: scaled.extent.height))
+    }
+}

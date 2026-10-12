@@ -1,0 +1,1046 @@
+import Foundation
+import AppKit
+import XCTest
+@testable import BeetCode
+
+@MainActor
+final class RemoteSessionTests: XCTestCase {
+
+    func testSecureLockStateIsDetectedWithoutTreatingMissingMetadataAsLocked() {
+        XCTAssertTrue(ComputerPermission.sessionIsLocked([
+            "CGSSessionScreenIsLocked": true,
+        ]))
+        XCTAssertFalse(ComputerPermission.sessionIsLocked([
+            "CGSSessionScreenIsLocked": false,
+        ]))
+        XCTAssertFalse(ComputerPermission.sessionIsLocked(nil))
+    }
+
+    func testPortraitViewportResizeFitsEntireMacDisplay() {
+        let frame = RemoteControlApplicationRegistry.targetWindowFrame(
+            current: CGRect(x: 1_100, y: 180, width: 1_280, height: 800),
+            display: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            aspect: 9.0 / 19.5)
+
+        XCTAssertGreaterThanOrEqual(frame.minX, 24)
+        XCTAssertGreaterThanOrEqual(frame.minY, 52)
+        XCTAssertLessThanOrEqual(frame.maxX, 1_896)
+        XCTAssertLessThanOrEqual(frame.maxY, 1_056)
+        XCTAssertEqual(frame.width / frame.height, 9.0 / 19.5, accuracy: 0.003)
+        // The fit now scales the matched shape INTO the display rather than shrinking to the
+        // source window (the Sync host's `AdaptiveWindowSizing`). A 1280x800 landscape window
+        // becomes a full-height portrait one — 1004pt is the usable height — which is what
+        // removes the soft, upscaled picture. It is still entirely on screen, and still inside
+        // the decoder-friendly longest-edge cap.
+        XCTAssertEqual(frame.height, 1_004, accuracy: 1, "fills the usable height")
+        XCTAssertGreaterThan(frame.height, 800, "expanding the source is the point of the fit")
+        XCTAssertLessThanOrEqual(
+            max(frame.width, frame.height),
+            RemoteControlApplicationRegistry.maxEdgePoints,
+            "must stay inside the client's decoder envelope")
+    }
+
+    func testLandscapeViewportResizeFitsEntireMacDisplay() {
+        let frame = RemoteControlApplicationRegistry.targetWindowFrame(
+            current: CGRect(x: 100, y: 100, width: 1_280, height: 900),
+            display: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            aspect: 19.5 / 9.0)
+
+        XCTAssertLessThanOrEqual(frame.maxX, 1_416)
+        XCTAssertLessThanOrEqual(frame.maxY, 876)
+        XCTAssertEqual(frame.width / frame.height, 19.5 / 9.0, accuracy: 0.003)
+    }
+
+    /// The regression that made a streamed app refuse the phone's shape.
+    ///
+    /// The fit used to hold the *shorter* dimension. From a 640x480 landscape window and a
+    /// portrait viewport that requested a **220pt-wide** window. Safari's minimum window width
+    /// is 574pt, so it refused, stayed 574x480, and reported an aspect of 1.196 against the
+    /// phone's 0.461 — the client's "The Mac kept a different window shape" letterbox.
+    /// Holding the width requests ~627pt, which the app accepts.
+    func testPortraitFitHoldsWidthSoAnAppMinimumWidthIsSatisfied() {
+        let frame = RemoteControlApplicationRegistry.targetWindowFrame(
+            current: CGRect(x: 100, y: 100, width: 640, height: 480),
+            display: CGRect(x: 0, y: 0, width: 2_560, height: 1_440),
+            aspect: 1_320.0 / 2_868.0)
+
+        XCTAssertGreaterThanOrEqual(
+            frame.width, 574,
+            "a 220pt request is below Safari's 574pt minimum width and gets refused")
+        XCTAssertEqual(frame.width / frame.height, 1_320.0 / 2_868.0, accuracy: 0.003)
+    }
+
+    /// A 5K/6K display must not produce a capture taller than the client's decoder accepts.
+    func testFittedWindowNeverExceedsTheDecoderFriendlyLongestEdge() {
+        let frame = RemoteControlApplicationRegistry.targetWindowFrame(
+            current: CGRect(x: 0, y: 0, width: 3_000, height: 1_800),
+            display: CGRect(x: 0, y: 0, width: 6_016, height: 3_389),
+            aspect: 9.0 / 19.5)
+
+        XCTAssertLessThanOrEqual(
+            max(frame.width, frame.height),
+            RemoteControlApplicationRegistry.maxEdgePoints)
+        XCTAssertEqual(frame.width / frame.height, 9.0 / 19.5, accuracy: 0.003)
+    }
+
+    func testRemoteNetworkPrefersTailscaleAddressRange() {
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.isTailscale("100.64.0.1"))
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.isTailscale("100.127.255.254"))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.isTailscale("100.63.255.254"))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.isTailscale("192.168.1.20"))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.isTailscale("not-an-ip"))
+    }
+
+    func testRemoteNetworkAllowsOnlyExpectedPrivateRanges() {
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.isPrivateIPv4("10.0.0.8"))
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.isPrivateIPv4("172.16.10.4"))
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.isPrivateIPv4("192.168.1.20"))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.isPrivateIPv4("172.15.10.4"))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.isPrivateIPv4("8.8.8.8"))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.isPrivateIPv4("192.168.1.999"))
+    }
+
+    func testRemoteUnlockRequiresTailscalePeer() {
+        XCTAssertTrue(RemoteSessionHost.isSecureRemoteUnlockPeer("100.90.4.3"))
+        XCTAssertFalse(RemoteSessionHost.isSecureRemoteUnlockPeer("192.168.1.44"))
+        XCTAssertFalse(RemoteSessionHost.isSecureRemoteUnlockPeer("8.8.8.8"))
+        XCTAssertFalse(RemoteSessionHost.isSecureRemoteUnlockPeer("unknown"))
+    }
+
+    func testRemoteUnlockLimiterAllowsFiveAttemptsThenRecovers() {
+        var limiter = RemoteUnlockAttemptLimiter()
+        let start = Date(timeIntervalSince1970: 1_000)
+
+        for offset in 0..<RemoteUnlockAttemptLimiter.maximumAttempts {
+            XCTAssertTrue(limiter.accept(
+                clientID: "paired-phone",
+                now: start.addingTimeInterval(Double(offset))))
+        }
+        XCTAssertFalse(limiter.accept(
+            clientID: "paired-phone",
+            now: start.addingTimeInterval(5)))
+        XCTAssertTrue(limiter.accept(
+            clientID: "other-phone",
+            now: start.addingTimeInterval(5)))
+        XCTAssertTrue(limiter.accept(
+            clientID: "paired-phone",
+            now: start.addingTimeInterval(RemoteUnlockAttemptLimiter.window + 1)))
+    }
+
+    func testLANPeersRemainAllowedWhenTailscaleIsAdvertised() {
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "192.168.1.44", advertisedKind: .tailscale, allowLAN: true))
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "100.90.4.3", advertisedKind: .tailscale, allowLAN: true))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "192.168.1.44", advertisedKind: .tailscale, allowLAN: false))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "8.8.8.8", advertisedKind: .tailscale, allowLAN: true))
+    }
+
+    func testTailscaleCLIStateOverridesStaleInterfaces() {
+        let running = RemoteNetworkEndpointDiscovery.selectEndpoint(
+            addresses: ["192.168.1.20", "100.70.1.2"],
+            allowLAN: false,
+            tailscaleStatus: .running("100.90.4.3"))
+        XCTAssertEqual(running, .init(host: "100.90.4.3", kind: .tailscale))
+
+        let stopped = RemoteNetworkEndpointDiscovery.selectEndpoint(
+            addresses: ["100.70.1.2", "192.168.1.20"],
+            allowLAN: false,
+            tailscaleStatus: .stopped)
+        XCTAssertNil(stopped, "a stale CGNAT interface must not imply an active Tailscale daemon")
+
+        let lanFallback = RemoteNetworkEndpointDiscovery.selectEndpoint(
+            addresses: ["100.70.1.2", "192.168.1.20"],
+            allowLAN: true,
+            tailscaleStatus: .stopped)
+        XCTAssertEqual(lanFallback, .init(host: "192.168.1.20", kind: .localNetwork))
+    }
+
+    func testTailscaleStatusJSONRequiresRunningOnlineIPv4() {
+        let running = #"{"BackendState":"Running","TailscaleIPs":["100.101.2.3","fd7a:115c:a1e0::1"],"Self":{"Online":true}}"#
+        XCTAssertEqual(
+            RemoteNetworkEndpointDiscovery.parseTailscaleStatusJSON(running),
+            .running("100.101.2.3"))
+
+        let offline = #"{"BackendState":"Running","TailscaleIPs":["100.101.2.3"],"Self":{"Online":false}}"#
+        XCTAssertEqual(RemoteNetworkEndpointDiscovery.parseTailscaleStatusJSON(offline), .stopped)
+        XCTAssertEqual(
+            RemoteNetworkEndpointDiscovery.parseTailscaleStatusJSON(#"{"BackendState":"Stopped"}"#),
+            .stopped)
+    }
+
+    func testRemotePageIsVampAssistantSessionSurface() {
+        XCTAssertTrue(RemoteSessionPage.html.contains("Vamp Assistant"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("Continue this coding task"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/api/sessions/"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("id=\"session-list\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/approval"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/question"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/plan"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("streamingText"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("phaseLabel"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("max-width: 720px"))
+        XCTAssertFalse(RemoteSessionPage.html.contains("/assets/beetlogo.png"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("class=\"brand-logo\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("data-theme-choice=\"light\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("data-theme-choice=\"dark\""))
+        XCTAssertFalse(RemoteSessionPage.html.contains("data-theme-choice=\"beet\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/assets/vamp-backdrop.png"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("querySelectorAll('[data-theme-choice]')"))
+        XCTAssertFalse(RemoteSessionPage.html.contains("$('[data-theme-choice"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("height: 100svh"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("grid-template-columns: minmax(0, 1fr)"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("min-height: 48px"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("AbortController"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("visibilitychange"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("pageshow"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("MAX_RETRY_DELAY_MS"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("CURRENT_SESSION_KEY"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("sessions-toggle"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("mobile-sessions"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("session-scrim"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("mobile-sheet-footer"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("body.sessions-open"))
+        XCTAssertTrue(RemoteSessionPage.html.contains(".sidebar.compact"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("Show all sessions"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("translateY(calc(-100% - 24px))"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("100dvh"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("loadSession(quiet, false)"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/events"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("id=\"auto-mode\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("id=\"full-access\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("fullAccess: state.fullAccess"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/api/clipboard"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/api/files"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("id=\"bots-open\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("id=\"bot-choice\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("class=\"bot-rail\""))
+        XCTAssertTrue(RemoteSessionPage.html.contains("image: '/assets/bot-builder'"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("bot.image + '-' + document.documentElement.dataset.theme + '.png'"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("/api/models"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("startBotSession"))
+        XCTAssertTrue(RemoteSessionPage.html.contains("await selectSession(body.sessionID)"))
+        XCTAssertFalse(RemoteSessionPage.html.contains("innerHTML"))
+        XCTAssertFalse(RemoteSessionPage.html.contains("terminalOutput"))
+    }
+
+    func testRemoteServerConfigDefaultsRemainLoopbackAndStandardRoutes() {
+        let config = LocalAPIServer.Config()
+        XCTAssertEqual(config.bindHost, "127.0.0.1")
+        XCTAssertTrue(config.exposeStandardRoutes)
+        XCTAssertFalse(config.allowCORS)
+
+        let remoteConfig = LocalAPIServer.Config(
+            port: RemoteSessionHost.defaultPort,
+            bindHost: "0.0.0.0",
+            exposeStandardRoutes: false,
+            maxBodyBytes: RemoteSessionHost.maxRemoteBodyBytes,
+            allowCORS: false)
+        XCTAssertEqual(remoteConfig.bindHost, "0.0.0.0")
+        XCTAssertFalse(remoteConfig.exposeStandardRoutes)
+        XCTAssertEqual(remoteConfig.maxBodyBytes, RemoteSessionHost.maxRemoteBodyBytes)
+        XCTAssertFalse(remoteConfig.allowCORS)
+        XCTAssertEqual(RemoteSessionHost.defaultPort, 9575)
+        XCTAssertEqual(RemoteSessionPorts.resolved(9475), 9575)
+        XCTAssertEqual(RemoteSessionPorts.resolved(9471), 9575)
+        XCTAssertEqual(RemoteSessionPorts.candidates(preferred: 9475).first, 9575)
+        XCTAssertFalse(RemoteSessionPorts.candidates(preferred: 9575).contains(where: RemoteSessionPorts.reservedForeignPorts.contains))
+        XCTAssertEqual(RemoteSessionHost.tokenLifetime, 30 * 24 * 60 * 60)
+        XCTAssertEqual(RemoteSessionHost.maxRemoteFileBytes, 20 * 1024 * 1024)
+    }
+
+    func testRemoteRunOptionsStayOnTheSessionAndDoNotWriteSettings() {
+        let settings = SettingsStore.shared
+        let previousMode = settings.agentMode
+        let previousFullAccess = settings.remoteFullAccessEnabled
+        let previousPlanMode = settings.planMode
+        let previousAutoEdits = settings.autoApproveEdits
+        let previousAutoCommands = settings.autoApproveCommands
+        settings.agentMode = .goal
+        settings.remoteFullAccessEnabled = false
+        settings.planMode = false
+        settings.autoApproveEdits = false
+        settings.autoApproveCommands = false
+        defer {
+            settings.agentMode = previousMode
+            settings.remoteFullAccessEnabled = previousFullAccess
+            settings.planMode = previousPlanMode
+            settings.autoApproveEdits = previousAutoEdits
+            settings.autoApproveCommands = previousAutoCommands
+        }
+
+        let controller = AgentSessionController(
+            engine: FakeLLMEngine(),
+            settings: settings,
+            thermal: ThermalMonitor())
+        controller.applyRemoteRunOptions(autoMode: true, fullAccess: true)
+        XCTAssertEqual(settings.agentMode, .goal)
+        XCTAssertFalse(settings.remoteFullAccessEnabled)
+        XCTAssertFalse(settings.planMode)
+        XCTAssertFalse(settings.autoApproveEdits)
+        XCTAssertFalse(settings.autoApproveCommands)
+        controller.clearRemoteRunOptions()
+        XCTAssertEqual(settings.agentMode, .goal)
+        XCTAssertFalse(settings.remoteFullAccessEnabled)
+    }
+
+    /// Remote clients must be able to tell AUTO from FULL: Auto mode implies
+    /// full-access authority for the run, but reporting the folded value made
+    /// the phone render every AUTO session as FULL.
+    func testRemoteRunFullAccessReportsTheRawFlagSeparateFromAgentMode() {
+        let controller = AgentSessionController(
+            engine: FakeLLMEngine(),
+            settings: SettingsStore.shared,
+            thermal: ThermalMonitor())
+        XCTAssertNil(controller.remoteRunFullAccess)
+        XCTAssertNil(controller.remoteRunAgentMode)
+
+        controller.applyRemoteRunOptions(autoMode: true, fullAccess: false)
+        XCTAssertEqual(controller.remoteRunAgentMode, "auto")
+        XCTAssertEqual(controller.remoteRunFullAccess, false)
+
+        controller.applyRemoteRunOptions(autoMode: false, fullAccess: true)
+        XCTAssertEqual(controller.remoteRunAgentMode, "goal")
+        XCTAssertEqual(controller.remoteRunFullAccess, true)
+
+        controller.clearRemoteRunOptions()
+        XCTAssertNil(controller.remoteRunFullAccess)
+        XCTAssertNil(controller.remoteRunAgentMode)
+    }
+
+    func testRemoteIsolationAttachesAPrivateBrowserForTheBot() {
+        let controller = AgentSessionController(
+            engine: FakeLLMEngine(),
+            settings: SettingsStore.shared,
+            thermal: ThermalMonitor())
+        let previous = BrowserPresentation.shared.controller
+        defer { BrowserPresentation.shared.controller = previous }
+        let session = BrowserSession(id: UUID(), name: "Builder")
+        controller.applyRemoteIsolation(
+            computerControl: false,
+            linuxContainer: nil,
+            browser: session)
+        XCTAssertEqual(controller.remoteBrowserSession, session)
+        XCTAssertEqual(BrowserPresentation.shared.controller.ownerLabel, "Builder")
+        controller.clearRemoteRunOptions()
+        XCTAssertNil(controller.remoteBrowserSession)
+        XCTAssertTrue(BrowserPresentation.shared.controller === BrowserController.shared)
+    }
+
+    func testRemoteSharingSanitizesAndKeepsFilesInsideExchangeFolder() throws {
+        let directory = TempWorkspace()
+        let sharing = RemoteSharingStore(directoryURL: directory.url)
+
+        let saved = try sharing.save(Data("hello".utf8), suggestedName: "../../report?.txt")
+        XCTAssertEqual(saved.name, "report_.txt")
+        XCTAssertEqual(try sharing.files().map(\.name), ["report_.txt"])
+
+        let result = try sharing.data(for: saved.name)
+        XCTAssertEqual(String(data: result.data, encoding: .utf8), "hello")
+        XCTAssertThrowsError(try sharing.data(for: "../report_.txt"))
+    }
+
+    func testControllerPublishesReasoningIntoTranscriptBeforeAnswer() async throws {
+        let workspace = TempWorkspace()
+        let sessionDirectory = TempWorkspace()
+        let previousDirectory = SessionStore.shared.overrideSessionsDir
+        let previousCurrentSession = SessionStore.shared.currentSessionID
+        let settings = SettingsStore.shared
+        let previousShowReasoning = settings.showReasoning
+        let previousPlanMode = settings.planMode
+        let previousAutoApproveEdits = settings.autoApproveEdits
+        let previousAutoApproveCommands = settings.autoApproveCommands
+        SessionStore.shared.overrideSessionsDir = sessionDirectory.url
+        SessionStore.shared.currentSessionID = nil
+        settings.showReasoning = true
+        settings.planMode = false
+        settings.autoApproveEdits = false
+        settings.autoApproveCommands = false
+        defer {
+            SessionStore.shared.overrideSessionsDir = previousDirectory
+            SessionStore.shared.currentSessionID = previousCurrentSession
+            settings.showReasoning = previousShowReasoning
+            settings.planMode = previousPlanMode
+            settings.autoApproveEdits = previousAutoApproveEdits
+            settings.autoApproveCommands = previousAutoApproveCommands
+        }
+
+        let engine = FakeLLMEngine()
+        engine.enqueue(.text("<think>recall actor semantics</think>Here is the answer."))
+        let controller = AgentSessionController(
+            engine: engine,
+            settings: settings,
+            thermal: ThermalMonitor())
+        await controller.switchWorkspace(to: workspace.url)
+
+        controller.send("What is actor isolation?")
+        for _ in 0..<200 where controller.isRunning {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(controller.isRunning)
+        XCTAssertTrue(controller.transcript.contains { item in
+            if case .reasoning("recall actor semantics") = item.kind { return true }
+            return false
+        })
+        XCTAssertTrue(controller.transcript.contains { item in
+            if case .assistant("Here is the answer.") = item.kind { return true }
+            return false
+        })
+    }
+
+    func testControllerStopCancelsActiveGeneration() async throws {
+        let workspace = TempWorkspace()
+        let sessionDirectory = TempWorkspace()
+        let previousDirectory = SessionStore.shared.overrideSessionsDir
+        let previousCurrentSession = SessionStore.shared.currentSessionID
+        let settings = SettingsStore.shared
+        let previousPlanMode = settings.planMode
+        SessionStore.shared.overrideSessionsDir = sessionDirectory.url
+        SessionStore.shared.currentSessionID = nil
+        settings.planMode = false
+        defer {
+            SessionStore.shared.overrideSessionsDir = previousDirectory
+            SessionStore.shared.currentSessionID = previousCurrentSession
+            settings.planMode = previousPlanMode
+        }
+
+        let engine = FakeLLMEngine()
+        engine.enqueue(.text("this response should be stopped"))
+        engine.holdNextStream()
+        let controller = AgentSessionController(
+            engine: engine,
+            settings: settings,
+            thermal: ThermalMonitor())
+        await controller.switchWorkspace(to: workspace.url)
+
+        controller.send("Stop this task")
+        let startDeadline = Date().addingTimeInterval(5)
+        while engine.streamCallCount < 1 && Date() < startDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(engine.streamCallCount, 1)
+
+        controller.stop()
+        let stopDeadline = Date().addingTimeInterval(5)
+        while controller.isRunning && Date() < stopDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(controller.isRunning)
+        XCTAssertTrue(engine.isCancelRequested)
+        XCTAssertEqual(controller.finishReason, .cancelled)
+    }
+
+    func testFailedChatPersistsErrorAndFreshChatGetsNewIdentity() async throws {
+        let workspace = TempWorkspace()
+        let sessionDirectory = TempWorkspace()
+        let previousDirectory = SessionStore.shared.overrideSessionsDir
+        let previousCurrentSession = SessionStore.shared.currentSessionID
+        let previousPlanMode = SettingsStore.shared.planMode
+        SessionStore.shared.overrideSessionsDir = sessionDirectory.url
+        SessionStore.shared.currentSessionID = nil
+        SettingsStore.shared.planMode = false
+        defer {
+            SessionStore.shared.overrideSessionsDir = previousDirectory
+            SessionStore.shared.currentSessionID = previousCurrentSession
+            SettingsStore.shared.planMode = previousPlanMode
+        }
+
+        let engine = FakeLLMEngine()
+        engine.enqueue(.failure(FakeEngineTestError.simulated))
+        engine.enqueue(.text("A fresh chat works."))
+        let controller = AgentSessionController(
+            engine: engine,
+            settings: SettingsStore.shared,
+            thermal: ThermalMonitor())
+        await controller.switchWorkspace(to: workspace.url)
+
+        controller.send("This request will fail")
+        let firstDeadline = Date().addingTimeInterval(5)
+        while controller.isRunning && Date() < firstDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let failedID = try XCTUnwrap(controller.activeSessionID)
+        let failedRecord = try XCTUnwrap(SessionStore.shared.load(id: failedID))
+        XCTAssertTrue(failedRecord.messages.contains {
+            $0.role == .assistant && $0.content.hasPrefix("error:")
+        })
+
+        controller.newSession()
+        controller.send("Start clean")
+        let freshID = try XCTUnwrap(controller.activeSessionID)
+        XCTAssertNotEqual(freshID, failedID)
+        let secondDeadline = Date().addingTimeInterval(5)
+        while controller.isRunning && Date() < secondDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(controller.finishReason, .completed("A fresh chat works."))
+    }
+
+    func testRemoteImageRequestValidatesPixelsAndPreservesTheQueuedPayload() async throws {
+        let temporary = TempWorkspace()
+        let original = SessionStore.shared.overrideSessionsDir
+        SessionStore.shared.overrideSessionsDir = temporary.url
+        defer { SessionStore.shared.overrideSessionsDir = original }
+        let engine = FakeLLMEngine(supportsImageInput: true)
+        let controller = AgentSessionController(engine: engine, settings: SettingsStore.shared, thermal: ThermalMonitor())
+        let host = RemoteSessionHost(engine: engine, sessions: controller,
+            sharing: RemoteSharingStore(directoryURL: temporary.url.appendingPathComponent("Sharing")), persistsPairedClients: false)
+        let now = Date()
+        let record = SessionRecord(id: UUID(), title: "Images", createdAt: now, updatedAt: now,
+            workspacePath: "", modelID: "vision", messages: [], checkpoints: [])
+        _ = SessionStore.shared.save(record)
+        let queue = TaskQueueStore()
+        queue.overrideDirectory = temporary.url.appendingPathComponent("Queue")
+        var received: [ChatImage] = []
+        host.enqueueTaskHandler = { id, message, images in
+            received = images
+            return try? queue.enqueue(sessionID: id, workspacePath: "", message: message, modelID: "vision", images: images)
+        }
+        addTeardownBlock { await host.stop() }
+        try await host.start(port: 0, allowLAN: true)
+        let base = try XCTUnwrap(URL(string: "http://127.0.0.1:\(try XCTUnwrap(host.actualPort))"))
+        let pair = try await request(base, path: "/api/pair", method: "POST",
+            body: Data("{\"code\":\"\(host.pairingCode)\"}".utf8))
+        let token = try XCTUnwrap(pair.json.objectValue?["token"]?.stringValue)
+        let pixels = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        let png = try XCTUnwrap(pixels.representation(using: .png, properties: [:]))
+        let payload: [String: Any] = ["message": "Read this screenshot", "images": [["base64": png.base64EncodedString()]]]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+        let path = "/api/sessions/\(record.id)/messages"
+        let unauthorized = try await request(base, path: path, method: "POST", body: body)
+        XCTAssertEqual(unauthorized.status, 401)
+        let accepted = try await request(base, path: path, method: "POST", token: token, body: body)
+        XCTAssertEqual(accepted.status, 202)
+        XCTAssertEqual(received.first?.data, png)
+        XCTAssertEqual(received.first?.mimeType, "image/png")
+        XCTAssertEqual(queue.loadAll().first?.images?.first?.base64, png.base64EncodedString())
+        for badImages: Any in ["not an array", [["base64": Data("not an image".utf8).base64EncodedString()]],
+                               Array(repeating: ["base64": png.base64EncodedString()], count: 5),
+                               [["url": "https://example.com/photo.jpg"]]] {
+            let bad = try JSONSerialization.data(withJSONObject: ["message": "Read this", "images": badImages])
+            let rejected = try await request(base, path: path, method: "POST", token: token, body: bad)
+            XCTAssertEqual(rejected.status, 400)
+        }
+        XCTAssertEqual(queue.loadAll().count, 1)
+        let steer = try JSONSerialization.data(withJSONObject: payload.merging(["action": "steer"]) { _, new in new })
+        let rejectedSteer = try await request(base, path: path, method: "POST", token: token, body: steer)
+        XCTAssertEqual(rejectedSteer.status, 409)
+    }
+
+    func testRemoteUnloadRequiresPairingIdleModelAndMatchingIdentity() async throws {
+        let engine = FakeLLMEngine()
+        let controller = AgentSessionController(engine: engine, settings: SettingsStore.shared, thermal: ThermalMonitor())
+        let exchangeDirectory = TempWorkspace()
+        let host = RemoteSessionHost(engine: engine, sessions: controller,
+            sharing: RemoteSharingStore(directoryURL: exchangeDirectory.url), persistsPairedClients: false)
+        var loaded: RemoteLoadedLocalModel? = .init(id: "local|huihui", name: "Huihui", canUnload: false)
+        var unloadedIDs: [String] = []
+        host.loadedLocalModelHandler = { loaded }
+        host.unloadModelHandler = { id in unloadedIDs.append(id); loaded = nil; return nil }
+        addTeardownBlock { await host.stop() }
+        try await host.start(port: 0, allowLAN: true)
+        let port = try XCTUnwrap(host.actualPort)
+        let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)"))
+        let body = Data("{\"modelID\":\"local|huihui\"}".utf8)
+        let unauthorized = try await request(baseURL, path: "/api/models/unload", method: "POST", body: body)
+        XCTAssertEqual(unauthorized.status, 401)
+        let pair = try await request(baseURL, path: "/api/pair", method: "POST",
+            body: Data("{\"code\":\"\(host.pairingCode)\"}".utf8))
+        let token = try XCTUnwrap(pair.json.objectValue?["token"]?.stringValue)
+        let busy = try await request(baseURL, path: "/api/models/unload", method: "POST", token: token, body: body)
+        XCTAssertEqual(busy.status, 409)
+        loaded = .init(id: "local|huihui", name: "Huihui", canUnload: true)
+        let stale = try await request(baseURL, path: "/api/models/unload", method: "POST", token: token,
+            body: Data("{\"modelID\":\"local|other\"}".utf8))
+        XCTAssertEqual(stale.status, 409)
+        XCTAssertTrue(unloadedIDs.isEmpty)
+        let catalog = try await request(baseURL, path: "/api/models", token: token)
+        XCTAssertEqual(catalog.json.objectValue?["loadedLocalModel"]?.objectValue?["id"]?.stringValue, "local|huihui")
+        let accepted = try await request(baseURL, path: "/api/models/unload", method: "POST", token: token, body: body)
+        XCTAssertEqual(accepted.status, 200)
+        XCTAssertEqual(unloadedIDs, ["local|huihui"])
+        let repeatUnload = try await request(baseURL, path: "/api/models/unload", method: "POST", token: token, body: body)
+        XCTAssertEqual(repeatUnload.status, 409)
+    }
+
+    func testRemotePairingIsOneTimeAndResumesTheSavedBeetCodeSession() async throws {
+        try XCTSkipUnless(
+            RemoteNetworkEndpointDiscovery.preferredEndpoint(allowLAN: false) != nil,
+            "Tailscale is not connected in this environment")
+
+        let workspace = TempWorkspace()
+        let sessionDirectory = TempWorkspace()
+        let previousDirectory = SessionStore.shared.overrideSessionsDir
+        let previousCurrentSession = SessionStore.shared.currentSessionID
+        let settings = SettingsStore.shared
+        let previousPlanMode = settings.planMode
+        let previousAutoApproveEdits = settings.autoApproveEdits
+        let previousAutoApproveCommands = settings.autoApproveCommands
+        SessionStore.shared.overrideSessionsDir = sessionDirectory.url
+        SessionStore.shared.currentSessionID = nil
+        settings.planMode = false
+        settings.autoApproveEdits = true
+        settings.autoApproveCommands = true
+        defer {
+            SessionStore.shared.overrideSessionsDir = previousDirectory
+            SessionStore.shared.currentSessionID = previousCurrentSession
+            settings.planMode = previousPlanMode
+            settings.autoApproveEdits = previousAutoApproveEdits
+            settings.autoApproveCommands = previousAutoApproveCommands
+        }
+
+        let engine = FakeLLMEngine()
+        let controller = AgentSessionController(
+            engine: engine,
+            settings: SettingsStore.shared,
+            thermal: ThermalMonitor())
+        await controller.switchWorkspace(to: workspace.url)
+
+        let sessionID = UUID()
+        let now = Date()
+        let record = SessionRecord(
+            id: sessionID,
+            title: "Continue the remote task",
+            createdAt: now,
+            updatedAt: now,
+            workspacePath: workspace.url.path,
+            modelID: "test-model",
+            messages: [
+                SessionMessage(role: .user, content: "Inspect the project", toolName: nil, timestamp: now),
+                SessionMessage(role: .assistant, content: "I’m ready for the next instruction.", toolName: nil, timestamp: now),
+            ],
+            checkpoints: [])
+        SessionStore.shared.save(record)
+        SessionStore.shared.invalidateCache()
+
+        let exchangeDirectory = TempWorkspace()
+        let sharing = RemoteSharingStore(directoryURL: exchangeDirectory.url)
+        var allowClipboard = false
+        var allowFiles = false
+        let host = RemoteSessionHost(
+            engine: engine,
+            sessions: controller,
+            sharing: sharing,
+            persistsPairedClients: false)
+        host.clipboardSharingAllowedHandler = { allowClipboard }
+        host.fileSharingAllowedHandler = { allowFiles }
+        host.modelOptionsHandler = {
+            [RemoteStartModel(
+                id: "chatgpt|gpt-5.6-luna",
+                name: "GPT-5.6 Luna",
+                source: "chatgpt",
+                detail: "ChatGPT account")]
+        }
+        var botRun = BotRunRecord.queued(
+            profileID: "builder", profileName: "Builder",
+            modelID: "chatgpt|gpt-5.6-luna", prompt: "Build it")
+        botRun.state = .running
+        botRun.phase = "Working"
+        host.botRunsHandler = { [botRun] in [botRun] }
+        host.startBotRunHandler = { _, _, _ in (botRun.id, nil) }
+        host.orchestrateBotRunsHandler = { _, prompt in
+            if prompt == "Ship the feature" {
+                return (Optional(botRun.id), Optional<String>.none)
+            }
+            return (Optional<UUID>.none, Optional("Unexpected objective"))
+        }
+        host.steerBotRunHandler = { id, message in id == botRun.id && message == "Focus tests" }
+        host.approveBotRunHandler = { id, approved in id == botRun.id && approved }
+        host.answerBotRunHandler = { id, answer in id == botRun.id && answer == "Use option A" }
+        host.resumeBotRunHandler = { id in id == botRun.id }
+        host.stopBotRunHandler = { id in id == botRun.id }
+        // A locked/unavailable encrypted queue must not turn a successfully
+        // paired idle remote session into a read-only surface.
+        host.enqueueTaskHandler = { _, _, _ in nil }
+        var queuedSendCalls = 0
+        var queuedSendError: String?
+        host.sendQueuedTaskHandler = { id, _ in
+            XCTAssertEqual(id, sessionID)
+            queuedSendCalls += 1
+            return queuedSendError
+        }
+        addTeardownBlock {
+            await host.stop()
+        }
+        try await host.start(port: 0, allowLAN: false)
+        XCTAssertEqual(host.networkKind, .tailscale)
+
+        let port = try XCTUnwrap(host.actualPort)
+        let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)"))
+
+        let page = try await request(baseURL, path: "/")
+        XCTAssertEqual(page.status, 200)
+        XCTAssertTrue(page.body.contains("Vamp Assistant"))
+        XCTAssertTrue(page.body.contains("Start a chat, or pick a bot."))
+        XCTAssertFalse(page.body.contains("Choose a bot to start."))
+        XCTAssertNotNil(page.headers["Content-Security-Policy"])
+
+        let logo = try await request(baseURL, path: "/assets/vamp-icon.png")
+        XCTAssertEqual(logo.status, 200)
+        XCTAssertEqual(logo.headers["content-type"], "image/png")
+        let backdrop = try await request(baseURL, path: "/assets/vamp-backdrop.png")
+        XCTAssertEqual(backdrop.status, 200)
+        XCTAssertEqual(backdrop.headers["content-type"], "image/png")
+        for path in ["/assets/bot-builder-light.png", "/assets/bot-builder-dark.png"] {
+            let builderThumb = try await request(baseURL, path: path)
+            XCTAssertEqual(builderThumb.status, 200)
+            XCTAssertEqual(builderThumb.headers["content-type"], "image/png")
+        }
+
+        let rejectedOrigin = try await request(
+            baseURL,
+            path: "/api/pair",
+            method: "POST",
+            body: Data("{\"code\":\"000000\"}".utf8),
+            headers: ["Origin": "https://evil.example"])
+        XCTAssertEqual(rejectedOrigin.status, 403)
+
+        let code = host.pairingCode
+        let pair = try await request(
+            baseURL,
+            path: "/api/pair",
+            method: "POST",
+            body: Data("{\"code\":\"\(code)\"}".utf8))
+        XCTAssertEqual(pair.status, 200)
+        let token = try XCTUnwrap(pair.json.objectValue?["token"]?.stringValue)
+        XCTAssertGreaterThan(token.utf8.count, 32)
+
+        // A pairing code is an approval, not a reusable password.
+        let replay = try await request(
+            baseURL,
+            path: "/api/pair",
+            method: "POST",
+            body: Data("{\"code\":\"\(code)\"}".utf8))
+        XCTAssertEqual(replay.status, 401)
+
+        let unauthorized = try await request(baseURL, path: "/api/status")
+        XCTAssertEqual(unauthorized.status, 401)
+
+        let queueBody = try JSONSerialization.data(withJSONObject: ["taskID": UUID().uuidString, "action": "send"])
+        let unauthorizedQueue = try await request(baseURL, path: "/api/sessions/\(sessionID)/queue",
+            method: "POST", body: queueBody)
+        XCTAssertEqual(unauthorizedQueue.status, 401)
+        XCTAssertEqual(queuedSendCalls, 0)
+        let queuedSend = try await request(baseURL, path: "/api/sessions/\(sessionID)/queue",
+            method: "POST", token: token, body: queueBody)
+        XCTAssertEqual(queuedSend.status, 202)
+        XCTAssertEqual(queuedSend.json.objectValue?["accepted"]?.boolValue, true)
+        queuedSendError = "The Mac is still answering."
+        let busyQueue = try await request(baseURL, path: "/api/sessions/\(sessionID)/queue",
+            method: "POST", token: token, body: queueBody)
+        XCTAssertEqual(busyQueue.status, 409)
+        let missingQueueSession = try await request(baseURL, path: "/api/sessions/\(UUID())/queue",
+            method: "POST", token: token, body: queueBody)
+        XCTAssertEqual(missingQueueSession.status, 404)
+        XCTAssertEqual(queuedSendCalls, 2)
+
+        let status = try await request(baseURL, path: "/api/status", token: token)
+        XCTAssertEqual(status.status, 200)
+        XCTAssertEqual(status.json.objectValue?["networkKind"]?.stringValue, "tailscale")
+        XCTAssertNotNil(status.json.objectValue?["tokenExpiresAt"]?.numberValue)
+        XCTAssertNotNil(status.json.objectValue?["phase"]?.stringValue)
+
+        let unauthorizedApps = try await request(baseURL, path: "/api/control/apps")
+        XCTAssertEqual(unauthorizedApps.status, 401)
+        let unauthorizedResize = try await request(
+            baseURL,
+            path: "/api/control/apps/resize",
+            method: "POST",
+            body: Data(#"{"windowID":1,"clientViewportAspect":0.5625}"#.utf8))
+        XCTAssertEqual(unauthorizedResize.status, 401)
+        let disabledApps = try await request(baseURL, path: "/api/control/apps", token: token)
+        XCTAssertEqual(disabledApps.status, 403)
+        let disabledResize = try await request(
+            baseURL,
+            path: "/api/control/apps/resize",
+            method: "POST",
+            token: token,
+            body: Data(#"{"windowID":1,"clientViewportAspect":0.5625}"#.utf8))
+        XCTAssertEqual(disabledResize.status, 403)
+
+        let remoteModels = try await request(baseURL, path: "/api/models", token: token)
+        XCTAssertEqual(remoteModels.status, 200)
+        let accountModel = try XCTUnwrap(remoteModels.json.objectValue?["models"]?.arrayValue?.first?.objectValue)
+        XCTAssertEqual(accountModel["id"]?.stringValue, "chatgpt|gpt-5.6-luna")
+        XCTAssertEqual(accountModel["source"]?.stringValue, "chatgpt")
+
+        let unauthorizedProviders = try await request(baseURL, path: "/api/providers")
+        XCTAssertEqual(unauthorizedProviders.status, 401)
+        let providers = try await request(baseURL, path: "/api/providers", token: token)
+        XCTAssertEqual(providers.status, 200)
+        let directory = try XCTUnwrap(providers.json.objectValue?["providers"]?.arrayValue)
+        XCTAssertTrue(directory.contains { $0.objectValue?["id"]?.stringValue == "openAI" })
+        XCTAssertTrue(directory.contains { $0.objectValue?["id"]?.stringValue == "groq" })
+        XCTAssertFalse(providers.body.contains("api-key"))
+        let unsupportedKey = try await request(
+            baseURL, path: "/api/providers/key", method: "POST", token: token,
+            body: Data(#"{"providerID":"unknown-provider","key":"example"}"#.utf8))
+        XCTAssertEqual(unsupportedKey.status, 400)
+        let emptyKey = try await request(
+            baseURL, path: "/api/providers/key", method: "POST", token: token,
+            body: Data(#"{"providerID":"openAI","key":"   "}"#.utf8))
+        XCTAssertEqual(emptyKey.status, 400)
+        let unsupportedRemoval = try await request(
+            baseURL, path: "/api/providers/key/remove", method: "POST", token: token,
+            body: Data(#"{"providerID":"unknown-provider"}"#.utf8))
+        XCTAssertEqual(unsupportedRemoval.status, 400)
+        let unsafeCustomURL = try await request(
+            baseURL, path: "/api/providers/custom-url", method: "POST", token: token,
+            body: Data(#"{"baseURL":"https://user:secret@example.com/v1"}"#.utf8))
+        XCTAssertEqual(unsafeCustomURL.status, 400)
+        let disconnectedModel = try await request(
+            baseURL, path: "/api/providers/model", method: "POST", token: token,
+            body: Data(#"{"providerID":"unknown-provider","modelID":"model-1"}"#.utf8))
+        XCTAssertEqual(disconnectedModel.status, 400)
+
+        let botRuns = try await request(baseURL, path: "/api/bot-runs", token: token)
+        XCTAssertEqual(botRuns.status, 200)
+        XCTAssertTrue(botRuns.body.contains(botRun.id.uuidString))
+        XCTAssertTrue(botRuns.body.contains("Builder"))
+        let startedBot = try await request(
+            baseURL, path: "/api/bot-runs", method: "POST", token: token,
+            body: Data(#"{"profileID":"builder","prompt":"Build it"}"#.utf8))
+        XCTAssertEqual(startedBot.status, 202)
+        XCTAssertEqual(startedBot.json.objectValue?["runID"]?.stringValue, botRun.id.uuidString)
+        let workflow = try await request(
+            baseURL, path: "/api/bot-workflows", method: "POST", token: token,
+            body: Data(#"{"prompt":"Ship the feature"}"#.utf8))
+        XCTAssertEqual(workflow.status, 202)
+        XCTAssertEqual(workflow.json.objectValue?["workflowID"]?.stringValue, botRun.id.uuidString)
+        let steeredBot = try await request(
+            baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/steer", method: "POST", token: token,
+            body: Data(#"{"message":"Focus tests"}"#.utf8))
+        XCTAssertEqual(steeredBot.status, 202)
+        let approvedBot = try await request(
+            baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/approve", method: "POST", token: token,
+            body: Data("{}".utf8))
+        XCTAssertEqual(approvedBot.status, 202)
+        let answeredBot = try await request(
+            baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/answer", method: "POST", token: token,
+            body: Data(#"{"answer":"Use option A"}"#.utf8))
+        XCTAssertEqual(answeredBot.status, 202)
+        let resumedBot = try await request(
+            baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/resume", method: "POST", token: token,
+            body: Data("{}".utf8))
+        XCTAssertEqual(resumedBot.status, 202)
+        let stoppedBot = try await request(
+            baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/stop", method: "POST", token: token,
+            body: Data("{}".utf8))
+        XCTAssertEqual(stoppedBot.status, 200)
+
+        let deniedClipboard = try await request(baseURL, path: "/api/clipboard", token: token)
+        XCTAssertEqual(deniedClipboard.status, 403)
+        allowClipboard = true
+        let clipboard = try await request(baseURL, path: "/api/clipboard", token: token)
+        XCTAssertEqual(clipboard.status, 200)
+        XCTAssertNotNil(clipboard.json.objectValue?["text"]?.stringValue)
+
+        let deniedFiles = try await request(baseURL, path: "/api/files", token: token)
+        XCTAssertEqual(deniedFiles.status, 403)
+        allowFiles = true
+        let uploaded = try await request(
+            baseURL,
+            path: "/api/files?name=phone-note.txt",
+            method: "POST",
+            token: token,
+            body: Data("from iPhone".utf8),
+            headers: ["Content-Type": "application/octet-stream"])
+        XCTAssertEqual(uploaded.status, 201)
+        XCTAssertEqual(uploaded.json.objectValue?["name"]?.stringValue, "phone-note.txt")
+        let files = try await request(baseURL, path: "/api/files", token: token)
+        XCTAssertEqual(files.status, 200)
+        XCTAssertTrue(files.body.contains("phone-note.txt"))
+        let downloaded = try await request(baseURL, path: "/api/files/phone-note.txt", token: token)
+        XCTAssertEqual(downloaded.status, 200)
+        XCTAssertEqual(downloaded.body, "from iPhone")
+
+        // The remote listener is a session-control surface, never the local
+        // OpenAI-compatible inference API.
+        let models = try await request(baseURL, path: "/v1/models", token: token)
+        XCTAssertEqual(models.status, 404)
+
+        let sessions = try await request(baseURL, path: "/api/sessions", token: token)
+        XCTAssertEqual(sessions.status, 200)
+        XCTAssertTrue(sessions.body.contains(sessionID.uuidString))
+        XCTAssertTrue(sessions.body.contains("\"mode\""))
+        XCTAssertTrue(sessions.body.contains("\"workspacePath\""))
+
+        let workspaceList = try await request(baseURL, path: "/api/workspaces", token: token)
+        XCTAssertEqual(workspaceList.status, 200)
+        XCTAssertNotNil(workspaceList.json.objectValue?["workspaces"]?.arrayValue)
+        XCTAssertNotNil(workspaceList.json.objectValue?["createParent"]?.stringValue)
+        XCTAssertTrue(workspaceList.body.contains(workspace.url.lastPathComponent))
+
+        let rejectedFolder = try await request(
+            baseURL,
+            path: "/api/workspaces",
+            method: "POST",
+            token: token,
+            body: Data("{\"name\":\"../secret\"}".utf8))
+        XCTAssertEqual(rejectedFolder.status, 400)
+
+        let liveSnapshot = try await firstSSEDataLine(
+            baseURL,
+            path: "/api/sessions/\(sessionID.uuidString)/events",
+            token: token)
+        XCTAssertTrue(liveSnapshot.contains(sessionID.uuidString))
+        XCTAssertTrue(liveSnapshot.contains("streamingText"))
+
+        engine.enqueue(.text("Remote continuation complete."))
+        let continuation = try await request(
+            baseURL,
+            path: "/api/sessions/\(sessionID.uuidString)/messages",
+            method: "POST",
+            token: token,
+            body: Data("{\"message\":\"Continue from the phone\"}".utf8))
+        XCTAssertEqual(continuation.status, 202)
+        XCTAssertEqual(continuation.json.objectValue?["queued"]?.boolValue, false)
+        XCTAssertEqual(continuation.json.objectValue?["fallback"]?.boolValue, true)
+
+        // Delete and rename are refused while this chat is the running one.
+        let deleteWhileRunning = try await request(
+            baseURL, path: "/api/sessions/\(sessionID.uuidString)", method: "DELETE", token: token)
+        XCTAssertEqual(deleteWhileRunning.status, 409)
+        let renameWhileRunning = try await request(
+            baseURL,
+            path: "/api/sessions/\(sessionID.uuidString)",
+            method: "PATCH",
+            token: token,
+            body: Data("{\"title\":\"Too soon\"}".utf8))
+        XCTAssertEqual(renameWhileRunning.status, 409)
+        XCTAssertNotNil(SessionStore.shared.load(id: sessionID))
+
+        let inFlightDetail = try await request(baseURL, path: "/api/sessions/\(sessionID.uuidString)", token: token)
+        XCTAssertEqual(inFlightDetail.status, 200)
+        XCTAssertNotNil(inFlightDetail.json.objectValue?["phase"]?.stringValue)
+        XCTAssertNotNil(inFlightDetail.json.objectValue?["streamingText"]?.stringValue)
+
+        let finishDeadline = Date().addingTimeInterval(10)
+        while controller.finishReason == nil, Date() < finishDeadline {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(controller.finishReason, .completed("Remote continuation complete."))
+        XCTAssertEqual(controller.activeSessionID, sessionID)
+        XCTAssertTrue(SessionStore.shared.load(id: sessionID)?.messages.contains {
+            $0.role == .user && $0.content == "Continue from the phone"
+        } == true)
+
+        // Once the turn is done: rename lands, an empty title is rejected, and
+        // delete removes the record for good.
+        let renamed = try await request(
+            baseURL,
+            path: "/api/sessions/\(sessionID.uuidString)",
+            method: "PATCH",
+            token: token,
+            body: Data("{\"title\":\"Renamed from the phone\"}".utf8))
+        XCTAssertEqual(renamed.status, 200)
+        XCTAssertEqual(SessionStore.shared.load(id: sessionID)?.title, "Renamed from the phone")
+
+        let blankTitle = try await request(
+            baseURL,
+            path: "/api/sessions/\(sessionID.uuidString)",
+            method: "PATCH",
+            token: token,
+            body: Data("{\"title\":\"   \"}".utf8))
+        XCTAssertEqual(blankTitle.status, 400)
+
+        let deleted = try await request(
+            baseURL, path: "/api/sessions/\(sessionID.uuidString)", method: "DELETE", token: token)
+        XCTAssertEqual(deleted.status, 200)
+        XCTAssertNil(SessionStore.shared.load(id: sessionID))
+        let afterDelete = try await request(
+            baseURL, path: "/api/sessions/\(sessionID.uuidString)", token: token)
+        XCTAssertEqual(afterDelete.status, 404)
+
+        let revoke = try await request(baseURL, path: "/api/revoke", method: "POST", token: token)
+        XCTAssertEqual(revoke.status, 200)
+        let afterRevoke = try await request(baseURL, path: "/api/status", token: token)
+        XCTAssertEqual(afterRevoke.status, 401)
+    }
+
+    private struct HTTPResult {
+        let status: Int
+        let headers: [String: String]
+        let body: String
+        let json: LFJSONValue
+    }
+
+    private func firstSSEDataLine(
+        _ baseURL: URL,
+        path: String,
+        token: String
+    ) async throws -> String {
+        let url = baseURL.appending(path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        return try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask {
+                for try await line in bytes.lines where line.hasPrefix("data:") {
+                    return String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces)
+                }
+                throw URLError(.cannotParseResponse)
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(3))
+                throw URLError(.timedOut)
+            }
+            let first = try await group.next()!
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private func request(
+        _ baseURL: URL,
+        path: String,
+        method: String = "GET",
+        token: String? = nil,
+        body: Data? = nil,
+        headers: [String: String] = [:]
+    ) async throws -> HTTPResult {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        let pathComponents = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        components?.path = String(pathComponents[0])
+        components?.percentEncodedQuery = pathComponents.count > 1 ? String(pathComponents[1]) : nil
+        let url = try XCTUnwrap(components?.url)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 5
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        if let body {
+            request.httpBody = body
+            if !headers.keys.contains(where: { $0.caseInsensitiveCompare("Content-Type") == .orderedSame }) {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let http = try XCTUnwrap(response as? HTTPURLResponse)
+        var headers: [String: String] = [:]
+        for (key, value) in http.allHeaderFields {
+            if let key = key as? String, let value = value as? String {
+                headers[key] = value
+                headers[key.lowercased()] = value
+            }
+        }
+        return HTTPResult(
+            status: http.statusCode,
+            headers: headers,
+            body: String(decoding: data, as: UTF8.self),
+            json: (try? LFJSONValue.decode(data)) ?? .null)
+    }
+}

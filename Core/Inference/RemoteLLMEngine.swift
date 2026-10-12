@@ -1,0 +1,494 @@
+import Foundation
+
+/// LLMEngine implementation backed by a BYOK remote provider. History is
+/// replayed per call (no KV cache server-side), so reset is a no-op and
+/// stream(adding:) sends the full conversation.
+final class RemoteLLMEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
+
+    let endpoint: RemoteEndpoint
+    private let apiKey: String
+    private let lock = NSLock()
+    private var generationTask: Task<Void, Never>?
+    private var statsState = EngineStats()
+    /// Remote APIs are stateless — there is no server-side KV cache — so the
+    /// engine accumulates every turn it is handed and replays the FULL
+    /// conversation on each call. `reset()` clears the accumulation (the loop
+    /// calls it at task start and after compaction rebuilds history).
+    private var accumulated: [ChatTurn] = []
+    private var nativeTools: [NativeToolSpec] = []
+
+    init?(endpoint: RemoteEndpoint) {
+        // Custom/local servers may run without auth; every other provider
+        // requires a Keychain key.
+        let key = endpoint.apiKey
+            ?? endpoint.providerID.flatMap { APIKeyStore.key(providerID: $0) }
+            ?? APIKeyStore.key(provider: endpoint.provider)
+        if key == nil && !endpoint.provider.keyOptional { return nil }
+        self.endpoint = endpoint
+        self.apiKey = key ?? ""
+    }
+
+    var loadedModelID: String? {
+        get async { endpoint.effectiveProviderKey + ":" + endpoint.model }
+    }
+
+    var stats: EngineStats {
+        get async { withLock { statsState } }
+    }
+
+    func load(directory: URL, modelID: String, diskBytes: Int64) async throws {
+        // Remote engines have nothing to load; presence of key+endpoint was
+        // validated at init.
+    }
+
+    func configureNativeTools(_ tools: [NativeToolSpec]) {
+        withLock { nativeTools = tools }
+    }
+
+    func unload() async {}
+
+    func reset() async {
+        withLock { accumulated.removeAll() }
+    }
+
+    func rebaseConversation(to turns: [ChatTurn]) async -> SemanticRebaseResult {
+        withLock { accumulated = turns }
+        // Remote providers receive the rebuilt transcript in full. They may
+        // cache it server-side, but Beet Code cannot truthfully claim a local
+        // cache prefix was retained.
+        return SemanticRebaseResult(installedHistory: true)
+    }
+
+    func stream(
+        adding turns: [ChatTurn],
+        maxTokens: Int?,
+        temperature: Double?
+    ) -> AsyncThrowingStream<String, Error> {
+        // Stateless replay: append the new turns, then send the entire
+        // accumulated conversation. Sending only the delta (what the local
+        // KV-cached engine expects) would leave the remote model without any
+        // context after the first turn.
+        let allTurns = withLock { () -> [ChatTurn] in
+            accumulated.append(contentsOf: turns)
+            return accumulated
+        }
+
+        let usageBox = UsageBox()
+        let onUsage: @Sendable (RemoteLLMClient.UsageInfo) -> Void = { [weak self] usage in
+            usageBox.last = usage
+            self?.noteUsage(usage, startedAt: usageBox.started)
+        }
+
+        // Provider/model metadata is non-secret and cached independently from
+        // the Keychain key. Respect explicit capability overrides at the
+        // request boundary so a model that advertises no tools or temperature
+        // support does not receive parameters it will reject.
+        let modelOverride = AppPreferencesStore.shared.remoteModelOverride(endpoint: endpoint)
+        let baseProfile = AppPreferencesStore.shared.remoteModelProfile(endpoint: endpoint)
+            ?? RemoteModelProfile(
+                provider: endpoint.provider,
+                model: endpoint.model,
+                providerKey: endpoint.providerID,
+                providerDisplayName: endpoint.effectiveDisplayName,
+                apiProtocol: endpoint.effectiveProtocol,
+                baseURL: endpoint.effectiveBaseURL?.absoluteString,
+                headers: endpoint.headers,
+                apiKey: endpoint.apiKey)
+        let profile = baseProfile.applying(modelOverride)
+        let tools = withLock { nativeTools }
+        let effectiveTools = profile.supportsTools == false ? [] : tools
+        let effectiveTemperature = profile.supportsTemperature == false ? nil : temperature
+        let reasoningEffort = profile.selectedReasoningEffort(using: modelOverride)
+        guard endpoint.effectiveBaseURL != nil else {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: RemoteLLMError.invalidConfiguration(
+                    endpoint.provider == .custom
+                        ? "No custom base URL configured — set one in Settings → BYOK Providers → Custom."
+                        : "no endpoint URL"))
+            }
+        }
+        let stream = RemoteLLMClient.stream(
+            endpoint: endpoint,
+            apiKey: apiKey,
+            model: endpoint.model,
+            turns: allTurns,
+            temperature: effectiveTemperature,
+            maxTokens: maxTokens,
+            reasoningEffort: reasoningEffort,
+            tools: effectiveTools,
+            onUsage: onUsage)
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                var tokens = 0
+                let started = Date()
+                do {
+                    for try await chunk in stream {
+                        if Task.isCancelled {
+                            continuation.finish(throwing: RemoteLLMError.cancelled)
+                            return
+                        }
+                        continuation.yield(chunk)
+                        tokens += 1
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+                // Usage callback (real token counts) already updated stats
+                // when the provider reported them; fall back to chunk-count
+                // stats only when no usage arrived (P9 truthfulness).
+                let elapsed = Date().timeIntervalSince(started)
+                if elapsed > 0.2, usageBox.last == nil {
+                    let serial = self.withLock { () -> UInt64 in
+                        self.statsState.usageSerial += 1
+                        return self.statsState.usageSerial
+                    }
+                    self.updateStats(EngineStats(
+                        tokensPerSecond: Double(tokens) / elapsed,
+                        generatedTokens: tokens,
+                        usageSerial: serial))
+                }
+            }
+            self.setGenerationTask(task)
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func streamReplay(_ turns: [ChatTurn], maxTokens: Int?, temperature: Double?) -> AsyncThrowingStream<String, Error> {
+        IsolatedTranscriptReplay.stream(
+            turns,
+            maxTokens: maxTokens,
+            temperature: temperature,
+            swapOut: {
+                self.withLock {
+                    let old = self.accumulated
+                    self.accumulated = []
+                    return old
+                }
+            },
+            swapIn: { saved in self.withLock { self.accumulated = saved } },
+            generate: { self.stream(adding: $0, maxTokens: $1, temperature: $2) })
+    }
+
+    /// Real usage accounting (P9): the provider reports completion tokens;
+    /// tok/s uses wall time since stream start.
+    private func noteUsage(_ usage: RemoteLLMClient.UsageInfo, startedAt: Date) {
+        let completion = usage.completionTokens ?? 0
+        let prompt = usage.promptTokens ?? 0
+        guard completion > 0 || prompt > 0 else { return }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let serial = withLock { () -> UInt64 in
+            statsState.usageSerial += 1
+            return statsState.usageSerial
+        }
+        updateStats(EngineStats(
+            tokensPerSecond: usage.tokensPerSecond
+                ?? (elapsed > 0 && completion > 0 ? Double(completion) / elapsed : nil),
+            generatedTokens: completion,
+            promptTokens: prompt,
+            usageSerial: serial))
+    }
+
+    /// Per-run usage state shared between the stream closure and callbacks.
+    private final class UsageBox: @unchecked Sendable {
+        var last: RemoteLLMClient.UsageInfo?
+        let started = Date()
+    }
+
+    func cancelGeneration() async {
+        let task = withLock { () -> Task<Void, Never>? in
+            let current = generationTask
+            generationTask = nil
+            return current
+        }
+        task?.cancel()
+    }
+
+    private func setGenerationTask(_ task: Task<Void, Never>?) {
+        lock.lock()
+        generationTask = task
+        lock.unlock()
+    }
+
+    private func updateStats(_ stats: EngineStats) {
+        lock.lock()
+        statsState = stats
+        lock.unlock()
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+/// Routes engine requests to either the local MLX engine or the active BYOK
+/// remote endpoint. AppState holds one router; switching providers swaps the
+/// delegate without touching the agent or UI layers.
+final class EngineRouter: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
+
+    enum Source: Equatable {
+        case localMLX
+        case remote(RemoteEndpoint)
+    }
+
+    private let lock = NSLock()
+    /// The multi-resident local engine pool. When present, local loads keep
+    /// previously-loaded models warm instead of unloading them; generation
+    /// routes through the pool's active engine on the shared Metal gate.
+    /// nil → legacy single-resident path (test doubles).
+    private let pool: EnginePool?
+    private let local: any LLMEngine
+    private var currentRemote: RemoteLLMEngine?
+    private(set) var source: Source = .localMLX
+    private var activeLocalID: String?
+    private var nativeTools: [NativeToolSpec] = []
+
+    init(local: any LLMEngine = MLXEngine(), pool: EnginePool? = nil) {
+        self.local = local
+        self.pool = pool
+    }
+
+    /// The pool (when the router runs pooled) — exposed for AppState and the
+    /// memory-pressure coordinator.
+    var enginePool: EnginePool? { pool }
+
+    var activeRemoteEndpoint: RemoteEndpoint? {
+        withLock { currentRemote?.endpoint }
+    }
+
+    @discardableResult
+    func useRemote(_ endpoint: RemoteEndpoint) -> Bool {
+        guard let remote = RemoteLLMEngine(endpoint: endpoint) else { return false }
+        withLock {
+            currentRemote = remote
+            source = .remote(endpoint)
+            remote.configureNativeTools(nativeTools)
+        }
+        return true
+    }
+
+    func configureNativeTools(_ tools: [NativeToolSpec]) {
+        withLock {
+            nativeTools = tools
+            currentRemote?.configureNativeTools(tools)
+        }
+        (local as? any NativeToolConfigurable)?.configureNativeTools(tools)
+    }
+
+    func useLocal() {
+        withLock {
+            currentRemote = nil
+            source = .localMLX
+        }
+    }
+
+    var loadedModelID: String? {
+        get async {
+            if let remote = withLock({ currentRemote }) { return await remote.loadedModelID }
+            if let pool { return await pool.activeLoadedModelID() }
+            return await local.loadedModelID
+        }
+    }
+
+    var effectiveContextWindow: Int? {
+        get async {
+            if withLock({ currentRemote }) != nil { return nil }
+            if let pool { return await pool.activeEffectiveContextWindow() }
+            return await local.effectiveContextWindow
+        }
+    }
+
+    /// Runtime truth about the resident LOCAL model: true only for a GGUF
+    /// server launched with a multimodal projector. Remote/BYOK engines keep
+    /// their own described-image path, so they report false here.
+    var supportsImageInput: Bool {
+        get async {
+            if withLock({ currentRemote }) != nil { return false }
+            if let pool { return await pool.activeSupportsImageInput() }
+            return await local.supportsImageInput
+        }
+    }
+
+    var stats: EngineStats {
+        get async {
+            if let remote = withLock({ currentRemote }) { return await remote.stats }
+            if let pool { return await pool.stats() }
+            return await local.stats
+        }
+    }
+
+    func load(directory: URL, modelID: String, diskBytes: Int64) async throws {
+        try await load(directory: directory, modelID: modelID, diskBytes: diskBytes, format: .mlx)
+    }
+
+    /// Format-aware load: the pool instantiates the right engine (MLX
+    /// in-process vs GGUF llama-server) per model. `contextSize` is the
+    /// catalog's context window — only the GGUF server needs it as a flag.
+    func load(directory: URL, modelID: String, diskBytes: Int64, format: CatalogModel.Format, contextSize: Int? = nil) async throws {
+        if let pool {
+            // Multi-resident: keeps other loaded models warm, evicting LRU
+            // idle residents only when the memory budget requires it.
+            try await pool.activate(directory: directory, modelID: modelID, diskBytes: diskBytes, format: format, contextSize: contextSize)
+            return
+        }
+        try await local.load(directory: directory, modelID: modelID, diskBytes: diskBytes, contextSize: contextSize)
+    }
+
+    func unload() async {
+        if let pool {
+            // Pool semantics: only the ACTIVE model unloads; other residents
+            // stay warm until memory pressure or the cap evicts them.
+            await pool.unloadActive()
+            return
+        }
+        await local.unload()
+    }
+
+    /// Clears every local resident. On small unified-memory Macs, keeping an
+    /// old GGUF helper and a new MLX checkpoint alive at the same time can
+    /// exhaust RAM even though each model is individually admissible.
+    func unloadAll() async {
+        if let pool {
+            await pool.unloadAll()
+            return
+        }
+        await local.unload()
+    }
+
+    func reset() async {
+        if let remote = withLock({ currentRemote }) {
+            await remote.reset()
+        } else if let pool {
+            await pool.resetActive()
+        } else {
+            await local.reset()
+        }
+    }
+
+    func rebaseConversation(to turns: [ChatTurn]) async -> SemanticRebaseResult {
+        if let remote = withLock({ currentRemote }) {
+            return await remote.rebaseConversation(to: turns)
+        }
+        if let pool {
+            return await pool.rebaseActiveConversation(to: turns)
+        }
+        return await local.rebaseConversation(to: turns)
+    }
+
+    func prepareForGeneration(contextTokens: Int, contextWindow: Int) async {
+        guard withLock({ currentRemote == nil }) else { return }
+        if let pool {
+            await pool.prepareForGeneration(
+                contextTokens: contextTokens,
+                contextWindow: contextWindow)
+        } else {
+            await local.prepareForGeneration(
+                contextTokens: contextTokens,
+                contextWindow: contextWindow)
+        }
+    }
+
+    func stream(
+        adding turns: [ChatTurn],
+        maxTokens: Int?,
+        temperature: Double?
+    ) -> AsyncThrowingStream<String, Error> {
+        if let remote = withLock({ currentRemote }) {
+            return remote.stream(adding: turns, maxTokens: maxTokens, temperature: temperature)
+        }
+        if let pool {
+            // The pool is an actor: resolve the active engine with a hop,
+            // then relay the inner stream chunk-by-chunk.
+            let tools = withLock { nativeTools }
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        await pool.configureActiveNativeTools(tools)
+                        let inner = try await pool.stream(
+                            adding: turns, maxTokens: maxTokens, temperature: temperature)
+                        for try await chunk in inner {
+                            if Task.isCancelled { break }
+                            continuation.yield(chunk)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        return local.stream(adding: turns, maxTokens: maxTokens, temperature: temperature)
+    }
+
+    func streamReplay(_ turns: [ChatTurn], maxTokens: Int?, temperature: Double?) -> AsyncThrowingStream<String, Error> {
+        if let remote = withLock({ currentRemote }) {
+            return remote.streamReplay(turns, maxTokens: maxTokens, temperature: temperature)
+        }
+        if let pool {
+            let tools = withLock { nativeTools }
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        await pool.configureActiveNativeTools(tools)
+                        let inner = try await pool.streamReplay(
+                            turns, maxTokens: maxTokens, temperature: temperature)
+                        for try await chunk in inner {
+                            if Task.isCancelled { break }
+                            continuation.yield(chunk)
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        return local.streamReplay(turns, maxTokens: maxTokens, temperature: temperature)
+    }
+
+    func cancelGeneration() async {
+        if let remote = withLock({ currentRemote }) {
+            await remote.cancelGeneration()
+        } else if let pool {
+            await pool.cancelActiveGeneration()
+        } else {
+            await local.cancelGeneration()
+        }
+    }
+
+    func clearCaches() async {
+        if let pool {
+            await pool.clearCaches()
+        } else {
+            await local.clearCaches()
+        }
+    }
+
+    func trimTransientMemory() async {
+        guard withLock({ currentRemote == nil }) else { return }
+        if let pool {
+            await pool.trimActiveTransientMemory()
+        } else {
+            await local.trimTransientMemory()
+        }
+    }
+
+    @discardableResult
+    func dumpIfResident() async -> Bool {
+        if let pool {
+            return await pool.dumpLargestResident()
+        }
+        return await local.dumpIfResident()
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}

@@ -1,0 +1,379 @@
+import AppKit
+import SwiftUI
+
+struct AgentTab: View {
+    @ObservedObject private var settings = SettingsStore.shared
+    @State private var loadingRegistry = false
+    @State private var registryError: String?
+
+    var body: some View {
+        TabScroll {
+            SettingsCard(title: "Harness", icon: "point.3.connected.trianglepath.dotted", footer: "An external harness runs the whole turn with its own model, tools, and login over the Agent Client Protocol. Install it and sign in once in Terminal; its permission prompts appear here as approval cards. Vamp’s model picker and the settings below apply only to the built-in harness.") {
+                SettingRow(label: "Agent harness", value: settings.selectedHarness?.command ?? "Vamp’s own agent loop") {
+                    Picker("Agent harness", selection: $settings.harnessID) {
+                        Text("Vamp (built-in)").tag(ACPHarness.builtInID)
+                        Divider()
+                        ForEach(ACPHarness.presets) { harness in
+                            Text(harness.name).tag(harness.id)
+                        }
+                        if !settings.registryHarnesses.isEmpty {
+                            Divider()
+                            ForEach(settings.registryHarnesses) { harness in
+                                Text(harness.name).tag(harness.id)
+                            }
+                        }
+                        Divider()
+                        Text("Custom command…").tag(ACPHarness.customID)
+                    }
+                    .labelsHidden()
+                }
+                SettingRow(label: "ACP registry", value: registryError ?? "\(settings.registryHarnesses.count) more agents listed") {
+                    Button(loadingRegistry ? "Loading…" : "Refresh") {
+                        loadingRegistry = true
+                        Task {
+                            do {
+                                settings.registryHarnesses = try await ACPHarness.fetchRegistry()
+                                registryError = nil
+                            } catch {
+                                registryError = error.localizedDescription
+                            }
+                            loadingRegistry = false
+                        }
+                    }
+                    .disabled(loadingRegistry)
+                }
+                if settings.harnessID == ACPHarness.customID {
+                    SettingRow(label: "Command") {
+                        TextField("my-agent --acp", text: $settings.customHarnessCommand)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 260)
+                    }
+                }
+                if settings.selectedHarness != nil {
+                    let models = settings.harnessModels[settings.harnessID] ?? []
+                    SettingRow(label: "Model", value: models.isEmpty ? "The list appears after the harness’s first run." : "Applies from the next message.") {
+                        Picker("Model", selection: Binding(
+                            get: { settings.harnessModelChoice[settings.harnessID] ?? "" },
+                            set: { settings.harnessModelChoice[settings.harnessID] = $0.isEmpty ? nil : $0 })) {
+                            Text("Harness default").tag("")
+                            ForEach(models) { model in
+                                Text(model.name).tag(model.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .disabled(models.isEmpty)
+                    }
+                }
+            }
+
+            SettingsCard(title: "Autonomy", icon: "shield.lefthalf.filled", footer: "Reads run automatically. Auto mode and Full Access continue routine actions without approval cards; destructive safeguards, imported denies, and macOS privacy permissions still apply.") {
+                SettingRow(label: "Agent mode", value: settings.agentMode.help) {
+                    Picker("Agent mode", selection: $settings.agentMode) {
+                        ForEach(AgentMode.allCases) { mode in
+                            Label(mode.label, systemImage: mode.icon).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                }
+                SettingToggle(label: "Auto-approve file edits", isOn: $settings.autoApproveEdits)
+                SettingToggle(label: "Auto-approve safe commands", isOn: $settings.autoApproveCommands)
+            }
+
+            SettingsCard(title: "Generation", icon: "slider.horizontal.3", footer: "Thermal policy caps these automatically when the Mac gets hot.") {
+                SettingRow(label: "Max agent turns") {
+                    stepperControl(label: "Max agent turns", value: $settings.maxTurns, range: 5...100, step: 1)
+                }
+                SettingRow(label: "Max tokens per turn") {
+                    stepperControl(label: "Max tokens per turn", value: $settings.maxTokensPerTurn, range: 256...32768, step: 256)
+                }
+                SettingRow(label: "Temperature") {
+                    HStack(spacing: Spacing.sm) {
+                        Slider(value: $settings.temperature, in: 0...1.5, step: 0.05)
+                            .frame(width: 220)
+                            .accessibilityLabel("Temperature")
+                            .accessibilityValue(String(format: "%.2f", settings.temperature))
+                        // Fixed-width value label so the slider never reflows.
+                        Text(String(format: "%.2f", settings.temperature))
+                            .font(.callout.monospacedDigit())
+                            .foregroundStyle(Theme.textPrimary)
+                            .frame(width: 36, alignment: .trailing)
+                    }
+                }
+            }
+
+            ExperimentalInferenceCard()
+
+            SettingsCard(
+                title: "Memory & Context",
+                icon: "brain",
+                footer: "Memory and compression still feed the agent. The status-bar inspector is optional chrome, not part of the coding path.") {
+                SettingRow(label: "Memory") {
+                    Picker("Memory", selection: $settings.memoryMode) {
+                        ForEach(MemoryMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                }
+                SettingRow(label: "Context compression") {
+                    Picker("Context compression", selection: $settings.compressionLevel) {
+                        ForEach(CompressionLevel.allCases) { level in
+                            Text(level.label).tag(level)
+                        }
+                    }
+                    .labelsHidden()
+                }
+                SettingToggle(label: "Plan mode (approve plan before tools run)", isOn: $settings.planMode)
+                SettingToggle(label: "Show model reasoning (think blocks)", isOn: $settings.showReasoning)
+                SettingToggle(
+                    label: "Show workspace context inspector",
+                    isOn: $settings.intelligenceInspectorEnabled)
+            }
+
+            SettingsCard(title: "Safety", icon: "checkmark.seal", footer: "Snapshots the working tree before each edit batch so any agent action can be undone. Verification runs detected build or test checks after successful edits; destructive safeguards remain visible in every mode.") {
+                SettingToggle(label: "Git checkpoints before edits", isOn: $settings.checkpointingEnabled)
+                SettingToggle(label: "Verify edits with project checks", isOn: $settings.verifyAfterEdits)
+            }
+
+            ComputerControlCard()
+        }
+    }
+
+    /// Value + stepper cluster shared by both numeric rows: the current value
+    /// stays visible inside the control, right-aligned and monospaced.
+    private func stepperControl(
+        label: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>,
+        step: Int
+    ) -> some View {
+        HStack(spacing: Spacing.sm) {
+            Text("\(value.wrappedValue)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+                .frame(minWidth: 40, alignment: .trailing)
+            Stepper(label, value: value, in: range, step: step)
+                .labelsHidden()
+        }
+    }
+}
+
+/// Isolated experimental inference surface. It observes live engine status
+/// without widening the invalidation scope of the ordinary generation card.
+private struct ExperimentalInferenceCard: View {
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        SettingsCard(
+            title: "Experimental inference",
+            icon: "bolt.badge.clock",
+            footer: "Off by default and independently reversible. Reload the model after changing a setting. MLX prompt reuse keeps only an in-memory verified prefix; KV8 compresses eligible attention cache after 512 tokens without changing model files. Vision models are excluded. A failed MLX experiment retries with full replay and standard KV before showing an error."
+        ) {
+            SettingToggle(label: "oMLX prompt caching", isOn: $settings.omlxEnabled)
+                .help("Uses an installed oMLX runtime for verified MLX models. Each model has a bounded 1 GB disk cache and 256 MB memory cache. Reload to apply.")
+            SettingToggle(label: "MLXFast Bonsai engine", isOn: $settings.mlxfastEnabled)
+                .disabled(!ManagedInferenceRuntime.Kind.mlxfast.supportedOnThisMac)
+                .help("Runs the separate Bonsai MLX checkpoint with the installed native Swift engine. Requires 24 GB RAM; existing GGUF files keep their current engine.")
+            if !ManagedInferenceRuntime.Kind.mlxfast.supportedOnThisMac {
+                Text("MLXFast Bonsai needs 24 GB RAM. The Bonsai GGUF model remains available on this Mac.")
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+            SettingToggle(label: "Updated llama.cpp Metal", isOn: $settings.updatedMetalEnabled)
+                .disabled(!ManagedInferenceRuntime.Kind.llamaMetal.supportedOnThisMac)
+                .help("Uses the separately installed Metal runtime only for verified GGUF models, with the existing runtime as a load fallback.")
+            if !ManagedInferenceRuntime.Kind.llamaMetal.supportedOnThisMac {
+                Text("The updated runtime exceeded this Mac's memory budget in longer Huihui replies. The existing GGUF runtime stays active.")
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+            SettingToggle(
+                label: "DFlash for Qwen3.5 9B GGUF",
+                isOn: $settings.experimentalDFlashEnabled)
+            SettingToggle(
+                label: "N-gram acceleration for other GGUF models",
+                isOn: $settings.experimentalNGramEnabled)
+            SettingToggle(
+                label: "Reuse verified MLX prompt prefixes",
+                isOn: $settings.experimentalMLXPromptCacheEnabled)
+            SettingToggle(
+                label: "Use 8-bit MLX KV cache after 512 tokens",
+                isOn: $settings.experimentalMLXQuantizedKVEnabled)
+            SettingToggle(label: "Qwen streaming: Thinking", isOn: $settings.qwenStreamingThinking)
+                .help("Enables reasoning in the model’s chat template. Off by default; takes effect on the next generation.")
+
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                HStack(spacing: Spacing.sm) {
+                    Text("GGUF adapter strength")
+                        .font(.callout)
+                    Spacer()
+                    Text(String(format: "%.2g×", settings.localLoraScale))
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Slider(value: $settings.localLoraScale, in: 0...3, step: 0.25)
+                    .accessibilityLabel("GGUF adapter strength")
+            }
+            .help("""
+            A LoRA adapter sitting next to a GGUF model's weights is applied at this \
+            strength by llama.cpp's graph — the weights themselves are never modified. \
+            0 disables it (published model behavior), 1 is the adapter exactly as \
+            authored, 2+ is a harder edit. Reload the model to apply.
+            """)
+
+            if let diagnostics = appState.lastEngineStats.qwenStreaming {
+                Text(diagnostics.summary)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: Spacing.sm) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
+                Text(statusText)
+                    .font(.callout)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var statusText: LocalizedStringResource {
+        if let runtime = appState.lastEngineStats.runtimeName {
+            return "\(runtime) is serving the loaded model."
+        }
+        if appState.activeModel?.format == .mlx {
+            let promptCache = appState.lastEngineStats.mlxPromptCacheActive
+            let kv8 = appState.lastEngineStats.mlxQuantizedKVActive
+            if promptCache && kv8 {
+                return "Verified prompt reuse and 8-bit KV cache are active."
+            }
+            if promptCache {
+                return "Verified MLX prompt reuse is active."
+            }
+            if kv8 {
+                return "8-bit MLX KV cache is active."
+            }
+            if settings.experimentalMLXPromptCacheEnabled
+                || settings.experimentalMLXQuantizedKVEnabled
+            {
+                return "MLX experiments are enabled; reload the model to apply or retry them."
+            }
+            return "Standard MLX prompt replay and KV cache are active."
+        }
+
+        switch appState.lastEngineStats.acceleration {
+        case .dflash:
+            return "DFlash is active for the loaded model."
+        case .mtp:
+            return settings.experimentalDFlashEnabled
+                ? "The loaded model is using the MTP fallback."
+                : "The loaded model is using built-in MTP."
+        case .ngram:
+            return "N-gram speculative decoding is active for the loaded model."
+        case .standard:
+            if !anyExperimentEnabled {
+                return "Standard decoding is active."
+            }
+            return "Experiments are enabled; select and reload a compatible model."
+        }
+    }
+
+    private var statusColor: Color {
+        switch appState.lastEngineStats.acceleration {
+        case .dflash: Theme.success
+        case .mtp: Theme.info
+        case .ngram: Theme.info
+        case .standard:
+            anyExperimentEnabled
+                ? Theme.warning : Theme.textTertiary
+        }
+    }
+
+    private var anyExperimentEnabled: Bool {
+        settings.experimentalDFlashEnabled
+            || settings.experimentalNGramEnabled
+            || settings.experimentalMLXPromptCacheEnabled
+            || settings.experimentalMLXQuantizedKVEnabled
+    }
+}
+
+/// Computer-use tools stay out of the agent until this switch is on.
+/// TCC rows only appear after opt-in so a first-run user is not asked
+/// for Accessibility just by opening Settings.
+private struct ComputerControlCard: View {
+    @ObservedObject private var settings = SettingsStore.shared
+    @State private var accessibilityGranted = false
+    @State private var screenRecordingGranted = false
+    @State private var requestedScreenRecording = false
+
+    var body: some View {
+        SettingsCard(
+            title: "Computer control",
+            icon: "desktopcomputer.and.arrow.down",
+            footer: settings.computerControlEnabled
+                ? "Off the coding path by default. Auto mode and Full Access run routine clicks, keys, and scrolls without approval cards once macOS access is granted. Revoke in System Settings → Privacy & Security."
+                : "Off by default. When enabled, the agent can inspect and drive other Mac apps through the approval card."
+        ) {
+            SettingToggle(
+                label: "Allow the agent to control other Mac apps",
+                isOn: $settings.computerControlEnabled)
+            if settings.computerControlEnabled {
+                permissionRow(
+                    label: "Accessibility",
+                    value: "Read app UI trees; post mouse & keyboard events",
+                    granted: accessibilityGranted,
+                    grant: { ComputerPermission.requestAccessibility() })
+                permissionRow(
+                    label: "Screen Recording",
+                    value: requestedScreenRecording && !screenRecordingGranted
+                        ? "Quit and reopen Vamp Assistant to finish"
+                        : "Capture windows for vision models",
+                    granted: screenRecordingGranted,
+                    pending: requestedScreenRecording && !screenRecordingGranted,
+                    grant: {
+                        ComputerPermission.requestScreenRecording()
+                        requestedScreenRecording = true
+                    })
+            }
+        }
+        .onAppear(perform: refresh)
+        .onChange(of: settings.computerControlEnabled) { _, enabled in
+            if enabled { refresh() }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in refresh() }
+    }
+
+    private func permissionRow(
+        label: String,
+        value: String,
+        granted: Bool,
+        pending: Bool = false,
+        grant: @escaping () -> Void
+    ) -> some View {
+        SettingRow(label: label, value: value) {
+            HStack(spacing: Spacing.sm) {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(granted ? Theme.accentBright : (pending ? Theme.warning : Theme.textTertiary))
+                        .frame(width: 7, height: 7)
+                    Text(granted ? "Granted" : (pending ? "Quit and reopen" : "Not granted"))
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                if !granted && !pending {
+                    Button("Grant…", action: grant)
+                        .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func refresh() {
+        accessibilityGranted = ComputerPermission.accessibilityGranted
+        screenRecordingGranted = ComputerPermission.screenRecordingGranted
+    }
+}

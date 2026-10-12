@@ -1,0 +1,329 @@
+import AppKit
+import Foundation
+
+// MARK: - read_file
+
+struct ReadFileTool: AgentTool {
+    let name = "read_file"
+    let summary = "Read a text file from the workspace with line numbers"
+    let risk = ToolRisk.read
+
+    // Keyed by the file's content digest: an unchanged file re-reads from the
+    // action cache (skipping decode + line rendering), and any byte change
+    // misses automatically.
+    let cachePolicy: ToolCachePolicy = .contentAddressed
+
+    func cacheInputHashes(for call: ParsedToolCall, in context: ToolContext) -> [String] {
+        guard let path = call.string("path"), !path.isEmpty else { return [] }
+        guard let url = try? context.workspace.resolve(path) else { return [] }
+        guard let digest = ContentDigest.fileDigest(at: url) else { return [] }
+        return [digest]
+    }
+
+    func applyCacheHitSideEffects(for call: ParsedToolCall, in context: ToolContext) {
+        // A cached read still counts as a read: write-after-read enforcement
+        // must hold even when the observation came from the cache.
+        guard let path = call.string("path"), !path.isEmpty else { return }
+        if let url = try? context.workspace.resolve(path) {
+            context.noteRead(url)
+        }
+    }
+
+    let schemaText = """
+        {"type":"object","properties":{
+          "path":{"type":"string","description":"Workspace-relative or absolute path"},
+          "offset":{"type":"integer","description":"1-based first line to read"},
+          "limit":{"type":"integer","description":"Max lines to return (default 800, max 3000)"}
+        },"required":["path"]}
+        """
+
+    /// Files larger than this are refused outright — loading them into
+    /// memory would dominate the model's context for no value.
+    static let maxReadBytes = 20 * 1024 * 1024
+
+    func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
+        guard let path = call.string("path"), !path.isEmpty else {
+            throw ToolError.missingArgument("path")
+        }
+        let url = try context.workspace.resolve(path)
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw ToolError.fileNotFound(path)
+        }
+
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size <= Self.maxReadBytes else {
+            throw ToolError.fileTooLarge(path, size: size, limit: Self.maxReadBytes)
+        }
+
+        let data = try Data(contentsOf: url)
+        if Self.looksBinary(data) {
+            throw ToolError.binaryFile(path)
+        }
+
+        context.noteRead(url)
+        let content = String(decoding: data, as: UTF8.self)
+        return Self.render(content: content, offset: call.int("offset") ?? 1, limit: min(call.int("limit") ?? 800, 3000))
+    }
+
+    static func render(content: String, offset: Int, limit: Int) -> String {
+        let lines = content.components(separatedBy: "\n")
+        let start = max(1, offset)
+        let end = min(lines.count, start + limit - 1)
+        guard start <= end else { return "(empty range)" }
+
+        var rendered: [String] = []
+        rendered.reserveCapacity(end - start + 1)
+        let gutterWidth = String(end).count
+        for index in start...end {
+            let line = lines[index - 1]
+            rendered.append(String(repeating: " ", count: gutterWidth - String(index).count) + "\(index)→ \(line)")
+        }
+        if end < lines.count {
+            rendered.append("… (\(lines.count - end) more lines)")
+        }
+        return rendered.joined(separator: "\n")
+    }
+
+    static func looksBinary(_ data: Data) -> Bool {
+        let sample = data.prefix(4096)
+        guard !sample.isEmpty else { return false }
+        var nonPrintable = 0
+        for byte in sample where byte == 0 || (byte < 0x20 && byte != 0x09 && byte != 0x0A && byte != 0x0D) {
+            nonPrintable += 1
+        }
+        return Double(nonPrintable) / Double(sample.count) > 0.1 || sample.contains(0)
+    }
+}
+
+// MARK: - write_file
+
+struct WriteFileTool: AgentTool {
+    let name = "write_file"
+    let summary = "Create or completely rewrite a file (read it first if it exists)"
+    let risk = ToolRisk.write
+
+    let schemaText = """
+        {"type":"object","properties":{
+          "path":{"type":"string","description":"Workspace-relative or absolute path"},
+          "content":{"type":"string","description":"The COMPLETE new file content"}
+        },"required":["path","content"]}
+        """
+
+    func preview(_ call: ParsedToolCall, in context: ToolContext) -> ApprovalPreview {
+        guard let path = call.string("path"),
+              let content = call.string("content"),
+              let url = try? context.workspace.resolve(path, access: .write).url
+        else { return .none }
+        let old = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        return .diff(DiffEngine.diff(old: old, new: content), path: path)
+    }
+
+    func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
+        guard let path = call.string("path"), !path.isEmpty else {
+            throw ToolError.missingArgument("path")
+        }
+        guard let content = call.string("content") else {
+            throw ToolError.missingArgument("content")
+        }
+        let url = try context.workspace.resolve(path, access: .write).url
+
+        if FileManager.default.fileExists(atPath: url.path), !context.hasRead(url) {
+            throw ToolError.notPreviouslyRead(path)
+        }
+
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try content.data(using: .utf8)?.write(to: url, options: .atomic)
+        context.noteRead(url)
+
+        let lineCount = content.components(separatedBy: "\n").count
+        return "wrote \(path) (\(lineCount) lines)"
+    }
+}
+
+// MARK: - save_document
+
+/// Creates a bounded text artifact outside project mode without granting the
+/// model general filesystem access. The user chooses the exact destination in
+/// a native Save panel, which also owns overwrite confirmation.
+struct SaveDocumentTool: AgentTool {
+    typealias SaveHandler = @MainActor @Sendable (String, Data) throws -> URL?
+
+    let name = "save_document"
+    let summary = "Save a generated text document to a location the user chooses"
+    let risk = ToolRisk.write
+    let schemaText = """
+        {"type":"object","properties":{
+          "suggested_name":{"type":"string","description":"Suggested filename including an appropriate extension, for example index.html or notes.md"},
+          "content":{"type":"string","description":"The complete UTF-8 document content to save"}
+        },"required":["suggested_name","content"]}
+        """
+
+    static let maxContentBytes = 4 * 1024 * 1024
+    private let saveHandler: SaveHandler
+
+    init() {
+        saveHandler = { suggestedName, data in
+            let panel = NSSavePanel()
+            panel.title = "Save Generated Document"
+            panel.message = "Choose where Vamp Assistant should save this document."
+            panel.prompt = "Save"
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = suggestedName
+            guard panel.runModal() == .OK, let url = panel.url else { return nil }
+            try data.write(to: url, options: .atomic)
+            return url
+        }
+    }
+
+    init(saveHandler: @escaping SaveHandler) {
+        self.saveHandler = saveHandler
+    }
+
+    func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
+        guard let rawName = call.string("suggested_name"), !rawName.isEmpty else {
+            throw ToolError.missingArgument("suggested_name")
+        }
+        guard let content = call.string("content") else {
+            throw ToolError.missingArgument("content")
+        }
+        let suggestedName = Self.suggestedFilename(rawName)
+        let data = Data(content.utf8)
+        guard data.count <= Self.maxContentBytes else {
+            throw ToolError.contentTooLarge(size: data.count, limit: Self.maxContentBytes)
+        }
+
+        guard let savedURL = try await saveHandler(suggestedName, data) else {
+            return "cancelled: no document was saved"
+        }
+        // The user chose this path in a native Save panel, so the in-app
+        // browser may preview it with browser_navigate even when it is
+        // outside the project workspace (project-free Assistant mode).
+        SavedDocumentRegistry.allow(savedURL)
+        return "saved \(savedURL.path) (\(ByteFormatter.bytes(Int64(data.count))))"
+    }
+
+    static func suggestedFilename(_ rawName: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let component = URL(fileURLWithPath: trimmed).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !component.isEmpty,
+              component != ".",
+              component != "..",
+              component != "/" else {
+            return "document.txt"
+        }
+        return String(component.prefix(180))
+    }
+}
+
+// MARK: - move_file
+
+struct MoveFileTool: AgentTool {
+    let name = "move_file"
+    let summary = "Move or rename a file inside the workspace"
+    let risk = ToolRisk.write
+    let treatsErrorPrefixAsFailure = true
+
+    let schemaText = """
+        {"type":"object","properties":{
+          "from":{"type":"string","description":"Current workspace-relative path"},
+          "to":{"type":"string","description":"New workspace-relative path (must not exist)"}
+        },"required":["from","to"]}
+        """
+
+    func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
+        guard let from = call.string("from"), !from.isEmpty else {
+            throw ToolError.missingArgument("from")
+        }
+        guard let to = call.string("to"), !to.isEmpty else {
+            throw ToolError.missingArgument("to")
+        }
+        let source = try context.workspace.resolve(from, access: .write).url
+        let destination = try context.workspace.resolve(to, access: .write).url
+
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            return "error: file not found: \(from)"
+        }
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            return "error: destination already exists: \(to) — refusing to overwrite"
+        }
+
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: source, to: destination)
+        // The moved file counts as read at its new location so follow-up
+        // edits pass write-after-read enforcement.
+        context.noteRead(destination)
+        return "moved \(from) → \(to)"
+    }
+}
+
+// MARK: - list_directory
+
+struct ListDirectoryTool: AgentTool {
+    let name = "list_directory"
+    let summary = "List files in a workspace directory"
+    let risk = ToolRisk.read
+    let treatsErrorPrefixAsFailure = true
+
+    // Directory contents change too fast for content addressing to be cheap;
+    // a 2-second coalescing window absorbs repeat listings in one turn.
+    let cachePolicy: ToolCachePolicy = .shortLived(2)
+
+    let schemaText = """
+        {"type":"object","properties":{
+          "path":{"type":"string","description":"Directory path (default \".\")"},
+          "recursive":{"type":"boolean","description":"Recurse into subdirectories (default false)"}
+        },"required":[]}
+        """
+
+    private static let skippedNames = FileToolsDefaults.skippedNames
+
+    func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
+        let path = call.string("path") ?? "."
+        let recursive = call.bool("recursive") ?? false
+        let url = try context.workspace.resolve(path)
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            return "error: directory not found: \(path)"
+        }
+
+        let maxEntries = 500
+        var entries: [String] = []
+
+        if recursive {
+            let enumerator = FileManager.default.enumerator(
+                at: url, includingPropertiesForKeys: [.isDirectoryKey])
+            while let item = enumerator?.nextObject() as? URL {
+                if Self.skippedNames.contains(item.lastPathComponent) {
+                    enumerator?.skipDescendants()
+                    continue
+                }
+                let relative = item.path.replacingOccurrences(of: url.path + "/", with: "")
+                let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                entries.append(isDir ? relative + "/" : relative)
+                if entries.count >= maxEntries { break }
+            }
+        } else {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? []
+            for name in names.sorted() {
+                if Self.skippedNames.contains(name) { continue }
+                var isDir: ObjCBool = false
+                let full = url.appendingPathComponent(name)
+                FileManager.default.fileExists(atPath: full.path, isDirectory: &isDir)
+                entries.append(isDir.boolValue ? name + "/" : name)
+                if entries.count >= maxEntries { break }
+            }
+        }
+
+        guard !entries.isEmpty else { return "(empty directory)" }
+        return entries.joined(separator: "\n") + (entries.count >= maxEntries ? "\n… (truncated at \(maxEntries) entries)" : "")
+    }
+}

@@ -1,0 +1,1864 @@
+import Combine
+import Foundation
+import SwiftUI
+
+/// The single door between the UI and every service. Views never touch MLX,
+/// the shell, or the file system directly — everything routes through here.
+@MainActor
+final class AppState: ObservableObject {
+
+    enum EnginePhase: Equatable {
+        case idle
+        case loading(String)
+        case ready(String)
+        case failed(String)
+
+        var errorMessage: String? {
+            if case .failed(let message) = self { return message }
+            return nil
+        }
+
+        var isReady: Bool {
+            if case .ready = self { return true }
+            return false
+        }
+    }
+
+    let settings = SettingsStore.shared
+    let tokenStore = HFTokenStore.shared
+    let modelStore = ModelStore.shared
+    let thermal = ThermalMonitor()
+    let engine: EngineRouter
+    let preferences = AppPreferencesStore.shared
+    let taskQueue = TaskQueueStore.shared
+    /// OpenAI account authentication and model discovery are delegated to the
+    /// user's installed Codex CLI. No ChatGPT refresh token is held here.
+    let codexAccount = CodexAccountStore.shared
+    let botComputers = BotComputerManager()
+    let botRuns = BotRunCoordinator()
+
+    /// Downloads run through here — the UI never touches the network layer.
+    private(set) var downloadManager: ModelDownloadManager!
+
+    /// Agent sessions — the UI drives the agent exclusively through this.
+    let sessions: AgentSessionController
+    /// Browser control host. It resumes persisted Beetcode sessions; it does
+    /// not expose a terminal or the OpenAI-compatible inference API.
+    let remoteSessionHost: RemoteSessionHost
+
+    @Published var activeModelID: String?
+    /// Selected ChatGPT-account model. This is intentionally separate from
+    /// both a local model id and a BYOK API endpoint.
+    @Published private(set) var activeCodexModelID: String?
+    /// The context window the resident engine actually runs with. GGUF loads
+    /// fit the server ctx to the RAM budget, which can be smaller than the
+    /// catalog window — compaction and the composer gauge must use this, or
+    /// llama-server hard-errors (HTTP 400) mid-session. nil → catalog value.
+    @Published var effectiveContextWindow: Int?
+    /// Effective remote metadata after applying the cached provider profile
+    /// and any user override. Local models leave this nil.
+    @Published private(set) var activeRemoteProfile: RemoteModelProfile?
+    /// OpenCode-compatible workspace catalog. It is read-only discovery data;
+    /// credentials referenced by its config stay in memory or Keychain.
+    @Published private(set) var openCodeCatalog: OpenCodeCompatibility.Catalog = .empty
+    /// True while the simulator side panel is docked — the window must be
+    /// allowed to grow so sidebar + chat + simulator never clip each other.
+    @Published var isSimulatorPanelOpen = false
+    @Published var enginePhase: EnginePhase = .idle
+    private var isUnloadingModel = false
+    @Published var currentFootprint: UInt64 = 0
+    @Published var availableBudget: UInt64 = 0
+    @Published var lastEngineStats = EngineStats()
+    @Published var sessionUsage = SessionUsage()
+    private var lastUsageSerial: UInt64 = 0
+
+    private var pressureCoordinator: MemoryPressureCoordinator?
+    private var statsTask: Task<Void, Never>?
+    private var thermalTask: Task<Void, Never>?
+    private var remoteSessionSyncTask: Task<Void, Never>?
+    private var remoteNetworkMonitorTask: Task<Void, Never>?
+    private var cancellables: Set<AnyCancellable> = []
+    /// Each specialist owns a separate transcript/controller/engine router.
+    /// Keeping these runtimes out of the foreground session is what permits
+    /// remote API and Codex runs to execute concurrently.
+    private var botRuntimes: [UUID: BotRunRuntimeHandle] = [:]
+
+    /// Local OpenAI-compatible API server (loopback-only). Lazily created when
+    /// the user enables it; nil while disabled.
+    private var apiServer: LocalAPIServer?
+    @Published var apiServerRunning = false
+    @Published var apiServerError: String?
+    @Published var remoteSessionRunning = false
+    @Published var remoteSessionError: String?
+    @Published var remotePairingCode = ""
+    @Published var remotePairingURL: String?
+    @Published var remoteSessionURL: String?
+    @Published var remotePairingExpiresAt: Date?
+    @Published var remotePairedClientCount = 0
+    @Published var remoteNetworkKind: RemoteNetworkKind?
+    /// Durable remote/background work. Terminal entries remain visible until
+    /// the user clears them so a completed remote request is auditable.
+    @Published private(set) var queuedTasks: [QueuedAgentTask] = []
+
+    private var activeQueuedTaskID: UUID?
+    private var queueDrainTask: Task<Void, Never>?
+
+    init(
+        engine: EngineRouter = EngineRouter(pool: EnginePool()),
+        hub hubOverride: (any HubServing)? = nil
+    ) {
+        // LocalForge → BeetCode rename migration: copies legacy Keychain
+        // items (session key, BYOK keys, HF token) to the new services and
+        // moves Application Support/LocalForge → BeetCode. Idempotent,
+        // no-op under tests, and must run BEFORE any store is touched.
+        LegacyMigration.runOnce()
+
+        self.engine = engine
+        // The vision sidecar serializes its Metal work through the same gate
+        // as every resident LLM engine (one command buffer per process).
+        if let gate = engine.enginePool?.sharedGate {
+            VisionEngine.shared.configure(gate: gate)
+        }
+        self.downloadManager = ModelDownloadManager(
+            tokenProvider: { HFTokenStore.currentToken() },
+            hub: hubOverride)
+
+        sessions = AgentSessionController(
+            engine: engine,
+            settings: SettingsStore.shared,
+            thermal: thermal,
+            codexAccount: codexAccount)
+        remoteSessionHost = RemoteSessionHost(engine: engine, sessions: sessions)
+        let isTestHost = Self.isTestHost
+        if !isTestHost {
+            taskQueue.recoverInterrupted()
+        }
+        queuedTasks = isTestHost ? [] : taskQueue.loadAll()
+        remoteSessionHost.enqueueTaskHandler = { [weak self] sessionID, message, images in
+            self?.enqueueRemoteTask(sessionID: sessionID, message: message, images: images)
+        }
+        remoteSessionHost.taskLookupHandler = { [weak self] sessionID in
+            self?.taskQueue.loadAll().first { $0.sessionID == sessionID && !$0.state.isTerminal }
+        }
+        remoteSessionHost.queuedTasksHandler = { [weak self] sessionID in
+            self?.taskQueue.loadAll().filter {
+                $0.sessionID == sessionID && $0.state == .queued
+            } ?? []
+        }
+        remoteSessionHost.removeQueuedTaskHandler = { [weak self] sessionID, taskID in
+            guard let self else { return false }
+            guard let task = self.taskQueue.load(id: taskID),
+                  task.sessionID == sessionID,
+                  task.state == .queued else { return false }
+            self.removeQueuedTask(taskID)
+            return true
+        }
+        remoteSessionHost.sendQueuedTaskHandler = { [weak self] sessionID, taskID in
+            guard let self else { return "The Mac is unavailable." }
+            return self.sendQueuedTask(taskID, sessionID: sessionID)
+        }
+        remoteSessionHost.steerHandler = { [weak self] sessionID, message in
+            guard let self,
+                  self.sessions.activeSessionID == sessionID,
+                  self.sessions.isRunning else { return false }
+            return self.sessions.steer(message)
+        }
+        remoteSessionHost.modelOptionsHandler = { [weak self] in
+            self?.remoteStartModels() ?? []
+        }
+        remoteSessionHost.loadedLocalModelHandler = { [weak self] in self?.remoteLoadedLocalModel }
+        remoteSessionHost.unloadModelHandler = { [weak self] modelID in
+            guard let self else { return "The Mac is unavailable." }
+            return await self.unloadRemoteModel(modelID: modelID)
+        }
+        remoteSessionHost.clipboardSharingAllowedHandler = {
+            SettingsStore.shared.remoteClipboardSharingEnabled
+        }
+        remoteSessionHost.fileSharingAllowedHandler = {
+            SettingsStore.shared.remoteFileSharingEnabled
+        }
+        remoteSessionHost.macControlAllowedHandler = {
+            SettingsStore.shared.remoteMacControlEnabled
+        }
+        remoteSessionHost.remoteMacUnlockAllowedHandler = {
+            SettingsStore.shared.remoteMacUnlockEnabled
+        }
+        RemoteMacControl.prepareLoginWindowInput()
+        remoteSessionHost.remoteMacUnlockHandler = { password in
+            try await RemoteMacControl.unlockLoginWindow(password: password)
+        }
+        remoteSessionHost.botRunsHandler = { [weak self] in self?.botRuns.runs ?? [] }
+        remoteSessionHost.startBotRunHandler = { [weak self] profileID, modelID, prompt in
+            guard let self else { return (nil, "Vamp Assistant is no longer available.") }
+            guard let specialist = BotComputerService.specialists.first(where: { $0.id == profileID }) else {
+                return (nil, BotComputerError.unknownProfile.localizedDescription)
+            }
+            let models = self.remoteStartModels()
+            let resolvedModelID = modelID.flatMap { requested in
+                models.first(where: { $0.id == requested })?.id
+            } ?? self.defaultBotModelID(in: models)
+            guard let resolvedModelID else { return (nil, "No Assistant model is available for delegation.") }
+            switch self.botRuns.start(
+                profileID: specialist.id, profileName: specialist.name,
+                modelID: resolvedModelID, prompt: prompt,
+                projectPath: self.botProjectPath
+            ) {
+            case .success(let id): return (id, nil)
+            case .failure(let error): return (nil, error.localizedDescription)
+            }
+        }
+        // Remote bot commands await runtime delivery so the phone only clears
+        // its input after the run actually accepted the command.
+        remoteSessionHost.steerBotRunHandler = { [weak self] id, message in
+            guard let self else { return false }
+            return await self.botRuns.deliverCommand(runID: id, kind: .steer, payload: message)
+        }
+        remoteSessionHost.stopBotRunHandler = { [weak self] id in
+            self?.botRuns.stop(runID: id) ?? false
+        }
+        remoteSessionHost.orchestrateBotRunsHandler = { [weak self] modelID, prompt in
+            guard let self else { return (nil, "Vamp Assistant is no longer available.") }
+            let models = self.remoteStartModels()
+            let resolved = modelID.flatMap { requested in models.first(where: { $0.id == requested })?.id }
+                ?? self.defaultBotModelID(in: models)
+            guard let resolved else { return (nil, "No Assistant model is available for orchestration.") }
+            switch self.botRuns.orchestrate(prompt: prompt, modelID: resolved, projectPath: self.botProjectPath) {
+            case .success(let id): return (id, nil)
+            case .failure(let error): return (nil, error.localizedDescription)
+            }
+        }
+        remoteSessionHost.approveBotRunHandler = { [weak self] id, approved in
+            guard let self else { return false }
+            return await self.botRuns.deliverCommand(
+                runID: id, kind: approved ? .approve : .decline)
+        }
+        remoteSessionHost.answerBotRunHandler = { [weak self] id, answer in
+            guard let self else { return false }
+            return await self.botRuns.deliverCommand(runID: id, kind: .answer, payload: answer)
+        }
+        remoteSessionHost.resumeBotRunHandler = { [weak self] id in
+            self?.botRuns.resume(runID: id) ?? false
+        }
+        remoteSessionHost.configureRunHandler = { [weak self] options in
+            self?.sessions.applyRemoteRunOptions(autoMode: options.autoMode, fullAccess: options.fullAccess)
+            self?.applyRemoteReasoningEffort(options.reasoningEffort)
+        }
+        remoteSessionHost.startSessionHandler = { [weak self] modelID, message, options in
+            guard let self else { return .rejected("Vamp Assistant is no longer available.") }
+            return await self.startRemoteSession(modelID: modelID, message: message, options: options)
+        }
+        remoteSessionHost.applyModelHandler = { [weak self] modelID, effort in
+            await self?.activateRemoteStartModel(modelID: modelID, reasoningEffort: effort)
+        }
+        botRuns.startHandler = { [weak self] run in
+            guard let self else { return .rejected("Vamp Assistant is no longer available.") }
+            return await self.startBotRun(run)
+        }
+        botRuns.steerHandler = { [weak self] runID, message in
+            self?.botRuntimes[runID]?.controller.steer(message) ?? false
+        }
+        botRuns.stopHandler = { [weak self] runID in
+            guard let runtime = self?.botRuntimes[runID] else { return false }
+            runtime.controller.stop()
+            return true
+        }
+        botRuns.approvalHandler = { [weak self] runID, approved in
+            guard let controller = self?.botRuntimes[runID]?.controller else { return false }
+            if controller.pendingPlan != nil {
+                if approved { return controller.approvePlan() }
+                controller.stop()
+                return true
+            }
+            guard controller.pendingApproval != nil else { return false }
+            controller.approve(approved)
+            return true
+        }
+        botRuns.answerHandler = { [weak self] runID, answer in
+            guard let controller = self?.botRuntimes[runID]?.controller,
+                  controller.pendingQuestion != nil else { return false }
+            controller.answerQuestion(answer)
+            return true
+        }
+        botRuns.pruneHandler = { ids in
+            Task { try? await BotComputerService().removeRunWorkspaces(runIDs: ids) }
+        }
+        Task { [weak self] in
+            await BotRunToolBridge.shared.configure { [weak self] command in
+                guard let self else { return "Vamp Assistant is no longer available." }
+                return await self.handleBotRunCommand(command)
+            }
+        }
+        sessions.activeModelIDHandler = { [weak self] in
+            if let self, self.isCodexActive, let codex = self.activeCodexModelID {
+                return "openai-codex:\(codex)"
+            }
+            if let remote = self?.engine.activeRemoteEndpoint { return remote.model }
+            return self?.activeModelID ?? ""
+        }
+        sessions.activeCodexModelIDHandler = { [weak self] in
+            guard let self, self.isCodexActive else { return nil }
+            return self.activeCodexModelID
+        }
+        sessions.activeCodexReasoningEffortHandler = { [weak self] in
+            guard let self, self.isCodexActive, let modelID = self.activeCodexModelID else { return nil }
+            return self.preferences.codexReasoningEffort(modelID: modelID)
+        }
+        sessions.onSessionReset = { [weak self] in
+            self?.sessionUsage = SessionUsage()
+            self?.lastUsageSerial = 0
+        }
+        // The loop compacts against the engine's REAL launched window (GGUF
+        // fits ctx to RAM), falling back to the catalog window for engines
+        // that size context themselves.
+        sessions.contextWindowHandler = { [weak self] in
+            self?.effectiveContextWindow ?? self?.activeModel?.contextWindow
+        }
+        sessions.maxTokensHandler = { [weak self] in
+            self?.activeRemoteProfile?.maxOutputTokens
+        }
+        sessions.openCodeCatalogHandler = { [weak self] in
+            self?.openCodeCatalog ?? .empty
+        }
+        sessions.$workspaceURL
+            .sink { [weak self] workspace in
+                self?.refreshOpenCodeCatalog(workspace: workspace)
+            }
+            .store(in: &cancellables)
+        sessions.$currentPhase
+            .sink { [weak self] phase in
+                self?.updateQueuedTaskPhase(phase)
+            }
+            .store(in: &cancellables)
+        sessions.$finishReason
+            .sink { [weak self] reason in
+                guard let reason else { return }
+                self?.finishQueuedTask(reason)
+                guard let self else { return }
+                self.botRuns.sync(
+                    sessionID: self.sessions.activeSessionID,
+                    phase: self.sessions.currentPhase,
+                    finish: reason,
+                    output: self.sessions.streamingText,
+                    trace: self.sessions.botToolTrace)
+            }
+            .store(in: &cancellables)
+        sessions.$currentPhase
+            .sink { [weak self] phase in
+                guard let self else { return }
+                self.botRuns.sync(
+                    sessionID: self.sessions.activeSessionID,
+                    phase: phase,
+                    finish: nil,
+                    output: self.sessions.streamingText)
+            }
+            .store(in: &cancellables)
+        // `/model <id>` slash command: resolve against the catalog and
+        // activate (load) the model, exactly like the Model Manager does.
+        sessions.modelSwitchHandler = { [weak self] modelID in
+            guard let self else { return }
+            guard let catalog = ModelCatalog.model(id: modelID) else {
+                self.enginePhase = .failed("Unknown model '\(modelID)' — check the Model Manager for ids.")
+                return
+            }
+            Task { await self.activate(model: catalog) }
+        }
+
+        // Download completion is handled HERE — never in a UI row — so
+        // registration is idempotent even when the Model Manager sheet is
+        // closed.
+        downloadManager.onCompletion = { [weak self] modelID in
+            self?.finalizeDownload(modelID: modelID)
+        }
+
+        // Forward child-object changes so views observing AppState re-render
+        // when downloads or the installed-model registry change.
+        downloadManager.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        botRuns.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        botComputers.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        modelStore.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        codexAccount.objectWillChange
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.objectWillChange.send()
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          !self.codexAccount.isSignedIn,
+                          self.activeCodexModelID != nil
+                    else { return }
+                    self.activeCodexModelID = nil
+                    self.enginePhase = .idle
+                }
+            }
+            .store(in: &cancellables)
+
+        // The local API server follows its Settings toggle: enabling starts it
+        // on the configured loopback port, disabling stops it. Port changes
+        // while running restart it on the new port. SettingsStore publishes via
+        // objectWillChange, so re-evaluate both values on any change.
+        settings.objectWillChange
+            .map { [settings] in
+                (
+                    settings.apiServerEnabled,
+                    settings.apiServerPort,
+                    settings.remoteSessionEnabled,
+                    settings.remoteSessionPort,
+                    settings.remoteSessionAllowLAN
+                )
+            }
+            .removeDuplicates(by: ==)
+            .sink { [weak self] _ in
+                self?.syncServers()
+            }
+            .store(in: &cancellables)
+
+        startPressureMonitoring()
+        startStatsRefresh()
+        restoreLaunchState()
+        refreshOpenCodeCatalog(workspace: sessions.workspaceURL)
+        // Honor a persisted "server enabled" across launches.
+        syncServers()
+        startRemoteNetworkMonitoring()
+        sweepOrphanedCheckpointRefs()
+    }
+
+    private func remoteStartModels() -> [RemoteStartModel] {
+        let local = ModelCatalog.all
+            .filter { $0.role == .chat && modelStore.isInstalled(catalogModel: $0) }
+            .map { RemoteStartModel(id: "local|\($0.id)", name: $0.displayName, source: "local", detail: "\($0.parameters) · \($0.quantization)") }
+        let api = remoteAPIProfiles().map { profile in
+            RemoteStartModel(
+                id: RemoteAPIModelCatalog.startModelID(for: profile),
+                name: profile.displayName ?? profile.model,
+                source: "api",
+                detail: profile.displayProviderName,
+                reasoningEfforts: profile.effectiveReasoningEfforts.map(\.rawValue),
+                defaultReasoningEffort: profile.effectiveDefaultReasoningEffort)
+        }
+        let chatGPT = codexAccount.isSignedIn ? codexAccount.models.map { model in
+            RemoteStartModel(
+                id: "chatgpt|\(model.id)",
+                name: model.displayName,
+                source: "chatgpt",
+                detail: model.description.isEmpty ? "ChatGPT account" : model.description,
+                reasoningEfforts: model.supportedReasoningEfforts,
+                defaultReasoningEffort: model.defaultReasoningEffort)
+        } : []
+        return local + chatGPT + api
+    }
+
+    var botModelOptions: [RemoteStartModel] { remoteStartModels() }
+
+    private func startBotRun(_ run: BotRunRecord) async -> RemoteSessionStartOutcome {
+        let service = BotComputerService()
+        do {
+            var computer = try await service.prepareSpecialist(profileID: run.profileID)
+            if computer.state != .running {
+                computer = try await service.start(id: computer.id)
+            }
+            botComputers.reload()
+            // A private copy to work in: the Builder's result for a step that depends on one,
+            // else the user's project, else an empty folder.
+            let builder = (run.dependencyRunIDs ?? [])
+                .compactMap { id in botRuns.runs.first { $0.id == id } }
+                .last { $0.state == .completed && $0.evidence?.phase == .code && $0.workPath != nil }
+            let seed = (builder?.workPath ?? run.projectPath).map { URL(fileURLWithPath: $0, isDirectory: true) }
+            let work = try await service.prepareRunWorkspace(
+                computerID: computer.id, runID: run.id, seed: seed)
+            botRuns.attachWorkspace(runID: run.id, path: work.path, baseTree: work.baseTree)
+            var prompt = run.prompt
+            if let builder, let path = builder.workPath, let base = builder.baseTree,
+               let patch = try? await service.patch(workPath: path, baseTree: base), !patch.isEmpty {
+                prompt += "\n\n### \(builder.profileName) changes, already in your workspace\n```diff\n"
+                    + String(patch.prefix(24_000)) + (patch.count > 24_000 ? "\n… (truncated)" : "") + "\n```"
+            }
+            var instruction = Self.remoteBotInstruction(id: run.profileID) ?? ""
+            if let project = run.projectPath {
+                instruction += "\n\nYour workspace is a private copy of the user's project "
+                    + "\(URL(fileURLWithPath: project).lastPathComponent). Nothing you change touches the "
+                    + "original; the user reviews and applies your changes afterwards."
+            }
+            let router = EngineRouter(pool: run.modelID.hasPrefix("local|") ? engine.enginePool : nil)
+            let parts = run.modelID.split(separator: "|", maxSplits: 2).map(String.init)
+            guard parts.count >= 2 else { return .rejected("That model selection is invalid.") }
+            var codexModelID: String?
+            var contextWindow: Int?
+            var maxTokens: Int?
+            switch parts[0] {
+            case "api":
+                let profiles = remoteAPIProfiles()
+                let profile = RemoteAPIModelCatalog.profile(matchingStartModelID: run.modelID, in: profiles)
+                let endpoint: RemoteEndpoint
+                if let profile {
+                    endpoint = profile.endpoint()
+                    contextWindow = profile.contextWindow
+                    maxTokens = profile.maxOutputTokens
+                } else if parts.count == 3, let provider = LLMProvider(rawValue: parts[1]) {
+                    endpoint = RemoteEndpoint(provider: provider, model: parts[2])
+                } else {
+                    return .rejected("That API model is no longer configured.")
+                }
+                guard router.useRemote(endpoint) else {
+                    return .rejected("The API model could not be activated.")
+                }
+            case "chatgpt":
+                guard codexAccount.isSignedIn,
+                      codexAccount.models.contains(where: { $0.id == parts[1] })
+                else { return .rejected("That ChatGPT model is no longer available.") }
+                codexModelID = parts[1]
+            case "local":
+                guard let model = ModelCatalog.model(id: parts[1]),
+                      let installed = modelStore.installedModel(id: model.id),
+                      modelStore.hasConfiguration(installed)
+                else { return .rejected("That local model is no longer installed.") }
+                router.useLocal()
+                try await router.load(
+                    directory: modelStore.directory(for: installed),
+                    modelID: model.id,
+                    diskBytes: installed.sizeBytes,
+                    format: modelStore.detectedFormat(installed),
+                    contextSize: model.contextWindow)
+                contextWindow = model.contextWindow
+            default:
+                return .rejected("That model source is not supported.")
+            }
+
+            let controller = AgentSessionController(
+                engine: router, settings: settings, thermal: thermal,
+                codexAccount: codexAccount)
+            controller.activeModelIDHandler = { run.modelID }
+            controller.activeCodexModelIDHandler = { codexModelID }
+            controller.activeCodexReasoningEffortHandler = { nil }
+            controller.contextWindowHandler = { contextWindow }
+            controller.maxTokensHandler = { maxTokens }
+            controller.openCodeCatalogHandler = { .empty }
+            controller.applyRemoteRunOptions(autoMode: true, fullAccess: false)
+            controller.maxTurnsLimit = run.budget?.maximumTurns
+            await controller.switchWorkspace(
+                to: URL(fileURLWithPath: work.path, isDirectory: true),
+                restoreLatest: false)
+            controller.applyRemoteIsolation(
+                computerControl: run.profileID == "navigator",
+                linuxContainer: computer.backend == .appleContainer ? LinuxContainerTarget(
+                    executable: BotComputerService.containerCLI() ?? "",
+                    containerName: computer.containerName ?? "",
+                    hostWorkspacePath: computer.workspacePath) : nil,
+                browser: BrowserSession(id: computer.id, name: computer.name))
+
+            let sessionID = UUID()
+            let now = Date()
+            let session = SessionRecord(
+                id: sessionID,
+                title: remoteSessionTitle(from: run.prompt),
+                createdAt: now,
+                updatedAt: now,
+                workspacePath: work.path,
+                modelID: Self.persistedRemoteModelID(from: run.modelID),
+                messages: [], checkpoints: [], source: .app,
+                schemaVersion: SessionRecord.currentSchemaVersion)
+            _ = SessionStore.shared.save(session)
+            SessionStore.shared.invalidateCache()
+
+            let runtime = BotRunRuntimeHandle(controller: controller)
+            runtime.bind(runID: run.id, coordinator: botRuns) { [weak self] id in
+                self?.botRuntimes[id] = nil
+            }
+            botRuntimes[run.id] = runtime
+            controller.send(
+                prompt,
+                seed: session,
+                modelInstruction: instruction.isEmpty ? nil : instruction)
+            return .accepted(sessionID)
+        } catch {
+            return .rejected(error.localizedDescription)
+        }
+    }
+
+    private func handleBotRunCommand(_ command: BotRunCommand) async -> String {
+        switch command {
+        case .list(let runID?):
+            guard let run = botRuns.runs.first(where: { $0.id == runID }) else {
+                return "No bot run has that ID."
+            }
+            let output = run.artifacts?.last(where: { $0.kind == .summary })?.value ?? run.latestOutput
+            return [
+                "\(run.profileName) · \(run.state.rawValue) · \(run.phase)",
+                run.evidence.map { "Evidence: \($0.label)" },
+                run.pendingInteraction.map { "Waiting: \($0)" },
+                run.errorMessage.map { "Error: \($0)" },
+                output.isEmpty ? nil : "Output:\n\(output)",
+            ].compactMap { $0 }.joined(separator: "\n")
+        case .list(nil):
+            guard !botRuns.runs.isEmpty else { return "No bot runs yet." }
+            return botRuns.runs.map { run in
+                let queue = run.queuePosition.map { " · queue #\($0)" } ?? ""
+                let gate = run.pendingInteraction.map { " · \($0)" } ?? ""
+                return "\(run.id.uuidString) · \(run.profileName) · \(run.state.rawValue)\(queue)\(gate) · \(run.phase)"
+            }.joined(separator: "\n")
+        case .start(let profileID, let requestedModelID, let prompt, let project):
+            guard let specialist = BotComputerService.specialists.first(where: { $0.id == profileID }) else {
+                return BotComputerError.unknownProfile.localizedDescription
+            }
+            let models = remoteStartModels()
+            let modelID = requestedModelID.flatMap { requested in
+                models.first(where: { $0.id == requested })?.id
+            } ?? defaultBotModelID(in: models)
+            guard let modelID else { return "No Assistant model is available for delegation." }
+            switch botRuns.start(
+                profileID: specialist.id, profileName: specialist.name,
+                modelID: modelID, prompt: prompt, projectPath: Self.botProject(project)
+            ) {
+            case .success(let id): return "Delegated to \(specialist.name). Run ID: \(id.uuidString)"
+            case .failure(let error): return error.localizedDescription
+            }
+        case .orchestrate(let requestedModelID, let prompt, let project):
+            let models = remoteStartModels()
+            let modelID = requestedModelID.flatMap { requested in
+                models.first(where: { $0.id == requested })?.id
+            } ?? defaultBotModelID(in: models)
+            guard let modelID else { return "No Assistant model is available for orchestration." }
+            switch botRuns.orchestrate(prompt: prompt, modelID: modelID, projectPath: Self.botProject(project)) {
+            case .success(let id): return "Workflow accepted. Workflow ID: \(id.uuidString)"
+            case .failure(let error): return error.localizedDescription
+            }
+        case .steer(let runID, let message):
+            return await botRuns.deliverCommand(runID: runID, kind: .steer, payload: message)
+                ? "Steering delivered." : "That run cannot be steered right now."
+        case .stop(let runID):
+            return botRuns.stop(runID: runID)
+                ? "Run stopped." : "That run is already finished or cannot be stopped."
+        case .respond(let runID, let action, let value):
+            switch action {
+            case "approve", "decline":
+                return await botRuns.deliverCommand(runID: runID, kind: action == "approve" ? .approve : .decline)
+                    ? "Delivered." : "Not delivered: no approval is pending, or the run rejected it."
+            case "answer":
+                guard let value else { return "An answer value is required." }
+                return await botRuns.deliverCommand(runID: runID, kind: .answer, payload: value)
+                    ? "Answer delivered." : "Not delivered: no question is pending, or the run rejected it."
+            case "resume": return botRuns.resume(runID: runID) ? "Run queued for recovery." : "That run is not recoverable."
+            case "apply": return await applyBotChanges(runID: runID)
+            default: return "Unknown bot response action."
+            }
+        }
+    }
+
+    /// Applies a finished run's changes to the project it was delegated on.
+    func applyBotChanges(runID: UUID) async -> String {
+        guard let run = botRuns.runs.first(where: { $0.id == runID }), run.state == .completed else {
+            return "Only a completed run's changes can be applied."
+        }
+        guard let project = run.projectPath, let work = run.workPath, let base = run.baseTree else {
+            return "This run has no changes to apply: it did not work on a Git project."
+        }
+        do {
+            return try await BotComputerService().applyChanges(
+                workPath: work, baseTree: base, projectPath: project)
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// The project open in the main window, which dashboard and phone runs work on.
+    var botProjectPath: String? { Self.botProject(sessions.workspaceURL) }
+
+    /// A caller's workspace counts as a project unless it is app-owned scratch
+    /// (the Assistant's chat runtime, a bot's own computer).
+    static func botProject(_ url: URL?) -> String? {
+        guard let url else { return nil }
+        let appOwned = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("BeetCode", isDirectory: true).standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        return path == appOwned || path.hasPrefix(appOwned + "/") ? nil : path
+    }
+
+    private func defaultBotModelID(in models: [RemoteStartModel]) -> String? {
+        if isCodexActive, let activeCodexModelID,
+           let model = models.first(where: { $0.id == "chatgpt|\(activeCodexModelID)" }) {
+            return model.id
+        }
+        if let endpoint = engine.activeRemoteEndpoint,
+           let model = models.first(where: { $0.id.contains(endpoint.model) }) {
+            return model.id
+        }
+        if let activeModelID,
+           let model = models.first(where: { $0.id == "local|\(activeModelID)" }) {
+            return model.id
+        }
+        return models.first?.id
+    }
+
+    private func remoteAPIProfiles() -> [RemoteModelProfile] {
+        RemoteAPIModelCatalog.profiles(
+            configuredProviders: APIKeyStore.shared.configuredProviders,
+            selectedModelByProvider: preferences.current.remoteModel,
+            savedProfiles: Array(preferences.current.remoteModelProfiles.values),
+            hasKeyForProviderID: { APIKeyStore.shared.hasKey(forProviderID: $0) },
+            openCodeProfiles: openCodeCatalog.models.map { $0.remoteProfile() }
+        )
+        .map { $0.applying(preferences.remoteModelOverride(endpoint: $0.endpoint())) }
+    }
+
+    private func applyRemoteReasoningEffort(_ effort: String?) {
+        // A request that does not carry an effort (approvals, follow-ups,
+        // auto/full access toggles) must leave the saved choice alone. Treating
+        // nil as "clear" wiped the user's per-model reasoning selection on
+        // every remote approval.
+        guard let effort else { return }
+        if let modelID = activeCodexModelID {
+            preferences.saveCodexReasoningEffort(effort, modelID: modelID)
+        } else if let endpoint = engine.activeRemoteEndpoint {
+            var override = preferences.remoteModelOverride(endpoint: endpoint) ?? RemoteModelOverride()
+            override.reasoningEffort = effort
+            preferences.saveRemoteModelOverride(override, endpoint: endpoint)
+            activeRemoteProfile = activeRemoteProfile?.applying(override)
+        }
+    }
+
+    /// Activates a remote start-model id (`local|…`, `api|…`, `chatgpt|…`).
+    /// Returns a user-facing error, or nil on success.
+    private func activateRemoteStartModel(modelID: String, reasoningEffort: String?) async -> String? {
+        guard !isUnloadingModel else { return "The model is unloading. Try again in a moment." }
+        let parts = modelID.split(separator: "|", maxSplits: 2).map(String.init)
+        guard parts.count >= 2 else { return "That model selection is invalid." }
+        switch parts[0] {
+        case "local":
+            guard let model = ModelCatalog.model(id: parts[1]), modelStore.isInstalled(catalogModel: model) else {
+                return "That local model is no longer installed."
+            }
+            await activate(model: model)
+            guard activeModelID == model.id else {
+                return enginePhase.errorMessage ?? "The local model could not be loaded."
+            }
+            return nil
+        case "api":
+            let profiles = remoteAPIProfiles()
+            let profile = RemoteAPIModelCatalog.profile(matchingStartModelID: modelID, in: profiles)
+            let endpoint: RemoteEndpoint
+            if let profile {
+                endpoint = profile.endpoint()
+            } else if parts.count == 3, let provider = LLMProvider(rawValue: parts[1]) {
+                endpoint = RemoteEndpoint(provider: provider, model: parts[2])
+            } else {
+                return "That API model is no longer configured."
+            }
+            guard await activateRemote(endpoint: endpoint) else {
+                return enginePhase.errorMessage ?? "The API model could not be activated."
+            }
+            if let effort = reasoningEffort {
+                var override = preferences.remoteModelOverride(endpoint: endpoint)
+                    ?? RemoteModelOverride()
+                override.reasoningEffort = effort
+                preferences.saveRemoteModelOverride(override, endpoint: endpoint)
+            }
+            return nil
+        case "chatgpt":
+            guard let model = codexAccount.models.first(where: { $0.id == parts[1] }) else {
+                return "That ChatGPT model is no longer available."
+            }
+            guard await activateCodex(model: model) else {
+                return enginePhase.errorMessage ?? "The ChatGPT model could not be activated."
+            }
+            preferences.saveCodexReasoningEffort(reasoningEffort, modelID: model.id)
+            return nil
+        default:
+            return "That model source is not supported."
+        }
+    }
+
+    private func startRemoteSession(
+        modelID: String,
+        message: String,
+        options: RemoteRunOptions
+    ) async -> RemoteSessionStartOutcome {
+        let sessionID = UUID()
+        if let error = await activateRemoteStartModel(modelID: modelID, reasoningEffort: options.reasoningEffort) {
+            return failedRemoteSession(id: sessionID, modelID: modelID, message: message, error: error)
+        }
+        if let path = options.resolvedWorkspacePath, !path.isEmpty {
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                return .rejected("That folder is not on this Mac anymore.")
+            }
+            await sessions.switchWorkspace(to: url, restoreLatest: false)
+        } else {
+            await sessions.switchToChatOnly()
+        }
+        sessions.applyRemoteIsolation(
+            computerControl: options.botProfileID == "navigator",
+            linuxContainer: options.linuxContainer,
+            browser: options.botBrowser)
+        let now = Date()
+        let record = SessionRecord(
+            id: sessionID,
+            title: remoteSessionTitle(from: message),
+            createdAt: now,
+            updatedAt: now,
+            workspacePath: options.resolvedWorkspacePath ?? "",
+            modelID: Self.persistedRemoteModelID(from: modelID),
+            messages: [],
+            checkpoints: [],
+            source: .app,
+            schemaVersion: SessionRecord.currentSchemaVersion)
+        _ = SessionStore.shared.save(record)
+        SessionStore.shared.invalidateCache()
+        sessions.send(
+            message,
+            seed: record,
+            modelInstruction: Self.remoteBotInstruction(id: options.botProfileID))
+        return .accepted(sessionID)
+    }
+
+    private static func persistedRemoteModelID(from startModelID: String) -> String {
+        let parts = startModelID.split(separator: "|", maxSplits: 2).map(String.init)
+        if parts.first == "chatgpt", parts.count >= 2 {
+            return "openai-codex:\(parts[1])"
+        }
+        return parts.last ?? startModelID
+    }
+
+    private static func remoteBotInstruction(id: String?) -> String? {
+        switch id {
+        case "builder":
+            "Work as a focused software builder. Inspect the existing project, implement the request completely, preserve unrelated work, and verify the result."
+        case "reviewer":
+            "Work as a careful code reviewer. Inspect the current changes, identify concrete bugs and regressions first, and give evidence-backed recommendations. Do not edit unless asked."
+        case "navigator":
+            "Work as a browser navigator. Use the available browser tools directly, keep actions scoped to the request, and summarize what changed or what you found."
+        case "researcher":
+            "Work as a technical researcher. Prefer primary sources, compare evidence, distinguish facts from inference, and return concise actionable findings."
+        default:
+            nil
+        }
+    }
+
+    private func failedRemoteSession(
+        id: UUID,
+        modelID: String,
+        message: String,
+        error: String
+    ) -> RemoteSessionStartOutcome {
+        let now = Date()
+        let record = SessionRecord(
+            id: id,
+            title: remoteSessionTitle(from: message),
+            createdAt: now,
+            updatedAt: now,
+            workspacePath: "",
+            modelID: modelID,
+            messages: [
+                SessionMessage(role: .user, content: message, toolName: nil, timestamp: now),
+                SessionMessage(role: .assistant, content: "error: \(error)", toolName: nil, timestamp: now),
+            ],
+            checkpoints: [],
+            source: .app,
+            schemaVersion: SessionRecord.currentSchemaVersion)
+        _ = SessionStore.shared.save(record)
+        SessionStore.shared.invalidateCache()
+        return .accepted(id)
+    }
+
+    private func remoteSessionTitle(from message: String) -> String {
+        let marker = "\n\nUser request:\n"
+        let visible = message.range(of: marker).map { String(message[$0.upperBound...]) } ?? message
+        return String(visible.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+    }
+
+    // MARK: Durable task queue
+
+    /// Enqueues a remote prompt even when another task is active. The caller
+    /// gets a durable id immediately; the queue drains when a compatible model
+    /// is ready and the current run reaches a terminal state.
+    func enqueueRemoteTask(sessionID: UUID, message: String, images: [ChatImage] = []) -> QueuedAgentTask? {
+        guard let record = SessionStore.shared.load(id: sessionID),
+              record.source == .app,
+              SessionStore.shared.validateWorkspaceBinding(record)
+        else { return nil }
+
+        return enqueueTask(
+            sessionID: sessionID,
+            workspacePath: record.workspacePath,
+            message: message,
+            source: "remote", images: images)
+    }
+
+    /// Queues a follow-up from the native composer while its current turn is
+    /// still running. The controller has already validated the active local
+    /// session, so this path can reserve the follow-up even during the brief
+    /// interval before the first turn is persisted to disk.
+    func enqueueLocalTask(sessionID: UUID, message: String) -> QueuedAgentTask? {
+        guard sessions.activeSessionID == sessionID else { return nil }
+        return enqueueTask(
+            sessionID: sessionID,
+            workspacePath: sessions.workspaceURL?.path ?? "",
+            message: message,
+            source: "local")
+    }
+
+    private func enqueueTask(
+        sessionID: UUID,
+        workspacePath: String,
+        message: String,
+        source: String,
+        images: [ChatImage] = []
+    ) -> QueuedAgentTask? {
+        let modelID = engine.activeRemoteEndpoint?.model ?? activeCodexModelID ?? activeModelID ?? ""
+        do {
+            let task = try taskQueue.enqueue(
+                sessionID: sessionID,
+                workspacePath: workspacePath,
+                message: message,
+                modelID: modelID,
+                source: source, images: images)
+            refreshTaskQueue()
+            drainTaskQueue()
+            return task
+        } catch {
+            Log.app.warning("Could not enqueue \(source, privacy: .public) task: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    func refreshTaskQueue() {
+        queuedTasks = taskQueue.loadAll()
+    }
+
+    func removeQueuedTask(_ id: UUID) {
+        guard activeQueuedTaskID != id else {
+            sessions.stop()
+            return
+        }
+        taskQueue.delete(id: id)
+        refreshTaskQueue()
+    }
+
+    /// Starts only one task at a time. Queued prompts remain durable while a
+    /// model is unloaded, while the app is waiting for approval, or while a
+    /// different workspace is active.
+    func drainTaskQueue() {
+        if !sessions.isRunning, activeQueuedTaskID != nil {
+            finishQueuedTask(sessions.finishReason ?? .cancelled, scheduleNext: false)
+        }
+        if !sessions.isRunning, let steer = sessions.takePendingSteer() {
+            sessions.send(steer)
+            refreshTaskQueue()
+            return
+        }
+        while activeQueuedTaskID == nil, !sessions.isRunning, isEngineReady {
+            guard let next = taskQueue.loadAll().first(where: { $0.state == .queued }) else {
+                refreshTaskQueue()
+                return
+            }
+
+            guard let record = SessionStore.shared.load(id: next.sessionID),
+                  record.workspacePath == next.workspacePath,
+                  SessionStore.shared.validateWorkspaceBinding(record)
+            else {
+                taskQueue.update(next.id) { task in
+                    task.state = .failed
+                    task.phase = nil
+                    task.lastError = "The task's workspace or session is no longer available."
+                }
+                refreshTaskQueue()
+                continue
+            }
+
+            if startQueuedTask(next) { return }
+        }
+        refreshTaskQueue()
+    }
+
+    /// Runs an existing durable item; retries never enqueue a second copy.
+    func sendQueuedTask(_ id: UUID, sessionID: UUID) -> String? {
+        guard let task = taskQueue.load(id: id), task.sessionID == sessionID else {
+            return "That queued follow-up is no longer available."
+        }
+        // A repeated request after acceptance is an acknowledgement only.
+        if task.state == .completed || (activeQueuedTaskID == id && sessions.isRunning) { return nil }
+        guard task.state == .queued else { return "That follow-up is no longer queued." }
+        guard !sessions.isRunning else { return "The Mac is still answering. Try again when it finishes." }
+        guard isEngineReady else { return "Load a model on the Mac before sending this follow-up." }
+        if activeQueuedTaskID != nil {
+            finishQueuedTask(sessions.finishReason ?? .cancelled, scheduleNext: false)
+        }
+        guard let record = SessionStore.shared.load(id: sessionID),
+              record.workspacePath == task.workspacePath,
+              SessionStore.shared.validateWorkspaceBinding(record) else {
+            return "The follow-up's session or project is no longer available."
+        }
+        return startQueuedTask(task) ? nil : "The session could not be resumed."
+    }
+
+    private func startQueuedTask(_ next: QueuedAgentTask) -> Bool {
+        activeQueuedTaskID = next.id
+        taskQueue.update(next.id) { task in
+            task.state = .running
+            task.phase = "Starting"
+            task.attempts += 1
+            task.lastError = nil
+        }
+        refreshTaskQueue()
+
+        guard sessions.continuePersistedSession(id: next.sessionID, message: next.message, images: (next.images ?? []).compactMap(\.chatImage)) else {
+            taskQueue.update(next.id) { task in
+                task.state = .failed
+                task.phase = nil
+                task.lastError = "The session could not be resumed."
+            }
+            activeQueuedTaskID = nil
+            refreshTaskQueue()
+            return false
+        }
+        return true
+    }
+
+    private var isEngineReady: Bool {
+        guard !isUnloadingModel else { return false }
+        if case .loading = enginePhase { return false }
+        if case .ready = enginePhase { return true }
+        return isCodexActive
+    }
+
+    private func updateQueuedTaskPhase(_ phase: AgentPhase) {
+        guard let id = activeQueuedTaskID else { return }
+        let state: QueuedTaskState
+        let label: String
+        switch phase {
+        case .awaitingApproval:
+            state = .awaitingApproval; label = "Needs approval"
+        case .awaitingQuestion:
+            state = .awaitingQuestion; label = "Waiting for you"
+        case .awaitingPlanApproval:
+            state = .awaitingPlan; label = "Plan ready"
+        case .planning:
+            state = .running; label = "Planning"
+        case .working:
+            state = .running; label = "Running"
+        case .verifying:
+            state = .running; label = "Verifying"
+        case .idle, .finished:
+            return
+        }
+        taskQueue.update(id) { task in
+            task.state = state
+            task.phase = label
+        }
+        refreshTaskQueue()
+    }
+
+    private func finishQueuedTask(_ reason: AgentFinish, scheduleNext: Bool = true) {
+        guard let id = activeQueuedTaskID else {
+            if scheduleNext { scheduleQueueDrain() }
+            return
+        }
+        let state: QueuedTaskState
+        let summary: String?
+        let error: String?
+        switch reason {
+        case .completed(let result):
+            state = .completed
+            summary = result
+            error = nil
+        case .cancelled:
+            state = .stopped
+            summary = nil
+            error = "Stopped by the user."
+        case .maxTurnsReached(let turns):
+            state = .failed
+            summary = nil
+            error = "The task reached its turn limit (\(turns))."
+        case .declined(let detail):
+            state = .failed
+            summary = nil
+            error = detail
+        case .engineError(let message):
+            state = .failed
+            summary = nil
+            error = message
+        }
+        taskQueue.update(id) { task in
+            task.state = state
+            task.phase = state.label
+            task.resultSummary = summary
+            task.lastError = error
+        }
+        activeQueuedTaskID = nil
+        refreshTaskQueue()
+        if scheduleNext { scheduleQueueDrain() }
+    }
+
+    private func scheduleQueueDrain() {
+        queueDrainTask?.cancel()
+        queueDrainTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            self?.drainTaskQueue()
+        }
+    }
+
+    private func refreshOpenCodeCatalog(workspace: URL?) {
+        openCodeCatalog = OpenCodeCompatibility.load(workspace: workspace)
+    }
+
+    // MARK: Launch restore (Phase 3.1)
+
+    /// One-time sweep of checkpoint pin refs left behind by deleted sessions
+    /// or by a crash between snapshot and session save. Deferred until no run
+    /// is active: a freshly created pin whose checkpoint has not been
+    /// persisted yet must never be mistaken for an orphan. Runs off the main
+    /// thread; matching is by pinned tree, so legacy refs whose session still
+    /// exists survive even though their names were never recorded.
+    private func sweepOrphanedCheckpointRefs() {
+        guard !Self.isTestHost else { return }
+        Task { @MainActor [weak self] in
+            while let self, self.sessions.isRunning {
+                try? await Task.sleep(for: .seconds(5))
+                if Task.isCancelled { return }
+            }
+            guard let self else { return }
+            let preferencePath = self.preferences.validatedWorkspaceURL()?.path
+            let activePath = self.sessions.workspaceURL?.path
+            Task.detached(priority: .utility) {
+                let store = SessionStore.shared
+                var records = store.loadAll()
+                // A failed (retryable) save still owns its pins.
+                records.append(contentsOf: store.pendingRecords)
+                let grouped = Dictionary(grouping: records, by: \.workspacePath)
+                var paths = Set(grouped.keys)
+                if let preferencePath { paths.insert(preferencePath) }
+                if let activePath { paths.insert(activePath) }
+                for path in paths where !path.isEmpty {
+                    let referenced = Set(
+                        (grouped[path] ?? []).flatMap { $0.checkpoints.map(\.treeSHA) })
+                    _ = GitCheckpointer.sweepOrphanedPins(
+                        workspacePath: path,
+                        referencedTreeSHAs: referenced)
+                }
+            }
+        }
+    }
+
+    /// Restores workspace, session, and interrupted downloads after
+    /// validating each piece. Failed restores fall back safely and never
+    /// delete stored state.
+    private func restoreLaunchState() {
+        let preferences = preferences.current
+        let isTestHost = Self.isTestHost
+
+        // A returning user should land where they stopped. Restore the saved
+        // project and chat, then continue safely into a chat-only draft when
+        // the folder has been moved/deleted or the selection was cleared.
+        if !isTestHost {
+            Task { await restorePersistedWorkspace() }
+            Log.app.info("Restoring persisted workspace and chat")
+        } else {
+            sessions.newSession()
+        }
+
+        // Model: reload the last-used local model so the composer is ready
+        // right after relaunch. lastModelID was always persisted but never
+        // restored — after a crash or ⌘Q the user came back to a greyed-out
+        // Send button ("Choose a model to run") despite having used one
+        // minutes earlier. activate() runs the full guard chain (installed,
+        // complete, chat-role, MemoryAdvisor admission) and no-ops cleanly
+        // when any of it fails. Never under the test host: an auto-load
+        // would page real weights mid-suite.
+        if !Self.isTestHost {
+            restoreLastEngine(preferences)
+        }
+
+        // Downloads: manifest scan already populated paused states; resume
+        // only when the user opted in. Never under a test host: the app's
+        // real Application Support is live there, and an auto-resumed
+        // download would hit the network mid-suite and starve fixture runs.
+        if preferences.autoResumeDownloads,
+           !Self.isTestHost {
+            for modelID in downloadManager.resumableModelIDs {
+                guard let model = ModelCatalog.model(id: modelID) else { continue }
+                startDownload(of: model)
+                Log.app.info("Auto-resuming download \(modelID, privacy: .public)")
+            }
+        }
+    }
+
+    /// Restores the last selected project and its active chat. This keeps a
+    /// project selected even when the user left it on an unsaved draft.
+    private func restorePersistedWorkspace() async {
+        guard let workspace = preferences.validatedWorkspaceURL() else {
+            sessions.newSession()
+            return
+        }
+
+        let preferences = self.preferences.current
+        await sessions.switchWorkspace(to: workspace, restoreLatest: false)
+        if let id = preferences.lastSessionID,
+           let record = SessionStore.shared.load(id: id),
+           record.workspacePath == workspace.path,
+           SessionStore.shared.validateWorkspaceBinding(record) {
+            _ = sessions.restore(record)
+        } else if let latest = await Self.latestSession(in: workspace.path),
+                  SessionStore.shared.validateWorkspaceBinding(latest) {
+            _ = sessions.restore(latest)
+        }
+    }
+
+    /// The most recent app session bound to `workspacePath`, scanned OFF the
+    /// main actor. loadAll() opens and decrypts every session file, and this
+    /// path runs right after launch (only when the persisted id is missing or
+    /// stale), so a main-thread pass here beachballs a window that is already
+    /// on screen. Semantics are unchanged: the scan still covers the whole
+    /// library, it just no longer blocks drawing.
+    private nonisolated static func latestSession(in workspacePath: String) async -> SessionRecord? {
+        await Task.detached(priority: .utility) {
+            SessionStore.shared.loadAll()
+                .first { $0.workspacePath == workspacePath && $0.source == .app }
+        }.value
+    }
+
+    // MARK: System wiring
+
+    private func startPressureMonitoring() {
+        let coordinator = MemoryPressureCoordinator(
+            onWarning: { [engine] in
+                await engine.clearCaches()
+                // ForgeCache pressure response: release disposable hot caches
+                // first; durable task capsules and disk indexes survive.
+                await ToolResultCache.shared.evictAll()
+                RepoSummaryCache.shared.clearMemory()
+            },
+            onCritical: { [weak self, engine] in
+                guard MemoryAdvisor.shouldDumpOnCriticalPressure else { return }
+                // Cancel generation BEFORE dumping: a token loop must never
+                // race the resident model leaving memory.
+                await engine.cancelGeneration()
+                await self?.sessions.stopAndWait()
+                // The vision sidecar is the cheapest thing to drop first —
+                // it holds no conversation state and reloads on demand.
+                _ = await VisionEngine.shared.dumpIfResident()
+                let dumped = await engine.dumpIfResident()
+                if dumped {
+                    MemoryAdvisor.notePressureDump()
+                    // Emergency dump: the loaded model is gone — clear the
+                    // UI state so chat is disabled until a model is loaded
+                    // again.
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.sessions.stop()
+                        self.activeModelID = nil
+                        self.enginePhase = .idle
+                        self.clearPersistedModel()
+                    }
+                }
+            })
+        coordinator.start()
+        pressureCoordinator = coordinator
+    }
+
+    private func startStatsRefresh() {
+        statsTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                // @Published emits in willSet, so writing an unchanged sample
+                // still invalidates every observer — and this loop runs
+                // forever at 2 Hz, idle or hidden. Compare before writing: on a
+                // stable machine the readout now publishes nothing until a
+                // value actually changes.
+                let footprint = MemoryAdvisor.processFootprint
+                if footprint != self.currentFootprint { self.currentFootprint = footprint }
+                let budget = MemoryAdvisor.availableBudget
+                if budget != self.availableBudget { self.availableBudget = budget }
+                let stats = await self.engine.stats
+                if stats.usageSerial > self.lastUsageSerial {
+                    self.lastUsageSerial = stats.usageSerial
+                    self.sessionUsage.add(prompt: stats.promptTokens, completion: stats.generatedTokens)
+                }
+                if stats != self.lastEngineStats { self.lastEngineStats = stats }
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+
+        // Thermal changes are forwarded directly to the engine, without
+        // waiting for the stats poll: critical heat cancels generation and
+        // stops the agent.
+        thermalTask = Task { [weak self] in
+            guard let self else { return }
+            for await state in self.thermal.$effectiveState.values {
+                if state == .critical {
+                    await self.engine.cancelGeneration()
+                    self.sessions.stop()
+                }
+            }
+        }
+    }
+
+    // MARK: Model lifecycle (Phase 3.4)
+
+    func budget(for model: CatalogModel) -> MemoryAdvisor.Budget {
+        MemoryAdvisor.budget(diskBytes: model.diskBytes, format: model.format)
+    }
+
+    var activeModel: CatalogModel? {
+        activeModelID.flatMap { ModelCatalog.model(id: $0) }
+    }
+
+    func activate(model: CatalogModel) async {
+        guard !isUnloadingModel else { return }
+        // iOS includes its selection with every follow-up. Reusing the live
+        // model must not cancel the active turn or strand its queue reservation.
+        if activeModelID == model.id, engine.source == .localMLX,
+           activeCodexModelID == nil, case .ready = enginePhase { return }
+        clearStaleLoadError()
+        // Reentrancy guard: two rapid Load clicks (or a click while a load is
+        // paging in) must not race engine swaps — the second tap is ignored.
+        if case .loading = enginePhase { return }
+        // Vision sidecars are never loadable as the chat engine — they run
+        // automatically when an image needs describing.
+        guard model.role == .chat else {
+            enginePhase = .failed("\(model.displayName) is a vision sidecar — it runs automatically for image attachments. Load a chat model instead.")
+            return
+        }
+        guard let installed = modelStore.installedModel(id: model.id) else {
+            enginePhase = .failed("\(model.displayName) is not downloaded yet.")
+            return
+        }
+        // An interrupted/corrupt download can leave a directory without its
+        // weights; surface that as a re-download prompt, not an engine error.
+        guard modelStore.hasConfiguration(installed) else {
+            enginePhase = .failed("\(model.displayName) is incomplete (missing weight files). Remove it and download again.")
+            return
+        }
+        let format = modelStore.detectedFormat(installed)
+        // Reject a model that cannot fit even on a clean machine before
+        // stopping the currently working model. This is especially important
+        // when a large MLX checkpoint is selected while a GGUF helper is
+        // already resident.
+        if model.id != activeModelID {
+            do {
+                try MemoryAdvisor.admitFreshLoad(
+                    diskBytes: installed.sizeBytes,
+                    format: format)
+            } catch {
+                enginePhase = .failed(error.localizedDescription)
+                return
+            }
+        }
+        // An active agent must fully stop before its engine is swapped:
+        // cancellation is awaited, so generation can never outlive the model.
+        enginePhase = .loading(model.displayName)
+        await sessions.stopAndWait()
+        sessions.dismissFinish()
+        activeCodexModelID = nil
+        // Remote endpoints do not own local weights, but EngineRouter keeps
+        // the remote selection until explicitly returned to local. Clear it
+        // before loading a local model so a remote session cannot continue to
+        // intercept the freshly loaded local engine.
+        if engine.activeRemoteEndpoint != nil {
+            engine.useLocal()
+            activeRemoteProfile = nil
+            effectiveContextWindow = nil
+        }
+        // Multi-resident pool: the previously active model STAYS RESIDENT
+        // (warm KV cache) — the pool evicts LRU idle residents only when the
+        // memory budget or the residency cap requires it. Single-resident
+        // routers (test doubles) keep the old unload-first behavior.
+        let constrainedLocalMachine = MemoryAdvisor.physicalMemory < 24 * 1024 * 1024 * 1024
+        if constrainedLocalMachine, activeModelID != model.id, engine.enginePool != nil {
+            await engine.unloadAll()
+            activeModelID = nil
+            effectiveContextWindow = nil
+        } else if engine.enginePool == nil, activeModelID != nil, activeModelID != model.id {
+            await engine.unload()
+            activeModelID = nil
+        }
+        let directory = modelStore.directory(for: installed)
+        enginePhase = .loading(model.displayName)
+        do {
+            // The format is detected from what's actually on disk (a GGUF
+            // download has no config.json), so user-imported models route
+            // correctly too.
+            try await engine.load(directory: directory, modelID: model.id, diskBytes: installed.sizeBytes, format: format, contextSize: model.contextWindow)
+            activeModelID = model.id
+            // The engine's REAL window (GGUF fits ctx to RAM) wins over the
+            // catalog number; the agent loop compacts against this.
+            effectiveContextWindow = await engine.effectiveContextWindow ?? model.contextWindow
+            enginePhase = .ready(model.displayName)
+            // Persist the selection only after a successful load.
+            persistActiveLocal(model.id)
+            drainTaskQueue()
+        } catch {
+            enginePhase = .failed(error.localizedDescription)
+            activeModelID = nil
+            effectiveContextWindow = nil
+            clearPersistedModel()
+        }
+    }
+
+
+    // MARK: BYOK remote engine (v0.3)
+
+    /// Switches the engine to a BYOK provider. Requires the provider's API
+    /// key to be present; returns false otherwise. The resident local model is
+    /// explicitly unloaded first so RAM/Metal are freed while remote is active.
+    @discardableResult
+    func activateRemote(endpoint: RemoteEndpoint) async -> Bool {
+        guard !isUnloadingModel else { return false }
+        if engine.activeRemoteEndpoint == endpoint, activeCodexModelID == nil,
+           case .ready = enginePhase { return true }
+        clearStaleLoadError()
+        enginePhase = .loading(endpoint.effectiveDisplayName)
+        await sessions.stopAndWait()
+        sessions.dismissFinish()
+        activeCodexModelID = nil
+        if activeModelID != nil || engine.source != .localMLX {
+            await engine.unload()
+            activeModelID = nil
+            effectiveContextWindow = nil
+        }
+        guard engine.useRemote(endpoint) else {
+            enginePhase = .failed("No API key configured for \(endpoint.effectiveDisplayName).")
+            return false
+        }
+        let baseProfile = preferences.remoteModelProfile(endpoint: endpoint)
+            ?? RemoteModelProfile(
+                provider: endpoint.provider,
+                model: endpoint.model,
+                supportsVision: endpoint.provider.supportsVision,
+                supportsTools: true,
+                supportsTemperature: true,
+                providerKey: endpoint.providerID,
+                providerDisplayName: endpoint.effectiveDisplayName,
+                apiProtocol: endpoint.effectiveProtocol,
+                baseURL: endpoint.effectiveBaseURL?.absoluteString,
+                headers: endpoint.headers,
+                apiKey: endpoint.apiKey)
+        activeRemoteProfile = baseProfile.applying(
+            preferences.remoteModelOverride(endpoint: endpoint))
+        effectiveContextWindow = activeRemoteProfile?.contextWindow
+        enginePhase = .ready("\(endpoint.effectiveDisplayName) · \(endpoint.model)")
+        persistActiveRemote(endpoint)
+        drainTaskQueue()
+        return true
+    }
+
+    /// Switches back to the local MLX engine (a local model must be loaded
+    /// for generation).
+    func deactivateRemote() {
+        Task { [weak self] in
+            self?.enginePhase = .idle
+            await self?.sessions.stopAndWait()
+            self?.sessions.dismissFinish()
+            self?.engine.useLocal()
+            self?.activeModelID = nil
+            self?.activeCodexModelID = nil
+            self?.activeRemoteProfile = nil
+            self?.effectiveContextWindow = nil
+            self?.enginePhase = .idle
+        }
+    }
+
+    var isRemoteActive: Bool {
+        if case .remote = engine.source { return true }
+        return false
+    }
+
+    var isCodexActive: Bool {
+        activeCodexModelID != nil && codexAccount.isSignedIn
+    }
+
+    /// Selects an OpenAI model through Codex's managed ChatGPT account flow.
+    /// The local MLX/remote engines are stopped so the account-backed agent
+    /// harness is the only owner of the next run's tools and permissions.
+    @discardableResult
+    func activateCodex(model: CodexModelProfile) async -> Bool {
+        guard !isUnloadingModel else { return false }
+        if activeCodexModelID == model.id, isCodexActive, case .ready = enginePhase { return true }
+        clearStaleLoadError()
+        if !codexAccount.isSignedIn {
+            await codexAccount.refresh()
+        }
+        guard codexAccount.isSignedIn else {
+            enginePhase = .failed(codexAccount.errorMessage ?? "Sign in with ChatGPT in Settings → Providers first.")
+            return false
+        }
+        enginePhase = .loading(model.displayName)
+        await sessions.stopAndWait()
+        sessions.dismissFinish()
+        if activeModelID != nil || engine.source != .localMLX {
+            await engine.unload()
+        }
+        engine.useLocal()
+        activeModelID = nil
+        activeRemoteProfile = nil
+        effectiveContextWindow = nil
+        activeCodexModelID = model.id
+        persistActiveCodex(model.id)
+        enginePhase = .ready("OpenAI account · \(model.displayName)")
+        drainTaskQueue()
+        return true
+    }
+    var remoteLoadedLocalModel: RemoteLoadedLocalModel? {
+        guard let activeModelID, engine.source == .localMLX else { return nil }
+        return RemoteLoadedLocalModel(
+            id: "local|\(activeModelID)", name: activeModel?.displayName ?? activeModelID,
+            canUnload: isEngineReady && !sessions.isRunning
+                && !botRuns.activeRuns.contains { $0.modelID.hasPrefix("local|") })
+    }
+
+    func unloadRemoteModel(modelID: String) async -> String? {
+        guard let loaded = remoteLoadedLocalModel, loaded.id == modelID else {
+            return "The loaded model changed. Refresh the model list."
+        }
+        guard loaded.canUnload else { return "Stop the active task before unloading the model." }
+        await deactivate()
+        return nil
+    }
+
+    func deactivate() async {
+        guard !isUnloadingModel else { return }
+        isUnloadingModel = true
+        defer { isUnloadingModel = false }
+        clearStaleLoadError()
+        await sessions.stopAndWait()
+        sessions.dismissFinish()
+        await engine.unload()
+        activeModelID = nil
+        activeCodexModelID = nil
+        activeRemoteProfile = nil
+        effectiveContextWindow = nil
+        enginePhase = .idle
+        clearPersistedModel()
+    }
+
+    /// A "Load failed" error belongs to ONE attempt: once the user moves on —
+    /// switches workspace, changes models, goes remote — the stale banner is
+    /// cleared so it never outlives the context that produced it (F5).
+    private func clearStaleLoadError() {
+        if case .failed = enginePhase {
+            enginePhase = .idle
+        }
+    }
+
+    // MARK: Local API server (v0.3)
+
+    /// Reconciles both network surfaces with their independent settings.
+    /// True inside the XCTest host. Binding a loopback port and starting a
+    /// LAN listener are process-wide side effects, so a test that builds an
+    /// `AppState` must not do either — nor inherit whether the developer
+    /// happens to have them switched on.
+    static var isTestHost: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.arguments.contains("--ui-smoke")
+    }
+
+    /// Reconciles both listeners with their Settings toggles.
+    ///
+    /// Skipped entirely under test: nothing ever tears these `AppState`s down,
+    /// so each one used to leave a bound socket and a thread parked in
+    /// `accept()` behind for the rest of the run. Ten of those starved the
+    /// main actor badly enough that the next test needing it never finished.
+    private func syncServers() {
+        guard !Self.isTestHost else { return }
+        syncAPIServer()
+        syncRemoteSessionHost()
+    }
+
+    /// Tailscale may connect after BeetCode launches or change interfaces
+    /// while the app stays open. Reconcile the listener periodically so a
+    /// previous "not connected" state heals without toggling Settings.
+    private func startRemoteNetworkMonitoring() {
+        guard !Self.isTestHost else { return }
+        remoteNetworkMonitorTask?.cancel()
+        remoteNetworkMonitorTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled else { return }
+                if self.settings.remoteSessionEnabled {
+                    self.syncRemoteSessionHost()
+                }
+            }
+        }
+    }
+
+    /// Reconciles the running server with the Settings toggle + port. Called
+    /// whenever either changes; idempotent otherwise.
+    private func syncAPIServer() {
+        let enabled = settings.apiServerEnabled
+        let port = settings.apiServerPort
+        Task { [weak self] in
+            guard let self else { return }
+            if enabled {
+                await self.startAPIServer(port: port)
+            } else {
+                await self.stopAPIServer()
+            }
+        }
+    }
+
+    /// Starts the loopback server. Restarted if the port differs from the
+    /// currently bound port.
+    private func startAPIServer(port: Int) async {
+        if let existing = apiServer, await existing.isRunning {
+            if await existing.actualPort == port { return }  // already right
+            await existing.stop()
+        }
+        let server = apiServer ?? LocalAPIServer(engine: engine)
+        apiServer = server
+        do {
+            try await server.start(.init(
+                port: port,
+                bindIPv6: false,
+                modelIDOverride: activeModelID,
+                bearerToken: settings.ensureAPIServerToken(),
+                allowCORS: false))
+            apiServerRunning = true
+            apiServerError = nil
+        } catch {
+            apiServerRunning = false
+            apiServerError = error.localizedDescription
+            enginePhase = .failed("Local API server: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopAPIServer() async {
+        guard let server = apiServer else { return }
+        await server.stop()
+        apiServerRunning = false
+        apiServerError = nil
+    }
+
+    /// The URL a client should point at (shown in Settings).
+    var apiServerBaseURL: String {
+        "http://127.0.0.1:\(settings.apiServerPort)"
+    }
+
+    // MARK: Remote Beetcode sessions
+
+    private func syncRemoteSessionHost() {
+        remoteSessionSyncTask?.cancel()
+        let enabled = settings.remoteSessionEnabled
+        let port = settings.remoteSessionPort
+        let allowLAN = settings.remoteSessionAllowLAN
+        remoteSessionSyncTask = Task { [weak self] in
+            guard let self else { return }
+            if enabled {
+                await self.startRemoteSessionHost(port: port, allowLAN: allowLAN)
+            } else {
+                await self.stopRemoteSessionHost()
+            }
+        }
+    }
+
+    private func startRemoteSessionHost(port: Int, allowLAN: Bool? = nil) async {
+        do {
+            try Task.checkCancellation()
+            try await remoteSessionHost.start(
+                port: port,
+                allowLAN: allowLAN ?? settings.remoteSessionAllowLAN)
+            guard !Task.isCancelled else { return }
+            if codexAccount.models.isEmpty {
+                await codexAccount.refresh()
+            }
+            remoteSessionRunning = remoteSessionHost.isRunning
+            remoteSessionError = nil
+            refreshRemoteSessionSnapshot()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            remoteSessionRunning = false
+            remoteSessionError = error.localizedDescription
+            refreshRemoteSessionSnapshot()
+        }
+    }
+
+    private func stopRemoteSessionHost() async {
+        await remoteSessionHost.stop()
+        guard !Task.isCancelled else { return }
+        remoteSessionRunning = false
+        remoteSessionError = nil
+        refreshRemoteSessionSnapshot()
+    }
+
+    func rotateRemotePairingCode() {
+        remoteSessionHost.rotatePairingCode()
+        refreshRemoteSessionSnapshot()
+    }
+
+    func revokeRemoteClients() {
+        remoteSessionHost.revokeAllClients()
+        refreshRemoteSessionSnapshot()
+    }
+
+    func retryRemoteSessionHost() {
+        remoteSessionError = nil
+        syncRemoteSessionHost()
+    }
+
+    func refreshRemoteSessionStatus() {
+        remoteSessionHost.refreshPairingState()
+        refreshRemoteSessionSnapshot()
+    }
+
+    private func refreshRemoteSessionSnapshot() {
+        let pairingCode = remoteSessionHost.pairingCode
+        let pairingURL = remoteSessionHost.pairingURL
+        let browserURL = remoteSessionHost.browserURL
+        let pairingExpiresAt = remoteSessionHost.pairingExpiresAt
+        let pairedClientCount = remoteSessionHost.pairedClientCount
+        let networkKind = remoteSessionHost.networkKind
+        if remotePairingCode != pairingCode { remotePairingCode = pairingCode }
+        if remotePairingURL != pairingURL { remotePairingURL = pairingURL }
+        if remoteSessionURL != browserURL { remoteSessionURL = browserURL }
+        if remotePairingExpiresAt != pairingExpiresAt { remotePairingExpiresAt = pairingExpiresAt }
+        if remotePairedClientCount != pairedClientCount { remotePairedClientCount = pairedClientCount }
+        if remoteNetworkKind != networkKind { remoteNetworkKind = networkKind }
+    }
+
+    private func restoreLastEngine(_ preferences: AppPreferences) {
+        switch preferences.lastEngineKind {
+        case "chatgpt":
+            if let modelID = preferences.lastCodexModelID, !modelID.isEmpty {
+                Task { await self.restoreCodex(modelID: modelID) }
+                Log.app.info("Auto-reloading ChatGPT account model \(modelID, privacy: .public)")
+                return
+            }
+        case "remote":
+            if let endpoint = preferences.lastRemoteEndpoint {
+                Task { await self.activateRemote(endpoint: endpoint) }
+                Log.app.info("Auto-reloading remote \(endpoint.effectiveDisplayName, privacy: .public)")
+                return
+            }
+        default:
+            break
+        }
+        if let modelID = preferences.lastModelID,
+           let catalog = ModelCatalog.model(id: modelID) {
+            Task { await self.activate(model: catalog) }
+            Log.app.info("Auto-reloading last model \(modelID, privacy: .public)")
+        }
+    }
+
+    private func restoreCodex(modelID: String) async {
+        await codexAccount.refresh()
+        let model = codexAccount.models.first { $0.id == modelID }
+            ?? CodexAccountCatalog.presets.first { $0.id == modelID }
+            ?? CodexModelProfile(
+                id: modelID,
+                displayName: modelID,
+                description: "",
+                defaultReasoningEffort: nil,
+                supportedReasoningEfforts: [],
+                inputModalities: ["text"],
+                isDefault: false,
+                hidden: false)
+        _ = await activateCodex(model: model)
+    }
+
+    var statusModelLabel: String {
+        switch enginePhase {
+        case .ready(let name):
+            // Never render an empty chip: an unnamed ready engine still has
+            // to say something truthful.
+            return name.isEmpty ? "Model ready" : name
+        case .loading(let name):
+            return name.isEmpty ? "Loading model…" : name
+        case .failed, .idle:
+            if isCodexActive, let id = activeCodexModelID {
+                return id
+            }
+            if isRemoteActive, let endpoint = engine.activeRemoteEndpoint {
+                return "\(endpoint.effectiveDisplayName) · \(endpoint.model)"
+            }
+            let name = activeModel?.displayName ?? ""
+            return name.isEmpty ? "No model" : name
+        }
+    }
+
+    var statusModelHelp: String {
+        if isCodexActive { return "Active ChatGPT account model" }
+        if isRemoteActive { return "Active remote (BYOK) engine" }
+        if activeModelID != nil { return "Active local MLX model" }
+        return "No model loaded"
+    }
+
+    private func persistActiveLocal(_ modelID: String) {
+        var preferences = preferences.current
+        preferences.lastEngineKind = "local"
+        preferences.lastModelID = modelID
+        self.preferences.save(preferences)
+    }
+
+    private func persistActiveCodex(_ modelID: String) {
+        var preferences = preferences.current
+        preferences.lastEngineKind = "chatgpt"
+        preferences.lastCodexModelID = modelID
+        preferences.lastModelID = nil
+        self.preferences.save(preferences)
+    }
+
+    private func persistActiveRemote(_ endpoint: RemoteEndpoint) {
+        var preferences = preferences.current
+        preferences.lastEngineKind = "remote"
+        preferences.lastRemoteEndpoint = endpoint
+        preferences.lastModelID = nil
+        self.preferences.save(preferences)
+    }
+
+    private func clearPersistedModel() {
+        var preferences = preferences.current
+        var changed = false
+        if preferences.lastModelID != nil { preferences.lastModelID = nil; changed = true }
+        if preferences.lastEngineKind != nil { preferences.lastEngineKind = nil; changed = true }
+        if preferences.lastCodexModelID != nil { preferences.lastCodexModelID = nil; changed = true }
+        if preferences.lastRemoteEndpoint != nil { preferences.lastRemoteEndpoint = nil; changed = true }
+        if changed { self.preferences.save(preferences) }
+    }
+
+    // MARK: Download lifecycle (Phase 3.3)
+
+    func destination(for model: CatalogModel) -> URL {
+        // ModelStore's base directory (Application Support/BeetCode/Models/<id>)
+        modelStore.modelsBaseURL.appendingPathComponent(model.id, isDirectory: true)
+    }
+
+    func startDownload(of model: CatalogModel) {
+        guard modelStore.installedModel(id: model.id) == nil else { return }
+        downloadManager.start(model: model, into: destination(for: model))
+    }
+
+    func pauseDownload(of model: CatalogModel) {
+        downloadManager.pause(modelID: model.id)
+    }
+
+    func cancelDownload(of model: CatalogModel) {
+        downloadManager.cancel(modelID: model.id, directory: destination(for: model))
+    }
+
+    /// Called by the download manager when a download reaches `.completed` —
+    /// regardless of whether the Model Manager sheet is open. Sizes the
+    /// directory off the main actor and registers it. Downloading never
+    /// activates: loading is an explicit user decision, so a background
+    /// download can never interrupt a running agent or switch engines.
+    func finalizeDownload(modelID: String) {
+        guard let model = ModelCatalog.model(id: modelID) else { return }
+        let directory = destination(for: model)
+        let catalog = model
+        Task { [weak self] in
+            guard let self else { return }
+            let size = (try? await Task.detached {
+                try ModelStore.sizeOfDirectory(directory)
+            }.value) ?? catalog.diskBytes
+            _ = self.modelStore.register(catalogModel: catalog, sizeBytes: size)
+            Log.downloads.info("Registered \(modelID, privacy: .public) — ready to load")
+        }
+    }
+}

@@ -1,0 +1,232 @@
+import XCTest
+@testable import BeetCode
+
+/// move_file / find_files — the two file-operation tools added for coding
+/// agent coverage (refactors and name-based discovery).
+final class FileOperationToolTests: XCTestCase {
+
+    private var workspace: Workspace!
+    private var tempDir: URL!
+
+    override func setUpWithError() throws {
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lf-fileops-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        workspace = Workspace(root: tempDir)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    private func call(_ name: String, _ arguments: [String: LFJSONValue]) -> ParsedToolCall {
+        ParsedToolCall(name: name, arguments: .object(arguments), index: 0)
+    }
+
+    // MARK: move_file
+
+    func testMoveRenamesFile() async throws {
+        try "content".write(to: tempDir.appendingPathComponent("old.swift"), atomically: true, encoding: .utf8)
+        let context = ToolContext(workspace: workspace)
+        let output = try await MoveFileTool().execute(
+            call("move_file", ["from": .string("old.swift"), "to": .string("Sources/new.swift")]),
+            in: context)
+        XCTAssertTrue(output.contains("old.swift → Sources/new.swift"), output)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("old.swift").path))
+        let moved = try String(contentsOf: tempDir.appendingPathComponent("Sources/new.swift"), encoding: .utf8)
+        XCTAssertEqual(moved, "content")
+    }
+
+    func testMoveRefusesToOverwrite() async throws {
+        try "a".write(to: tempDir.appendingPathComponent("a.swift"), atomically: true, encoding: .utf8)
+        try "b".write(to: tempDir.appendingPathComponent("b.swift"), atomically: true, encoding: .utf8)
+        let context = ToolContext(workspace: workspace)
+        let output = try await MoveFileTool().execute(
+            call("move_file", ["from": .string("a.swift"), "to": .string("b.swift")]),
+            in: context)
+        XCTAssertTrue(output.contains("refusing to overwrite"), output)
+        // Both files untouched.
+        XCTAssertEqual(try String(contentsOf: tempDir.appendingPathComponent("b.swift"), encoding: .utf8), "b")
+    }
+
+    func testMoveMissingSourceIsAnObservationNotACrash() async throws {
+        let context = ToolContext(workspace: workspace)
+        let output = try await MoveFileTool().execute(
+            call("move_file", ["from": .string("nope.swift"), "to": .string("x.swift")]),
+            in: context)
+        XCTAssertTrue(output.contains("file not found"), output)
+    }
+
+    /// Tools that report failure via an "error:" string must not be recorded
+    /// as successful actions (which previously also counted as a successful
+    /// workspace mutation and entered duplicate suppression).
+    func testMoveFailureIsClassifiedAsFailedByExecutor() async throws {
+        let context = ToolContext(workspace: workspace)
+        let executor = ToolExecutor(tools: [MoveFileTool()], context: context)
+        let outcome = await executor.execute(
+            call("move_file", ["from": .string("nope.swift"), "to": .string("x.swift")]))
+        XCTAssertTrue(outcome.failed)
+        XCTAssertTrue(outcome.output.hasPrefix("error:"), outcome.output)
+
+        // A real move is still a success.
+        try "content".write(to: tempDir.appendingPathComponent("real.swift"), atomically: true, encoding: .utf8)
+        let moved = await executor.execute(
+            call("move_file", ["from": .string("real.swift"), "to": .string("moved.swift")]))
+        XCTAssertFalse(moved.failed)
+    }
+
+    func testMoveOutsideWorkspaceIsRefused() async throws {
+        try "secret".write(to: tempDir.appendingPathComponent("in.swift"), atomically: true, encoding: .utf8)
+        let context = ToolContext(workspace: workspace)
+        do {
+            _ = try await MoveFileTool().execute(
+                call("move_file", ["from": .string("in.swift"), "to": .string("../outside.swift")]),
+                in: context)
+            XCTFail("expected workspace refusal")
+        } catch {
+            // Workspace resolve throws — the file must stay put.
+            XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appendingPathComponent("in.swift").path))
+        }
+    }
+
+    // MARK: save_document
+
+    func testSaveDocumentWritesOnlyToTheUserChosenURL() async throws {
+        let chosenURL = tempDir.appendingPathComponent("chosen-output.html")
+        let tool = SaveDocumentTool { _, data in
+            try data.write(to: chosenURL, options: .atomic)
+            return chosenURL
+        }
+        let context = ToolContext(workspace: workspace)
+        let output = try await tool.execute(
+            call("save_document", [
+                "suggested_name": .string("nested/index.html"),
+                "content": .string("<h1>Ready</h1>"),
+            ]),
+            in: context)
+
+        XCTAssertEqual(
+            try String(contentsOf: chosenURL, encoding: .utf8),
+            "<h1>Ready</h1>")
+        XCTAssertTrue(output.contains(chosenURL.path), output)
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: tempDir.appendingPathComponent("nested/index.html").path))
+    }
+
+    func testSaveDocumentCancellationIsReportedHonestly() async throws {
+        let tool = SaveDocumentTool { _, _ in nil }
+        let output = try await tool.execute(
+            call("save_document", [
+                "suggested_name": .string("notes.md"),
+                "content": .string("hello"),
+            ]),
+            in: ToolContext(workspace: workspace))
+        XCTAssertEqual(output, "cancelled: no document was saved")
+    }
+
+    func testSaveDocumentSanitizesSuggestedFilename() {
+        XCTAssertEqual(SaveDocumentTool.suggestedFilename("../unsafe/index.html"), "index.html")
+        XCTAssertEqual(SaveDocumentTool.suggestedFilename("/"), "document.txt")
+    }
+
+    func testSaveDocumentRefusesOversizedContentBeforeSaving() async {
+        let tool = SaveDocumentTool { _, _ in nil }
+        let oversized = String(
+            repeating: "x",
+            count: SaveDocumentTool.maxContentBytes + 1)
+        do {
+            _ = try await tool.execute(
+                call("save_document", [
+                    "suggested_name": .string("large.txt"),
+                    "content": .string(oversized),
+                ]),
+                in: ToolContext(workspace: workspace))
+            XCTFail("Expected the document size guard to reject the save")
+        } catch let error as ToolError {
+            guard case .contentTooLarge(let size, let limit) = error else {
+                return XCTFail("Expected contentTooLarge, got \(error)")
+            }
+            XCTAssertEqual(size, SaveDocumentTool.maxContentBytes + 1)
+            XCTAssertEqual(limit, SaveDocumentTool.maxContentBytes)
+        } catch {
+            XCTFail("Expected ToolError, got \(error)")
+        }
+    }
+
+    // MARK: find_files
+
+    func testFindFilesByGlob() async throws {
+        try "x".write(to: tempDir.appendingPathComponent("App.swift"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(
+            at: tempDir.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+        try "x".write(to: tempDir.appendingPathComponent("Tests/AppTests.swift"), atomically: true, encoding: .utf8)
+        try "x".write(to: tempDir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+        let context = ToolContext(workspace: workspace)
+        let output = try await FindFilesTool().execute(
+            call("find_files", ["pattern": .string("*Tests.swift")]), in: context)
+        XCTAssertTrue(output.contains("Tests/AppTests.swift"), output)
+        XCTAssertFalse(output.contains("App.swift\n"), "anchored glob must not match non-Tests files: \(output)")
+        XCTAssertFalse(output.contains("README.md"), output)
+    }
+
+    func testGlobAliasMatchesFindFiles() async throws {
+        try "x".write(to: tempDir.appendingPathComponent("App.swift"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(
+            at: tempDir.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+        try "x".write(to: tempDir.appendingPathComponent("Tests/AppTests.swift"), atomically: true, encoding: .utf8)
+        let context = ToolContext(workspace: workspace)
+        let output = try await FindFilesTool(name: "glob").execute(
+            call("glob", ["pattern": .string("*Tests.swift")]), in: context)
+        XCTAssertTrue(output.contains("Tests/AppTests.swift"), output)
+    }
+
+    func testFindFilesSkipsNoiseAndSymlinks() async throws {
+        try FileManager.default.createDirectory(
+            at: tempDir.appendingPathComponent("node_modules"), withIntermediateDirectories: true)
+        try "x".write(to: tempDir.appendingPathComponent("node_modules/dep.js"), atomically: true, encoding: .utf8)
+        let context = ToolContext(workspace: workspace)
+        let output = try await FindFilesTool().execute(
+            call("find_files", ["pattern": .string("*.js")]), in: context)
+        XCTAssertTrue(output.contains("no files matching"), output)
+    }
+
+    // MARK: snapshot completeness (install detection)
+
+    func testCompleteSnapshotRules() {
+        // GGUF: the single weight file is enough, no config.json needed.
+        XCTAssertTrue(ModelStore.isCompleteSnapshot(dirNames: ["model.gguf"]))
+        // MLX: config + weights.
+        XCTAssertTrue(ModelStore.isCompleteSnapshot(dirNames: ["config.json", "model.safetensors"]))
+        // Interrupted downloads never count.
+        XCTAssertFalse(ModelStore.isCompleteSnapshot(dirNames: ["model.gguf", "x.incomplete"]))
+        XCTAssertFalse(ModelStore.isCompleteSnapshot(dirNames: ["config.json", "model.safetensors.incomplete"]))
+        // Config without weights is not loadable.
+        XCTAssertFalse(ModelStore.isCompleteSnapshot(dirNames: ["config.json", "tokenizer.json"]))
+        XCTAssertFalse(ModelStore.isCompleteSnapshot(dirNames: []))
+    }
+
+    // MARK: background processes
+
+    func testBackgroundProcessStartListStop() async throws {
+        BackgroundProcessStore.resetAll()
+        defer { BackgroundProcessStore.resetAll() }
+        let context = ToolContext(workspace: workspace)
+        let start = try await BackgroundProcessTool().execute(
+            call("background_process", [
+                "action": .string("start"),
+                "command": .string("sleep 30"),
+            ]),
+            in: context)
+        XCTAssertTrue(start.contains("started bg-"), start)
+        let listed = try await BackgroundStatusTool().execute(
+            call("background_status", ["action": .string("list")]), in: context)
+        XCTAssertTrue(listed.contains("running"), listed)
+        XCTAssertTrue(listed.contains("sleep 30"), listed)
+        let id = listed.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init) ?? ""
+        let stopped = try await BackgroundProcessTool().execute(
+            call("background_process", ["action": .string("stop"), "id": .string(id)]),
+            in: context)
+        XCTAssertTrue(stopped.contains("stopped"), stopped)
+    }
+}

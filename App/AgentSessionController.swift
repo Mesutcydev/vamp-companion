@@ -1,0 +1,2988 @@
+import Foundation
+import SwiftUI
+
+/// Bridges the AgentLoop actor to SwiftUI: consumes the event stream and
+/// publishes transcript state. The UI talks only to this controller.
+@MainActor
+final class AgentSessionController: ObservableObject {
+
+    private enum CodexApprovalKind {
+        case commandOrFile
+        case permissions(LFJSONValue)
+        case dynamicTool(ParsedToolCall)
+        case acpPermission(id: LFJSONValue, options: [LFJSONValue])
+    }
+
+    struct TranscriptItem: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case user(String)
+            case assistant(String)
+            case toolCall(ToolInvocation)
+            case toolResult(id: UUID, output: String, failed: Bool, toolName: String?)
+            case reasoning(String)
+            case checkpoint(SessionCheckpoint)
+            case notice(String)
+        }
+
+        let id: UUID
+        var kind: Kind
+        var answerMetrics: AnswerMetrics? = nil
+    }
+
+    @Published private(set) var transcript: [TranscriptItem] = []
+    @Published private(set) var streamingText = ""
+    /// True while the model is inside a reasoning block (`<think>…</think>`
+    /// or a repetition filler loop) — the transcript shows a proper
+    /// "Reasoning…" indicator instead of raw filler text.
+    @Published private(set) var isReasoningVisible = false
+    /// The reasoning channel currently being generated. It stays separate
+    /// from `streamingText` so an answer can stream while the model's visible
+    /// work remains available above it.
+    @Published private(set) var liveReasoningText = ""
+    @Published private(set) var isRunning = false
+    @Published private(set) var pendingApproval: ApprovalRequest?
+    @Published private(set) var pendingQuestion: String?
+    @Published private(set) var pendingQuestionChoices: [String] = []
+    private var pendingQuestionID: UUID?
+    @Published private(set) var pendingPlan: String?
+    private var pendingPlanID: UUID?
+    /// Live plan tasks from the current remote run. Replaced wholesale by
+    /// each `turn/plan/updated` snapshot so one card updates in place
+    /// instead of appending a transcript line per update.
+    @Published private(set) var livePlan: [PlanEntry] = []
+    @Published private(set) var currentPhase: AgentPhase = .idle
+    @Published private(set) var finishReason: AgentFinish?
+    @Published private(set) var persistenceError: String?
+
+    /// One structured plan task. Identity follows the step text, which is
+    /// what the remote protocol guarantees per snapshot.
+    struct PlanEntry: Identifiable, Equatable {
+        let step: String
+        let status: String
+        var id: String { step }
+
+        var isComplete: Bool { status.lowercased() == "completed" }
+        var isInProgress: Bool {
+            let status = status.lowercased()
+            return status == "in_progress" || status == "inprogress" || status == "running"
+        }
+    }
+    /// Follow-up used when a Codex (or other non-loop) run is interrupted so
+    /// the next turn can start immediately instead of waiting in the queue.
+    private var pendingSteerMessage: String?
+    @Published private(set) var workspaceURL: URL?
+    @Published private(set) var gitOutput: String?
+    /// True when the open folder has project MCP/hooks the user has not trusted.
+    @Published private(set) var workspaceTrustNeeded = false
+    /// Selected OpenCode-compatible primary agent. Build is the native
+    /// default; Plan is also available from the composer without changing
+    /// the rest of the session surface.
+    @Published var selectedOpenCodeAgentName: String? = "build"
+    private(set) var activeSessionID: UUID?
+
+    private var loop: AgentLoop?
+    /// Retained separately from the agent loop so a stop or workspace switch
+    /// can cancel the short preparation window before the loop is created.
+    private var startTask: Task<Void, Never>?
+    private var eventTask: Task<Void, Never>?
+    /// Live MCP servers for the current run; disconnected when it ends.
+    private let mcpRegistry = MCPRegistry()
+    /// Live approval overrides for the current run ("Always approve" taps).
+    private(set) var approvalOverrides: ApprovalOverrides?
+    /// Identifies the current run; events from a cancelled older run are
+    /// rejected so they can never mutate a newer run's UI state.
+    private var runID = UUID()
+    /// Token deltas accumulate here and publish in ~50 ms batches: at local
+    /// model speeds per-token publishing causes quadratic string copying and
+    /// re-layout for no visible gain. Twenty UI updates per second remains
+    /// visually continuous while leaving more CPU time for local inference.
+    private var pendingTokenBuffer = ""
+    private var tokenFlushTask: Task<Void, Never>?
+    private var pendingReasoningPublish = false
+    /// Unfiltered stream accumulator — the source for display filtering
+    /// (think-block removal happens on the accumulated text, not deltas).
+    private var rawStreamingText = ""
+    /// Exact-answer smoke prompts are rendered only from the agent's final
+    /// message, so a local finetune's conversational filler never flashes in
+    /// the transcript while it is generating.
+    private var exactAnswerOverride: String?
+    /// Wall-clock task timing powers the quiet metadata row under the final
+    /// answer. It intentionally includes preparation and tool work, matching
+    /// the "worked for …" timing users expect from Codex-style chat.
+    private var runStartedAt: Date?
+
+    /// Test seam for the otherwise private project-free runtime directory.
+    /// The directory exists only because engines require a working directory;
+    /// chat-only prompts never expose it as a workspace or register tools.
+    static var overrideChatRuntimeDirectory: URL?
+
+    /// Remote Auto / Full Access apply only to the current phone-started run.
+    /// Local Mac sends call `clearRemoteRunOptions()` so leftover remote
+    /// permissions never write Settings or YOLO a later composer turn.
+    private var remoteRunActive = false
+    private var remoteAutoMode = false
+    private var remoteFullAccess = false
+    private var remoteComputerControl = false
+    private var remoteLinuxContainer: LinuxContainerTarget?
+    private(set) var remoteBrowserSession: BrowserSession?
+    /// Only specialist bots get a private browser, so this marks a bot run.
+    private var isBotRun: Bool { remoteBrowserSession != nil }
+    /// A bot run's turn budget; the user's own setting still caps it.
+    var maxTurnsLimit: Int?
+
+    // Account-backed OpenAI runs are hosted by Codex app-server rather than
+    // AgentLoop. Keeping this state beside the existing loop lets the same
+    // transcript, approval card, reasoning surface, and Stop button work for
+    // both backends without ever running two tool harnesses for one turn.
+    private var codexThreadID: String?
+    private var codexTurnID: String?
+    private var codexApprovalRequestID: Int?
+    private var codexApprovalInvocation: ToolInvocation?
+    private var codexApprovalKind: CodexApprovalKind?
+    private var codexDynamicExecutor: ToolExecutor?
+    private var codexQuestionRequestID: Int?
+    private var codexQuestionID: String?
+    private var codexItemInvocations: [String: ToolInvocation] = [:]
+    private var codexStreamingText = ""
+    private var codexReasoningText = ""
+    private var codexRecord: SessionRecord?
+
+    // External ACP harness runs (Settings → Agent → Harness) reuse the Codex
+    // state above for streaming, tool rows, approvals, and persistence. The
+    // harness process lives across turns; its session belongs to one chat.
+    private var acpClient: ACPClient?
+    private var acpSession: ACPSessionInfo?
+    private var acpSessionID: String? { acpSession?.id }
+    private var acpSessionOwner: UUID?
+    private var isACPRun = false
+
+    /// Supplies the active model ID (AppState owns that truth).
+    var activeModelIDHandler: () -> String = { "" }
+    /// Supplies the active account-backed Codex model, if the AppState has
+    /// selected one in the composer. Account mode is deliberately separate
+    /// from BYOK remote endpoints and local MLX models.
+    var activeCodexModelIDHandler: () -> String? = { nil }
+    /// Supplies the user's per-model reasoning effort for account-backed turns.
+    var activeCodexReasoningEffortHandler: () -> String? = { nil }
+    /// Called when the user starts a fresh chat — AppState resets session usage.
+    var onSessionReset: (() -> Void)?
+    /// Supplies the context window compaction should target: the engine's
+    /// real launched ctx when known (GGUF fits it to RAM), else the catalog
+    /// window. nil → the Configuration default (32 K).
+    var contextWindowHandler: () -> Int? = { nil }
+    /// Supplies a remote model's declared output ceiling when known. Local
+    /// models continue to use the user's configured per-turn budget.
+    var maxTokensHandler: () -> Int? = { nil }
+    /// AppState owns the workspace-scoped compatibility catalog.
+    var openCodeCatalogHandler: () -> OpenCodeCompatibility.Catalog = { .empty }
+
+    let engine: any LLMEngine
+    private let codexAccount: CodexAccountStore
+    private let settings: SettingsStore
+    private let thermal: ThermalMonitor
+
+    init(
+        engine: any LLMEngine,
+        settings: SettingsStore,
+        thermal: ThermalMonitor,
+        codexAccount: CodexAccountStore = .shared
+    ) {
+        self.engine = engine
+        self.codexAccount = codexAccount
+        self.settings = settings
+        self.thermal = thermal
+    }
+
+    func applyRemoteRunOptions(autoMode: Bool, fullAccess: Bool) {
+        remoteRunActive = true
+        remoteAutoMode = autoMode
+        remoteFullAccess = fullAccess
+        // A phone may change Auto/Full Access while the current loop is
+        // waiting on an approval. Propagate that choice into the actor before
+        // the approval is resolved so the following tool call does not create
+        // another card under the old mode.
+        let uninterrupted = fullAccess || autoMode
+        if let loop {
+            Task { await loop.updatePermissionMode(fullAccess: uninterrupted) }
+        }
+    }
+
+    /// Effective agent mode for the currently selected remote run. Remote
+    /// clients use this metadata to keep their controls in sync with the run
+    /// that is actually executing instead of falling back to the Mac's global
+    /// settings (which may intentionally be in Goal mode).
+    var remoteRunAgentMode: String? {
+        guard remoteRunActive else { return nil }
+        return remoteAutoMode ? "auto" : "goal"
+    }
+
+    /// The raw Full Access choice for the active remote run, reported to
+    /// clients separately from `remoteRunAgentMode`. Auto mode is its own
+    /// modality — folding it into this flag made the phone render every AUTO
+    /// run as FULL. Effective permission logic still treats Auto as
+    /// uninterrupted (`effectiveFullAccess`).
+    var remoteRunFullAccess: Bool? {
+        guard remoteRunActive else { return nil }
+        return remoteFullAccess
+    }
+
+    func applyRemoteIsolation(
+        computerControl: Bool,
+        linuxContainer: LinuxContainerTarget?,
+        browser: BrowserSession? = nil
+    ) {
+        remoteComputerControl = computerControl
+        remoteLinuxContainer = linuxContainer
+        remoteBrowserSession = browser
+        if let browser {
+            BrowserController.controller(for: browser).reveal(openPanel: false)
+        }
+    }
+
+    func clearRemoteRunOptions() {
+        remoteRunActive = false
+        remoteAutoMode = false
+        remoteFullAccess = false
+        remoteComputerControl = false
+        remoteLinuxContainer = nil
+        remoteBrowserSession = nil
+        BrowserController.shared.reveal(openPanel: false)
+    }
+
+    private var effectiveAgentIsAuto: Bool {
+        remoteRunActive ? remoteAutoMode : settings.agentMode == .auto
+    }
+
+    private var effectiveAgentIsGoal: Bool {
+        remoteRunActive ? !remoteAutoMode : settings.agentMode == .goal
+    }
+
+    private var effectivePlanMode: Bool {
+        // Full Access is an explicit uninterrupted-run choice. A plan card is
+        // an approval gate too, so keeping it enabled here would make the
+        // setting appear ineffective even though every tool is auto-approved.
+        if effectiveFullAccess { return false }
+        return remoteRunActive ? !remoteAutoMode : settings.planMode
+    }
+
+    private var effectiveFullAccess: Bool {
+        if remoteRunActive {
+            return remoteFullAccess || remoteAutoMode
+        }
+        return settings.remoteFullAccessEnabled || settings.agentMode == .auto
+    }
+
+    private var effectiveComputerControl: Bool {
+        remoteRunActive ? remoteComputerControl : settings.computerControlEnabled
+    }
+
+    // MARK: Task lifecycle
+
+    func send(
+        _ message: String,
+        attachments: [ComposerAttachment] = [],
+        images: [ChatImage] = [],
+        seed: SessionRecord? = nil,
+        modelInstruction: String? = nil
+    ) {
+        guard !isRunning else { return }
+
+        // Reserve identity before asynchronous model/MCP preparation so a
+        // remote client can subscribe to the exact chat immediately.
+        if let seed {
+            activeSessionID = seed.id
+        } else if activeSessionID == nil {
+            activeSessionID = UUID()
+        }
+
+        // Reserve the run synchronously. Without this reservation two remote
+        // HTTP requests can both pass the guard before the async MCP/model
+        // preparation marks the loop as running.
+        isRunning = true
+        runID = UUID()
+        runStartedAt = Date()
+        // A stale event task must never outlive the run it belongs to.
+        eventTask?.cancel()
+        isACPRun = false
+        codexTurnID = nil
+        codexApprovalRequestID = nil
+        codexApprovalInvocation = nil
+        codexApprovalKind = nil
+        codexDynamicExecutor = nil
+        codexQuestionRequestID = nil
+        codexQuestionID = nil
+        codexItemInvocations.removeAll()
+        codexStreamingText = ""
+        codexReasoningText = ""
+        pendingApproval = nil
+        pendingQuestion = nil
+        pendingQuestionChoices = []
+        pendingPlan = nil
+        pendingPlanID = nil
+        livePlan = []
+        finishReason = nil
+        exactAnswerOverride = activeCodexModelIDHandler() == nil && settings.selectedHarness == nil
+            ? PromptBuilder.exactRequestedAnswer(in: message)
+            : nil
+
+        startTask = Task { [weak self] in
+            guard let self else { return }
+            await self.startRun(
+                message: message,
+                attachments: attachments,
+                images: images,
+                seed: seed,
+                modelInstruction: modelInstruction)
+            self.startTask = nil
+        }
+    }
+
+    /// The async half of `send`: connects MCP servers (bounded, best-effort)
+    /// and then starts the loop with built-in + MCP tools merged.
+    private func startRun(
+        message: String,
+        attachments: [ComposerAttachment],
+        images: [ChatImage],
+        seed: SessionRecord?,
+        modelInstruction: String?
+    ) async {
+        guard isRunning, !Task.isCancelled else {
+            isRunning = false
+            return
+        }
+        if !images.isEmpty, !(await supportsRemoteImages()) {
+            isRunning = false
+            currentPhase = .finished
+            let failure = "This model cannot read images. Select a vision model with its projector loaded, then retry the queued message."
+            finishReason = .engineError(failure)
+            publishFailure(failure)
+            return
+        }
+        guard isRunning, !Task.isCancelled else { return }
+        let qwenTextOnly = activeModelIDHandler() == QwenStreamArtifact.modelID
+        if qwenTextOnly && !attachments.isEmpty {
+            isRunning = false
+            currentPhase = .finished
+            let failure = "Qwen streaming currently supports text only. Remove attachments or select another model."
+            finishReason = .engineError(failure)
+            publishFailure(failure)
+            return
+        }
+        let projectWorkspace = workspaceURL
+        let chatOnly = projectWorkspace == nil || qwenTextOnly
+        let workspace: URL
+        do {
+            workspace = try projectWorkspace ?? Self.chatRuntimeDirectory()
+        } catch {
+            let failure = "Could not prepare chat storage: \(error.localizedDescription)"
+            isRunning = false
+            currentPhase = .finished
+            finishReason = .engineError(failure)
+            transcript.append(TranscriptItem(id: UUID(), kind: .user(message)))
+            publishFailure(failure)
+            return
+        }
+        let workspaceScope = Workspace(root: workspace)
+
+        // Prepared turn: the transcript shows the user's clean message; the
+        // MODEL receives bounded attachment context. The two never mix.
+        var displayText = attachments.isEmpty ? message : message + "  ·  " + Self.attachmentSummary(attachments)
+        if !images.isEmpty { displayText += "  ·  \(images.count == 1 ? "1 image" : "\(images.count) images")" }
+        transcript.append(TranscriptItem(id: UUID(), kind: .user(displayText)))
+        let prepare = { (seesImages: Bool) async -> PreparedTurn in
+            var prepared = await Self.expand(
+                attachments: attachments,
+                message: message,
+                nativeImageInput: !attachments.isEmpty && seesImages)
+            prepared.images.append(contentsOf: images)
+            prepared.text = modelInstruction.map {
+                "Specialist instruction: \($0)\n\nUser request:\n\(prepared.text)"
+            } ?? prepared.text
+            return prepared
+        }
+
+        // Continuation seed: an explicit seed wins; otherwise the persisted
+        // record for the ACTIVE session is resumed so restored and continued
+        // sessions keep their history and checkpoints.
+        let persistenceScope = projectWorkspace?.path ?? ""
+        let continuationSeed = seed ?? Self.persistedSeed(
+            sessionID: activeSessionID,
+            workspacePath: persistenceScope)
+
+        // The harness says whether it takes images once it has started, so it
+        // prepares the turn itself.
+        if let harness = settings.selectedHarness {
+            await startHarnessRun(
+                harness,
+                workspace: workspace,
+                prepare: prepare,
+                displayText: displayText,
+                seed: continuationSeed,
+                chatOnly: chatOnly)
+            return
+        }
+
+        // A GGUF model served with a multimodal projector sees the pixels itself;
+        // every other engine keeps the described-image path.
+        let prepared = await prepare(await engine.supportsImageInput)
+        let modelText = prepared.text
+        if !prepared.images.isEmpty {
+            // Visible proof of HOW the image reached the model: sent as
+            // pixels to a projector, not paraphrased by a sidecar.
+            let count = prepared.images.count
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                "\(count == 1 ? "Image" : "\(count) images") sent to \(activeModelIDHandler()) as native image input.")))
+        }
+
+
+        // Account-backed OpenAI runs use Codex's own agent harness. It owns
+        // command execution, file changes, MCP, and sandbox decisions; Beet
+        // Code only renders the resulting events and forwards user approvals.
+        if let codexModelID = activeCodexModelIDHandler() {
+            await startCodexRun(
+                modelID: codexModelID,
+                workspace: workspace,
+                modelText: modelText,
+                displayText: displayText,
+                seed: continuationSeed,
+                chatOnly: chatOnly)
+            return
+        }
+
+        // MCP: connect configured servers, collect their tools. Failures are
+        // surfaced as notices but never block the run. A constrained local
+        // model cannot afford the full tool/schema prefill on every turn, so
+        // it gets a compact core tool set and a lean prompt instead.
+        let constrainedLocalModel = Self.isConstrainedLocalModel(
+            engine: engine,
+            modelID: activeModelIDHandler())
+        let trusted = !chatOnly && WorkspaceTrust.isTrusted(workspace)
+        if !chatOnly && WorkspaceTrust.needsConsent(workspace) {
+            workspaceTrustNeeded = true
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                "This project wants to run MCP servers or hooks. Trust the workspace to enable them.")))
+        } else {
+            workspaceTrustNeeded = false
+        }
+        var mcpTools: [any AgentTool] = []
+        if !chatOnly {
+            let mcpResult = await mcpRegistry.start(
+                workspaceRoot: workspace,
+                includeOpenCode: trusted && !constrainedLocalModel,
+                includeWorkspace: trusted && !constrainedLocalModel)
+            guard isRunning, !Task.isCancelled else {
+                isRunning = false
+                return
+            }
+            for error in mcpResult.errors {
+                transcript.append(TranscriptItem(id: UUID(), kind: .notice(error)))
+            }
+            if !mcpResult.connectedServers.isEmpty {
+                transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                    "MCP servers connected: \(mcpResult.connectedServers.joined(separator: ", ")) (\(mcpResult.tools.count) tools)")))
+            }
+            mcpTools = mcpResult.tools
+        }
+        let tools: [any AgentTool] = qwenTextOnly ? [] : chatOnly
+            ? Self.sessionTools(
+                computerControlEnabled: effectiveComputerControl,
+                chatOnly: true,
+                botRun: isBotRun)
+            : constrainedLocalModel
+            ? Self.constrainedLocalTools
+            : Self.sessionTools(
+                computerControlEnabled: effectiveComputerControl,
+                linuxGuest: remoteLinuxContainer != nil,
+                botRun: isBotRun)
+                + mcpTools
+
+        if constrainedLocalModel && !chatOnly {
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                "Memory-safe local mode: using a compact prompt and core coding tools so this model can answer without exhausting RAM.")))
+        }
+        if let linux = remoteLinuxContainer {
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                "Shell commands run as a full Linux shell inside micro-VM \(linux.containerName). Git, Python, Node, compilers, and pipes are available. Files stay in this bot’s workspace.")))
+        }
+        if let browser = remoteBrowserSession {
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                "\(browser.name) has a private in-app browser. Cookies and logins stay with this bot.")))
+        }
+
+        let autoApproveEdits = settings.autoApproveEdits || effectiveAgentIsAuto
+        let autoApproveCommands = settings.autoApproveCommands || effectiveAgentIsAuto
+        let maxTurns = min(settings.maxTurns, maxTurnsLimit ?? settings.maxTurns)
+        let configuredMaxTokensPerTurn = min(
+            settings.maxTokensPerTurn,
+            maxTokensHandler() ?? settings.maxTokensPerTurn)
+        let maxTokensPerTurn = qwenTextOnly ? min(settings.maxTokensPerTurn, 512) : constrainedLocalModel
+            ? Self.constrainedLocalTokenBudget(configuredMaxTokensPerTurn)
+            : configuredMaxTokensPerTurn
+        let configuredContextWindow = contextWindowHandler() ?? 32_768
+        let contextWindowTokens = constrainedLocalModel
+            ? min(configuredContextWindow, 16_384)
+            : configuredContextWindow
+        // Smaller local models are more reliable with deterministic tool and
+        // short-answer behavior. Keep the user's setting for larger/remote
+        // models, but cap constrained local turns at a low sampling value.
+        let temperature = constrainedLocalModel
+            ? min(settings.temperature, 0.25)
+            : settings.temperature
+        let checkpointingEnabled = settings.checkpointingEnabled
+        let showReasoning = settings.showReasoning
+        let catalog = chatOnly ? .empty : openCodeCatalogHandler()
+        let projectPolicy = chatOnly ? nil : ProjectPolicy.load(workspaceRoot: workspace)
+        let preferredAgentName = projectPolicy?.agent ?? selectedOpenCodeAgentName
+        let selectedAgent = chatOnly
+            ? nil
+            : catalog.agent(named: preferredAgentName) ?? catalog.agent(named: "build")
+        // Full Access/Auto is explicitly an uninterrupted run. A project
+        // policy may still select the Plan specialist, but that specialist
+        // must not re-introduce a plan approval card after the user chose the
+        // no-interruption mode.
+        let planMode = !chatOnly
+            && !effectiveFullAccess
+            && (effectivePlanMode || selectedAgent?.name.caseInsensitiveCompare("plan") == .orderedSame)
+        let goalMode = !chatOnly && effectiveAgentIsGoal
+        let outputStyle = projectPolicy?.outputStyle ?? settings.outputStyle
+        let compatibilityPermissions = chatOnly
+            ? .empty
+            : catalog.permissions.merged(with: selectedAgent?.permissions ?? .empty)
+        // Per-run live overrides: "Always approve" on an approval card flips
+        // these, taking effect immediately for THIS running loop.
+        let runOverrides = ApprovalOverrides()
+        var permissions = PermissionGate(
+            autoApproveEdits: autoApproveEdits,
+            autoApproveCommands: autoApproveCommands,
+            fullAccess: effectiveFullAccess,
+            workspace: workspaceScope,
+            guestShell: remoteLinuxContainer != nil,
+            overrides: runOverrides)
+        permissions.openCodePermissions = compatibilityPermissions
+        approvalOverrides = runOverrides
+
+        // TypeSafe guardrails (opt-in): built only when one of the two
+        // settings is on AND a key is stored. No key → nil → every guardrail
+        // path in the loop no-ops and behavior is exactly what it was.
+        let typeSafeEnabled = !chatOnly
+            && (settings.typeSafeContentScreening || settings.typeSafeCommandEscalation)
+        let typeSafeGuard = typeSafeEnabled
+            ? TypeSafeGuard.live(
+                model: settings.typeSafeModel,
+                policy: TypeSafePolicy(
+                    screeningThreshold: settings.typeSafeScreeningThreshold,
+                    escalationThreshold: settings.typeSafeEscalationThreshold))
+            : nil
+
+        // Long-term memory is per-workspace; built when the setting is on.
+
+        // The session ID is decided HERE so undo/restore can find the
+        // persisted record (the loop persists under this ID). A continuation
+        // keeps the SAME id — never mint a fresh one on top of a restored
+        // record, or undo would target a session that does not exist.
+        let sessionID = continuationSeed?.id ?? seed?.id ?? activeSessionID ?? UUID()
+        activeSessionID = sessionID
+
+        let agentLoop = AgentLoop(
+            engine: engine,
+            workspace: workspaceScope,
+            tools: tools,
+            permissions: permissions,
+            configuration: AgentLoop.Configuration(
+                maxTurns: maxTurns,
+                maxTokensPerTurn: maxTokensPerTurn,
+                temperature: temperature,
+                checkpointingEnabled: !chatOnly && checkpointingEnabled,
+                contextWindowTokens: contextWindowTokens,
+                thermalTokenCeiling: thermal.maxTokens(ceiling: maxTokensPerTurn),
+                verifyAfterEdits: !chatOnly && settings.verifyAfterEdits,
+                reliabilityV2: !chatOnly,
+                showReasoning: showReasoning,
+                planMode: planMode,
+                goalMode: goalMode,
+                memoryMode: chatOnly || constrainedLocalModel ? .off : settings.memoryMode,
+                compressionLevel: constrainedLocalModel ? .aggressive : settings.compressionLevel,
+                outputStyle: outputStyle,
+                agentName: chatOnly || constrainedLocalModel ? nil : selectedAgent?.name,
+                agentPrompt: chatOnly || constrainedLocalModel ? nil : selectedAgent?.prompt,
+                intelligenceContext: !chatOnly && !constrainedLocalModel,
+                allowSubagents: !chatOnly && !constrainedLocalModel,
+                allowAskUser: !chatOnly,
+                leanPrompt: constrainedLocalModel,
+                chatOnly: chatOnly,
+                typeSafeContentScreening: !chatOnly && settings.typeSafeContentScreening,
+                typeSafeCommandEscalation: !chatOnly && settings.typeSafeCommandEscalation),
+            modelID: activeModelIDHandler(),
+            sessionID: sessionID,
+            seedRecord: continuationSeed,
+            repoIndex: chatOnly || constrainedLocalModel
+                ? nil
+                : RepoIndexer.build(root: workspace, taskHint: modelText),
+            memory: chatOnly || constrainedLocalModel || settings.memoryMode == .off
+                ? nil
+                : AgentMemory(workspacePath: workspace.path),
+            taskHint: modelText,
+            linuxContainer: remoteLinuxContainer,
+            browserSession: remoteBrowserSession,
+            typeSafe: typeSafeGuard)
+        loop = agentLoop
+        let runToken = runID
+
+        eventTask = Task { [weak self] in
+            let stream = await agentLoop.run(userMessage: modelText, images: prepared.images)
+            for await event in stream {
+                guard let self else { return }
+                self.handle(event, runID: runToken)
+            }
+            // The stream ended (possibly without .finished after a cancel):
+            // never leave the UI stuck in a running state.
+            self?.streamEnded(runID: runToken)
+            // Teardown: MCP servers must not outlive the run that owns them.
+            await self?.mcpRegistry.stop()
+        }
+    }
+
+    // MARK: External ACP harness runs
+
+    private func startHarnessRun(
+        _ harness: ACPHarness,
+        workspace: URL,
+        prepare: (Bool) async -> PreparedTurn,
+        displayText: String,
+        seed: SessionRecord?,
+        chatOnly: Bool
+    ) async {
+        isACPRun = true
+        var record = seed ?? SessionRecord(
+            id: activeSessionID ?? UUID(),
+            title: String(displayText.prefix(80)),
+            createdAt: Date(),
+            updatedAt: Date(),
+            workspacePath: "",
+            modelID: "",
+            messages: [],
+            checkpoints: [],
+            source: .app,
+            schemaVersion: SessionRecord.currentSchemaVersion)
+        record.workspacePath = chatOnly ? "" : workspace.path
+        record.modelID = "acp:\(harness.id)"
+        record.source = .app
+        record.messages.append(SessionMessage(
+            role: .user,
+            content: displayText,
+            toolName: nil,
+            timestamp: Date()))
+        record.updatedAt = Date()
+        codexRecord = record
+        activeSessionID = record.id
+        SessionStore.shared.currentSessionID = record.id
+        persistSessionRecord(record)
+
+        do {
+            if let existing = acpClient {
+                let running = await existing.isRunning
+                if existing.harness != harness || !running {
+                    await existing.stop()
+                    acpClient = nil
+                }
+            }
+            let client: ACPClient
+            if let existing = acpClient {
+                client = existing
+            } else {
+                transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                    "Starting \(harness.name) (\(harness.command))…")))
+                client = ACPClient(harness: harness)
+                do {
+                    try await client.start()
+                } catch {
+                    await client.stop()
+                    throw error
+                }
+                acpClient = client
+                acpSession = nil
+            }
+            let prepared = await prepare(await client.supportsImages)
+            var prompt = prepared.text
+            if acpSession == nil || acpSessionOwner != record.id {
+                // Same MCP scope as the built-in loop: user config always,
+                // project config only in a trusted workspace.
+                let trusted = !chatOnly && WorkspaceTrust.isTrusted(workspace)
+                let servers = chatOnly ? [:] : MCPConfig.load(
+                    workspaceRoot: workspace, includeOpenCode: trusted, includeWorkspace: trusted).servers
+                acpSession = try await client.newSession(cwd: workspace, mcpServers: servers)
+                acpSessionOwner = record.id
+                rememberHarnessModels(harness)
+                // A fresh harness session has no memory of this chat.
+                var history = seed
+                history?.codexThreadID = nil
+                prompt = Self.codexPrompt(seed: history, current: prepared.text)
+            }
+            // Checked every turn, so a pick made mid-chat applies to the next message.
+            if let choice = settings.harnessModelChoice[harness.id], let session = acpSession,
+               choice != session.currentModelID, session.models.contains(where: { $0.id == choice }) {
+                do {
+                    try await client.setModel(choice, in: session)
+                    acpSession?.currentModelID = choice
+                } catch {
+                    transcript.append(TranscriptItem(id: UUID(), kind: .notice(
+                        "Could not switch \(harness.name) to \(choice): \(error.localizedDescription)")))
+                }
+            }
+            guard isRunning, !Task.isCancelled, let sessionID = acpSessionID else { return }
+            let images = prepared.images
+            codexStreamingText = ""
+            codexReasoningText = ""
+            currentPhase = .working
+            let token = runID
+            let stream = await client.events()
+            eventTask = Task { [weak self] in
+                for await message in stream {
+                    self?.handleACP(message, runID: token)
+                }
+            }
+            Task { [weak self] in
+                var stopReason = "end_turn"
+                var failure: String?
+                do {
+                    stopReason = try await client.prompt(sessionID: sessionID, text: prompt, images: images)
+                } catch {
+                    failure = error.localizedDescription
+                }
+                // Stop already finished this run; the harness's late
+                // "cancelled" reply must not finish it twice.
+                guard let self, self.isRunning else { return }
+                let reason: AgentFinish = if let failure {
+                    .engineError(failure)
+                } else if stopReason == "cancelled" {
+                    .cancelled
+                } else if stopReason == "refusal" {
+                    .engineError("\(harness.name) refused the request.")
+                } else {
+                    .completed(Self.codexCompletionSummary(self.codexStreamingText))
+                }
+                self.finishCodex(reason, runID: token)
+            }
+        } catch {
+            guard isRunning, !Task.isCancelled else { return }
+            finishCodex(.engineError(
+                error.localizedDescription + "\nIf \(harness.name) needs installing or sign-in, run `\(harness.command)` once in Terminal."),
+                runID: runID)
+        }
+    }
+
+    /// Keeps the harness's model list for Settings; the harness default is
+    /// the current model until the user picks one.
+    private func rememberHarnessModels(_ harness: ACPHarness) {
+        guard let models = acpSession?.models, !models.isEmpty,
+              settings.harnessModels[harness.id] != models else { return }
+        settings.harnessModels[harness.id] = models
+    }
+
+    private func handleACP(_ message: ACPMessage, runID token: UUID) {
+        guard token == runID, isRunning else {
+            if let id = message.id {
+                Task { await acpClient?.respond(id: id, result: ACPClient.cancelledPermission) }
+            }
+            return
+        }
+        if let id = message.id {
+            handleACPPermission(id: id, params: message.params)
+            return
+        }
+        guard message.method == "session/update",
+              message.params["sessionId"]?.stringValue == acpSessionID,
+              let update = message.params["update"]?.objectValue
+        else { return }
+
+        switch update["sessionUpdate"]?.stringValue {
+        case "agent_message_chunk":
+            guard let text = update["content"]?.objectValue?["text"]?.stringValue, !text.isEmpty else { return }
+            codexStreamingText += text
+            pendingTokenBuffer += text
+            scheduleTokenFlush()
+        case "agent_thought_chunk":
+            guard let text = update["content"]?.objectValue?["text"]?.stringValue, !text.isEmpty else { return }
+            codexReasoningText += text
+            if settings.showReasoning {
+                pendingReasoningPublish = true
+                scheduleTokenFlush()
+            }
+        case "tool_call", "tool_call_update":
+            handleACPToolCall(update)
+        case "plan":
+            livePlan = (update["entries"]?.arrayValue ?? []).compactMap { entry in
+                guard let object = entry.objectValue, let step = object["content"]?.stringValue else { return nil }
+                return PlanEntry(step: step, status: object["status"]?.stringValue ?? "pending")
+            }
+        case "config_option_update":
+            guard var session = acpSession, let harness = acpClient?.harness else { return }
+            ACPClient.applyModels(from: update, to: &session)
+            acpSession = session
+            rememberHarnessModels(harness)
+        default:
+            break
+        }
+    }
+
+    private func handleACPToolCall(_ update: [String: LFJSONValue]) {
+        guard let callID = update["toolCallId"]?.stringValue else { return }
+        if codexItemInvocations[callID] == nil {
+            let invocation = ToolInvocation(
+                name: ACPClient.toolName(kind: update["kind"]?.stringValue),
+                argumentsJSON: (update["rawInput"] ?? .object([:])).encoded(),
+                summary: update["title"]?.stringValue ?? "Tool call")
+            codexItemInvocations[callID] = invocation
+            transcript.append(TranscriptItem(id: UUID(), kind: .toolCall(invocation)))
+            appendCodexMessage(role: .toolCall, content: invocation.argumentsJSON, toolName: invocation.name)
+        }
+        guard let invocation = codexItemInvocations[callID],
+              let status = update["status"]?.stringValue,
+              status == "completed" || status == "failed"
+        else { return }
+        let output = ACPClient.toolOutput(update)
+        transcript.append(TranscriptItem(
+            id: UUID(),
+            kind: .toolResult(id: invocation.id, output: output, failed: status == "failed", toolName: invocation.name)))
+        appendCodexMessage(role: .toolResult, content: output, toolName: invocation.name)
+    }
+
+    private func handleACPPermission(id: LFJSONValue, params: [String: LFJSONValue]) {
+        let options = params["options"]?.arrayValue ?? []
+        if effectiveFullAccess || effectiveAgentIsAuto {
+            Task { await acpClient?.respond(
+                id: id,
+                result: ACPClient.permissionResult(options: options, approved: true, always: false)) }
+            return
+        }
+        let toolCall = params["toolCall"]?.objectValue ?? [:]
+        let invocation = toolCall["toolCallId"]?.stringValue.flatMap { codexItemInvocations[$0] }
+            ?? ToolInvocation(
+                name: ACPClient.toolName(kind: toolCall["kind"]?.stringValue),
+                argumentsJSON: (toolCall["rawInput"] ?? .object([:])).encoded(),
+                summary: toolCall["title"]?.stringValue ?? "The harness wants to use a tool")
+        codexApprovalKind = .acpPermission(id: id, options: options)
+        pendingApproval = ApprovalRequest(id: UUID(), invocation: invocation, preview: .none)
+        currentPhase = .awaitingApproval
+    }
+
+    // MARK: Codex app-server runs
+
+    private func startCodexRun(
+        modelID: String,
+        workspace: URL,
+        modelText: String,
+        displayText: String,
+        seed: SessionRecord?,
+        chatOnly: Bool
+    ) async {
+        guard codexAccount.isSignedIn else {
+            finishCodex(
+                .engineError("Sign in with ChatGPT in Settings → Providers before choosing an OpenAI account model."),
+                runID: runID)
+            return
+        }
+
+        let sessionID = seed?.id ?? activeSessionID ?? UUID()
+        var record = seed ?? SessionRecord(
+            id: sessionID,
+            title: String(displayText.prefix(80)),
+            createdAt: Date(),
+            updatedAt: Date(),
+            workspacePath: chatOnly ? "" : workspace.path,
+            modelID: "openai-codex:\(modelID)",
+            messages: [],
+            checkpoints: [],
+            source: .app,
+            schemaVersion: SessionRecord.currentSchemaVersion)
+        record.workspacePath = chatOnly ? "" : workspace.path
+        record.modelID = "openai-codex:\(modelID)"
+        record.source = .app
+        let dynamicTools = Self.sessionTools(
+            computerControlEnabled: effectiveComputerControl,
+            chatOnly: true,
+            linuxGuest: remoteLinuxContainer != nil,
+            botRun: isBotRun)
+        let dynamicToolNames = dynamicTools.map(\.name).sorted()
+        var promptSeed = seed
+        if (record.codexDynamicToolNames ?? []) != dynamicToolNames {
+            // Dynamic tools are fixed at thread/start. Start a fresh Codex
+            // thread when the opt-in set changes, while replaying the bounded
+            // visible conversation into that thread below.
+            record.codexThreadID = nil
+            promptSeed?.codexThreadID = nil
+        }
+        record.codexDynamicToolNames = dynamicToolNames
+        let codexContext = ToolContext(workspace: Workspace(root: workspace))
+        codexContext.linuxContainer = remoteLinuxContainer
+        codexContext.browserSession = remoteBrowserSession
+        codexDynamicExecutor = ToolExecutor(
+            tools: dynamicTools,
+            context: codexContext)
+        record.messages.append(SessionMessage(
+            role: .user,
+            content: displayText,
+            toolName: nil,
+            timestamp: Date()))
+        record.updatedAt = Date()
+        codexRecord = record
+        activeSessionID = record.id
+        SessionStore.shared.currentSessionID = record.id
+        persistSessionRecord(record)
+
+        let threadInput = Self.codexPrompt(seed: promptSeed, current: modelText)
+        let stream = await codexAccount.client.events()
+        let autonomous = !chatOnly && (effectiveAgentIsAuto || effectiveFullAccess)
+
+        do {
+            let threadID: String
+            if let savedThreadID = record.codexThreadID {
+                threadID = try await codexAccount.client.resumeThread(
+                    threadID: savedThreadID,
+                    modelID: modelID,
+                    workspace: workspace,
+                    chatOnly: chatOnly,
+                    autonomous: autonomous)
+            } else {
+                threadID = try await codexAccount.client.startThread(
+                    modelID: modelID,
+                    workspace: workspace,
+                    chatOnly: chatOnly,
+                    autonomous: autonomous,
+                    dynamicTools: CodexAppServerClient.dynamicToolSpecs(for: dynamicTools))
+            }
+            guard isRunning, !Task.isCancelled else { return }
+            record.codexThreadID = threadID
+            codexRecord = record
+            persistSessionRecord(record)
+
+            let turnID = try await codexAccount.client.startTurn(
+                threadID: threadID,
+                modelID: modelID,
+                workspace: workspace,
+                text: chatOnly
+                    ? Self.chatOnlyCodexPrompt(
+                        threadInput,
+                        computerControlEnabled: effectiveComputerControl)
+                    : threadInput,
+                reasoningEffort: activeCodexReasoningEffortHandler(),
+                chatOnly: chatOnly,
+                autonomous: autonomous)
+            guard isRunning, !Task.isCancelled else {
+                try? await codexAccount.client.interrupt(
+                    threadID: threadID,
+                    turnID: turnID)
+                return
+            }
+            codexThreadID = threadID
+            codexTurnID = turnID
+            codexStreamingText = ""
+            codexReasoningText = ""
+            codexLastError = nil
+            currentPhase = .working
+            let runToken = runID
+            eventTask = Task { [weak self] in
+                for await message in stream {
+                    guard let self else { return }
+                    self.handleCodex(message, runID: runToken)
+                }
+                self?.codexStreamEnded(runID: runToken)
+            }
+        } catch {
+            guard isRunning, !Task.isCancelled else { return }
+            finishCodex(
+                .engineError(error.localizedDescription),
+                runID: runID)
+        }
+    }
+
+    private var codexLastError: String?
+
+    private func codexStreamEnded(runID token: UUID) {
+        guard token == runID, isRunning else { return }
+        finishCodex(
+            .engineError(codexLastError ?? "Codex app-server ended before the turn completed."),
+            runID: token)
+    }
+
+    private func handleCodex(_ message: CodexServerMessage, runID token: UUID) {
+        guard token == runID, isRunning else { return }
+        if message.isServerRequest {
+            handleCodexRequest(message)
+            return
+        }
+        guard let method = message.method,
+              let params = message.params?.objectValue
+        else { return }
+
+        switch method {
+        case "item/agentMessage/delta":
+            guard let delta = params["delta"]?.stringValue, !delta.isEmpty else { return }
+            codexStreamingText += delta
+            pendingTokenBuffer += delta
+            scheduleTokenFlush()
+
+        case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
+            guard let delta = params["delta"]?.stringValue, !delta.isEmpty else { return }
+            codexReasoningText += delta
+            if settings.showReasoning {
+                pendingReasoningPublish = true
+                scheduleTokenFlush()
+            }
+
+        case "item/plan/delta":
+            guard let delta = params["delta"]?.stringValue, !delta.isEmpty else { return }
+            codexReasoningText += delta
+            if settings.showReasoning {
+                pendingReasoningPublish = true
+                scheduleTokenFlush()
+            }
+
+        case "item/started":
+            if let item = params["item"]?.objectValue {
+                handleCodexItem(item, completed: false)
+            }
+            currentPhase = .working
+
+        case "item/completed":
+            if let item = params["item"]?.objectValue {
+                handleCodexItem(item, completed: true)
+            }
+
+        case "item/commandExecution/outputDelta":
+            // The final command item contains aggregatedOutput. Keeping the
+            // transcript to one authoritative result avoids duplicated output
+            // while still preserving the live assistant stream.
+            break
+
+        case "turn/plan/updated":
+            if let plan = params["plan"]?.arrayValue {
+                let entries = plan.compactMap { entry -> PlanEntry? in
+                    guard let object = entry.objectValue,
+                          let step = object["step"]?.stringValue
+                    else { return nil }
+                    let status = object["status"]?.stringValue ?? "pending"
+                    return PlanEntry(step: step, status: status)
+                }
+                if !entries.isEmpty {
+                    livePlan = entries
+                }
+            }
+
+        case "turn/completed":
+            if !livePlan.isEmpty {
+                transcript.append(TranscriptItem(
+                    id: UUID(),
+                    kind: .notice(Self.planSnapshotText(livePlan))))
+                livePlan = []
+            }
+            let turn = params["turn"]?.objectValue
+            let status = turn?["status"]?.stringValue?.lowercased() ?? "completed"
+            let reason: AgentFinish
+            switch status {
+            case "completed":
+                reason = .completed(Self.codexCompletionSummary(codexStreamingText))
+            case "interrupted", "cancelled", "canceled":
+                reason = .cancelled
+            default:
+                let detail = turn?["error"]?.objectValue?["message"]?.stringValue
+                    ?? codexLastError
+                    ?? "Codex turn failed."
+                reason = .engineError(detail)
+            }
+            finishCodex(reason, runID: token)
+
+        case "error":
+            codexLastError = params["error"]?.objectValue?["message"]?.stringValue
+                ?? params["message"]?.stringValue
+                ?? "Codex app-server reported an error."
+
+        case "warning":
+            if let warning = params["message"]?.stringValue {
+                transcript.append(TranscriptItem(id: UUID(), kind: .notice("Codex: " + warning)))
+            }
+
+        case "model/rerouted":
+            if let toModel = params["toModel"]?.stringValue {
+                transcript.append(TranscriptItem(
+                    id: UUID(),
+                    kind: .notice("Codex routed this turn to " + toModel + ".")))
+            }
+
+        default:
+            break
+        }
+    }
+
+    private func handleCodexRequest(_ message: CodexServerMessage) {
+        guard let method = message.method,
+              let requestID = message.id,
+              let params = message.params?.objectValue
+        else { return }
+
+        switch method {
+        case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+            if effectiveFullAccess {
+                Task {
+                    try? await codexAccount.client.respondToApproval(
+                        requestID: requestID,
+                        decision: "acceptForSession")
+                }
+                DiagnosticsCenter.shared.record(
+                    .approval,
+                    "Full Access auto-approved Codex request",
+                    detail: method)
+                return
+            }
+            let itemID = Self.codexID(params["itemId"])
+            let invocation = itemID.flatMap { codexItemInvocations[$0] }
+                ?? codexInvocation(for: method, params: params)
+            codexApprovalRequestID = requestID
+            codexApprovalInvocation = invocation
+            codexApprovalKind = .commandOrFile
+            pendingApproval = ApprovalRequest(
+                id: UUID(),
+                invocation: invocation,
+                preview: method.contains("command") ? .command(invocation.summary) : .none)
+            currentPhase = .awaitingApproval
+            DiagnosticsCenter.shared.record(
+                .approval,
+                "Codex approval requested: " + invocation.name,
+                detail: invocation.summary,
+                level: .warning)
+
+        case "item/permissions/requestApproval":
+            if effectiveFullAccess {
+                let requested = params["permissions"] ?? .object([:])
+                Task {
+                    try? await codexAccount.client.respondToPermissions(
+                        requestID: requestID,
+                        permissions: requested,
+                        scope: "session")
+                }
+                return
+            }
+            let invocation = codexInvocation(for: method, params: params)
+            codexApprovalRequestID = requestID
+            codexApprovalInvocation = invocation
+            codexApprovalKind = .permissions(params["permissions"] ?? .object([:]))
+            pendingApproval = ApprovalRequest(
+                id: UUID(),
+                invocation: invocation,
+                preview: .none)
+            currentPhase = .awaitingApproval
+            DiagnosticsCenter.shared.record(
+                .approval,
+                "Codex permission request",
+                detail: invocation.summary,
+                level: .warning)
+
+        case "item/tool/requestUserInput":
+            let question = params["questions"]?.arrayValue?.first?.objectValue
+            codexQuestionRequestID = requestID
+            codexQuestionID = question?["id"]?.stringValue ?? "answer"
+            pendingQuestionID = UUID()
+            pendingQuestion = question?["question"]?.stringValue
+                ?? params["message"]?.stringValue
+                ?? "Codex needs more information."
+            pendingQuestionChoices = (question?["choices"] ?? question?["options"] ?? question?["answers"])?
+                .arrayValue?
+                .compactMap(\.stringValue)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty } ?? []
+            currentPhase = .awaitingQuestion
+
+        case "item/tool/call":
+            handleCodexDynamicTool(requestID: requestID, params: params)
+
+        case "mcpServer/elicitation/request":
+            Task { try? await codexAccount.client.declineElicitation(requestID: requestID) }
+
+        default:
+            // Unknown future server requests must never make Stop appear
+            // broken. Resolve known approval-shaped requests conservatively.
+            if method.localizedCaseInsensitiveContains("approval") {
+                Task { try? await codexAccount.client.respondToApproval(
+                    requestID: requestID,
+                    decision: "decline") }
+            }
+        }
+    }
+
+    private func handleCodexDynamicTool(
+        requestID: Int,
+        params: [String: LFJSONValue]
+    ) {
+        guard let toolName = params["tool"]?.stringValue,
+              let executor = codexDynamicExecutor,
+              let tool = executor.tool(named: toolName)
+        else {
+            Task { try? await codexAccount.client.declineDynamicTool(requestID: requestID) }
+            return
+        }
+        let arguments = params["arguments"] ?? .object([:])
+        let call = ParsedToolCall(name: toolName, arguments: arguments, index: 0)
+        let invocation = ToolInvocation(call: call, summary: tool.summary)
+
+        let computerAllowed = toolName.hasPrefix("computer_")
+            && approvalOverrides?.allowsComputer == true
+        if effectiveFullAccess || computerAllowed || !tool.risk.requiresApprovalByDefault {
+            let client = codexAccount.client
+            Task {
+                let outcome = await executor.execute(call)
+                try? await client.respondToDynamicTool(
+                    requestID: requestID,
+                    output: outcome.output,
+                    success: !outcome.failed)
+            }
+            return
+        }
+
+        codexApprovalRequestID = requestID
+        codexApprovalInvocation = invocation
+        codexApprovalKind = .dynamicTool(call)
+        pendingApproval = ApprovalRequest(
+            id: UUID(),
+            invocation: invocation,
+            preview: tool.preview(call, in: executor.context))
+        currentPhase = .awaitingApproval
+        DiagnosticsCenter.shared.record(
+            .approval,
+            "Codex dynamic tool approval requested: " + toolName,
+            detail: invocation.argumentsJSON,
+            level: .warning)
+    }
+
+    private func handleCodexItem(_ item: [String: LFJSONValue], completed: Bool) {
+        guard let type = item["type"]?.stringValue else { return }
+        if type == "agentMessage" {
+            if let finalText = item["text"]?.stringValue, !finalText.isEmpty,
+               finalText.count >= codexStreamingText.count {
+                codexStreamingText = finalText
+                streamingText = finalText
+            }
+            return
+        }
+        if type == "reasoning" {
+            if let summary = item["summary"]?.stringValue, !summary.isEmpty {
+                codexReasoningText = summary
+                if settings.showReasoning {
+                    liveReasoningText = summary
+                    isReasoningVisible = true
+                }
+            }
+            if completed, settings.showReasoning, !codexReasoningText.isEmpty {
+                appendCodexMessage(role: .reasoning, content: codexReasoningText)
+            }
+            return
+        }
+        guard let itemID = Self.codexID(item["id"]),
+              let invocation = codexItemInvocations[itemID]
+                ?? codexInvocation(for: type, item: item)
+        else { return }
+
+        if codexItemInvocations[itemID] == nil {
+            codexItemInvocations[itemID] = invocation
+            transcript.append(TranscriptItem(id: UUID(), kind: .toolCall(invocation)))
+            appendCodexMessage(
+                role: .toolCall,
+                content: invocation.argumentsJSON,
+                toolName: invocation.name)
+        }
+        guard completed else { return }
+
+        let output = Self.codexItemOutput(item, type: type)
+        let status = item["status"]?.stringValue?.lowercased() ?? "completed"
+        // A command that ran to completion with a non-zero exit still failed.
+        let failed = ["failed", "declined", "cancelled", "canceled", "error"].contains(status)
+            || (item["exitCode"]?.intValue ?? 0) != 0
+        transcript.append(TranscriptItem(
+            id: UUID(),
+            kind: .toolResult(
+                id: invocation.id,
+                output: output,
+                failed: failed,
+                toolName: invocation.name)))
+        appendCodexMessage(
+            role: .toolResult,
+            content: output,
+            toolName: invocation.name)
+        DiagnosticsCenter.shared.record(
+            .tool,
+            "Codex " + invocation.name + " " + (failed ? "failed" : "finished"),
+            detail: ByteFormatter.bytes(Int64(output.utf8.count)),
+            level: failed ? .error : .info)
+    }
+
+    private func finishCodex(_ reason: AgentFinish, runID token: UUID) {
+        guard token == runID else { return }
+        flushTokens()
+        if !codexStreamingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let prose = Self.cleanedAssistantText(codexStreamingText)
+            if !prose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                transcript.append(TranscriptItem(id: UUID(), kind: .assistant(prose)))
+                appendCodexMessage(role: .assistant, content: prose)
+            }
+        }
+        if settings.showReasoning,
+           !codexReasoningText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !transcript.contains(where: {
+               if case .reasoning(let text) = $0.kind { return text == codexReasoningText }
+               return false
+           }) {
+            transcript.append(TranscriptItem(id: UUID(), kind: .reasoning(codexReasoningText)))
+            appendCodexMessage(role: .reasoning, content: codexReasoningText)
+        }
+        if case .engineError(let message) = reason {
+            publishFailure(message)
+        }
+        codexRecord?.updatedAt = Date()
+        if let record = codexRecord { persistSessionRecord(record) }
+        streamingText = ""
+        rawStreamingText = ""
+        exactAnswerOverride = nil
+        isReasoningVisible = false
+        liveReasoningText = ""
+        isRunning = false
+        finishReason = reason
+        currentPhase = .finished
+        attachMetricsToLastAnswer()
+        clearPending()
+        eventTask?.cancel()
+        eventTask = nil
+        codexTurnID = nil
+        codexLastError = nil
+        let backend = isACPRun ? "Harness" : "Codex"
+        switch reason {
+        case .completed:
+            DiagnosticsCenter.shared.record(.session, backend + " task completed")
+        case .cancelled:
+            DiagnosticsCenter.shared.record(.session, backend + " task stopped by user", level: .warning)
+        case .maxTurnsReached, .declined:
+            break
+        case .engineError(let message):
+            DiagnosticsCenter.shared.record(.engine, backend + " engine error", detail: message, level: .error)
+        }
+        startPendingSteerIfNeeded()
+    }
+
+    private func appendCodexMessage(
+        role: SessionMessage.Role,
+        content: String,
+        toolName: String? = nil
+    ) {
+        guard !content.isEmpty else { return }
+        codexRecord?.messages.append(SessionMessage(
+            role: role,
+            content: content,
+            toolName: toolName,
+            timestamp: Date()))
+    }
+
+    /// One defensive cleanup path for assistant text entering the visible
+    /// transcript. The agent loop still receives valid tool wire format so it
+    /// can parse and execute calls; only the user-facing/persisted answer is
+    /// stripped here.
+    private static func cleanedAssistantText(_ text: String) -> String {
+        ToolParser.strippingCalls(from: PromptBuilder.cleaningGeneratedText(text))
+    }
+
+    private func codexInvocation(
+        for method: String,
+        params: [String: LFJSONValue]
+    ) -> ToolInvocation {
+        let name = method.contains("command") ? "run_command"
+            : method.contains("fileChange") ? "apply_patch"
+            : "request_permissions"
+        let arguments: LFJSONValue
+        if name == "run_command" {
+            arguments = .object([
+                "command": params["command"] ?? .string("(command not provided)"),
+                "cwd": params["cwd"] ?? .string("")
+            ])
+        } else {
+            arguments = .object(params)
+        }
+        let summary = params["reason"]?.stringValue
+            ?? params["command"]?.stringValue
+            ?? (name == "apply_patch" ? "Codex proposed file changes" : "Codex requested additional permissions")
+        return ToolInvocation(
+            call: ParsedToolCall(name: name, arguments: arguments, index: 0),
+            summary: summary)
+    }
+
+    private func codexInvocation(
+        for type: String,
+        item: [String: LFJSONValue]
+    ) -> ToolInvocation? {
+        let name: String
+        let arguments: LFJSONValue
+        let summary: String
+        switch type {
+        case "commandExecution":
+            name = "run_command"
+            let command = item["command"] ?? .string("")
+            arguments = .object([
+                "command": command,
+                "cwd": item["cwd"] ?? .string("")
+            ])
+            summary = Self.codexDisplay(command)
+        case "fileChange":
+            name = "apply_patch"
+            let changes = item["changes"] ?? .array([])
+            arguments = .object(["changes": changes])
+            let paths = changes.arrayValue?.compactMap { $0.objectValue?["path"]?.stringValue } ?? []
+            summary = paths.isEmpty ? "Codex proposed file changes" : paths.joined(separator: ", ")
+        case "mcpToolCall":
+            let server = item["server"]?.stringValue ?? "mcp"
+            let tool = item["tool"]?.stringValue ?? "tool"
+            name = "mcp:\(server):\(tool)"
+            arguments = item["arguments"] ?? .object([:])
+            summary = server + " · " + tool
+        case "dynamicToolCall":
+            name = "dynamic:\(item["tool"]?.stringValue ?? "tool")"
+            arguments = item["arguments"] ?? .object([:])
+            summary = name
+        case "webSearch":
+            name = "web_search"
+            arguments = .object(["query": item["query"] ?? .string("")])
+            summary = item["query"]?.stringValue ?? "Web search"
+        case "imageView":
+            name = "view_image"
+            arguments = .object(["path": item["path"] ?? .string("")])
+            summary = item["path"]?.stringValue ?? "View image"
+        default:
+            return nil
+        }
+        return ToolInvocation(
+            call: ParsedToolCall(name: name, arguments: arguments, index: 0),
+            summary: summary)
+    }
+
+    private static func codexItemOutput(_ item: [String: LFJSONValue], type: String) -> String {
+        if let error = item["error"]?.objectValue?["message"]?.stringValue { return "error: " + error }
+        switch type {
+        case "commandExecution":
+            return item["aggregatedOutput"]?.stringValue
+                ?? item["status"]?.stringValue
+                ?? "Command finished."
+        case "fileChange":
+            let paths = item["changes"]?.arrayValue?.compactMap {
+                $0.objectValue?["path"]?.stringValue
+            } ?? []
+            return paths.isEmpty ? "File changes finished." : "Changed: " + paths.joined(separator: ", ")
+        case "mcpToolCall":
+            return item["result"]?.stringValue
+                ?? item["result"]?.encoded(prettyPrinted: true)
+                ?? "MCP tool finished."
+        default:
+            return item["contentItems"]?.encoded(prettyPrinted: true)
+                ?? item["status"]?.stringValue
+                ?? "Tool finished."
+        }
+    }
+
+    private static func codexID(_ value: LFJSONValue?) -> String? {
+        value?.stringValue ?? value?.intValue.map(String.init)
+    }
+
+    private static func codexDisplay(_ value: LFJSONValue) -> String {
+        if let text = value.stringValue { return text }
+        if let parts = value.arrayValue?.compactMap(\.stringValue), !parts.isEmpty {
+            return parts.joined(separator: " ")
+        }
+        return value.encoded()
+    }
+
+    private static func codexPrompt(seed: SessionRecord?, current: String) -> String {
+        guard let seed, seed.codexThreadID == nil, !seed.messages.isEmpty else { return current }
+        let history = seed.messages.suffix(12).compactMap { message -> String? in
+            guard message.role == .user || message.role == .assistant else { return nil }
+            let content = String(message.content.prefix(2_000))
+            return (message.role == .user ? "User" : "Assistant") + ": " + content
+        }
+        guard !history.isEmpty else { return current }
+        return "Previous Vamp Assistant conversation context:\n\(history.joined(separator: "\n\n"))\n\nCurrent request:\n\(current)"
+    }
+
+    private static func chatOnlyCodexPrompt(
+        _ current: String,
+        computerControlEnabled: Bool
+    ) -> String {
+        let computerBoundary = computerControlEnabled
+            ? "The opt-in computer_* tools are also available for Mac UI tasks."
+            : "Mac computer control is off. For a concrete Mac task, call computer_request_access for only Accessibility or Screen Recording; continue only if the user approves and macOS grants it."
+        return """
+        You are Vamp Assistant in project-free assistant mode. Answer the user directly. No
+        project is connected. Do not inspect files, run commands, change code,
+        or claim workspace access. You may create a new text artifact with
+        save_document; the user chooses its exact destination in a native Save
+        panel. Use it when asked to save generated HTML, Markdown, text, or JSON
+        instead of claiming you cannot create files. The in-app browser_* tools are available.
+        \(computerBoundary) Use only those app-owned tools in chat-only mode.
+        For Mac tasks, behave as a persistent computer-use agent:
+        - preserve the user's objective across short replies such as a number, yes, or continue;
+        - use computer_activate_app instead of Spotlight or menu detours to open an app;
+        - observe, choose one grounded action using a fresh ref, act, then inspect the returned fresh observation;
+        - if focus changes, reactivate the intended app rather than typing into the new frontmost app;
+        - continue until the requested outcome is reached, a destructive approval is required, or a concrete blocker is proven;
+        - never report success from an action alone; verify the expected window, label, value, or state.
+        If an observation is truncated, narrow the next action using visible labels instead of repeating the full tree.
+        If project
+        access is needed, tell the user to open a project folder.
+
+        User message:
+        \(current)
+        """
+    }
+
+    private static func codexCompletionSummary(_ text: String) -> String {
+        let summary = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty ? "Codex turn completed." : String(summary.prefix(240))
+    }
+
+    /// Persisted form of the final plan snapshot. MetaRow parses this back
+    /// into a compact card, so restored sessions reconstruct the plan the
+    /// run finished with instead of dropping it.
+    private static func planSnapshotText(_ plan: [PlanEntry]) -> String {
+        "Codex plan\n" + plan.map { entry in
+            "\(entry.status): \(entry.step)"
+        }.joined(separator: "\n")
+    }
+
+    func stop() {
+        startTask?.cancel()
+        startTask = nil
+        if loop == nil, isRunning, isACPRun {
+            cancelACPTurn()
+            finishCodex(.cancelled, runID: runID)
+            return
+        }
+        if loop == nil, let threadID = codexThreadID, let turnID = codexTurnID {
+            let token = runID
+            let client = codexAccount.client
+            Task {
+                try? await client.interrupt(threadID: threadID, turnID: turnID)
+            }
+            finishCodex(.cancelled, runID: token)
+            return
+        }
+        guard let loop else {
+            guard isRunning else { return }
+            isRunning = false
+            finishReason = .cancelled
+            currentPhase = .finished
+            clearPending()
+            startPendingSteerIfNeeded()
+            return
+        }
+        Task { await loop.cancel() }
+    }
+
+    /// Redirects the current run. Native loops inject the instruction before
+    /// the next model step; Codex interrupts and sends it as the next turn.
+    @discardableResult
+    func steer(_ message: String) -> Bool {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isRunning, !trimmed.isEmpty else { return false }
+        if let loop {
+            Task { await loop.steer(trimmed) }
+            return true
+        }
+        pendingSteerMessage = trimmed
+        stop()
+        return true
+    }
+
+    func takePendingSteer() -> String? {
+        let value = pendingSteerMessage
+        pendingSteerMessage = nil
+        return value
+    }
+
+    private func startPendingSteerIfNeeded() {
+        guard let message = pendingSteerMessage else { return }
+        pendingSteerMessage = nil
+        send(message)
+    }
+
+    func supportsRemoteImages() async -> Bool {
+        guard activeCodexModelIDHandler() == nil, settings.selectedHarness == nil else { return false }
+        return await engine.supportsImageInput
+    }
+
+    /// Starts the next turn of a persisted Beetcode session from the remote
+    /// browser surface. The session is restored first, so the agent loop gets
+    /// the same transcript, workspace binding, model choice, and checkpoints
+    /// as a local continuation.
+    @discardableResult
+    func continuePersistedSession(id: UUID, message: String, images: [ChatImage] = []) -> Bool {
+        guard !isRunning,
+              let record = SessionStore.shared.load(id: id),
+              record.source == .app,
+              SessionStore.shared.validateWorkspaceBinding(record),
+              restore(record) else { return false }
+        send(message, images: images)
+        return true
+    }
+
+    /// Switches the controller to a different workspace as ONE transaction:
+    /// the active run fully stops first, interactive state is cleared, and the
+    /// workspace's most recent session (if any) is restored. Undo and git
+    /// controls then target the new project — never a stale checkpoint from
+    /// the old one.
+    func switchWorkspace(to url: URL, sessionID: UUID? = nil, restoreLatest: Bool = true) async {
+        await stopAndWait()
+        workspaceURL = url
+        activeSessionID = nil
+        gitOutput = nil
+        transcript = []
+        finishReason = nil
+        streamingText = ""
+        rawStreamingText = ""
+        exactAnswerOverride = nil
+        isReasoningVisible = false
+        liveReasoningText = ""
+        workspaceTrustNeeded = WorkspaceTrust.needsConsent(url)
+        // Background intelligence index: incremental when a baseline exists,
+        // full on first open. Silent on failure — the agent loop degrades to
+        // no injected context, never to a blocked session.
+        if SettingsStore.shared.intelligenceInspectorEnabled {
+            Task.detached(priority: .utility) {
+                _ = try? await WorkspaceIntelligence(workspaceRoot: url).update()
+            }
+        }
+        guard restoreLatest else { return }
+        if let sessionID,
+           let record = SessionStore.shared.load(id: sessionID),
+           record.workspacePath == url.path {
+            _ = restore(record)
+        } else if let latest = SessionStore.shared.loadAll()
+            .first(where: { $0.workspacePath == url.path }) {
+            _ = restore(latest)
+        }
+    }
+
+    /// Leaves project mode and starts a fresh, project-free conversation.
+    /// The next turn uses the Assistant prompt and its project-free tools.
+    func switchToChatOnly() async {
+        await stopAndWait()
+        workspaceURL = nil
+        workspaceTrustNeeded = false
+        newSession()
+    }
+
+    func trustCurrentWorkspace() {
+        guard let url = workspaceURL else { return }
+        WorkspaceTrust.trust(url)
+        workspaceTrustNeeded = false
+        notice("Trusted this workspace. Project MCP servers and hooks will run on the next message.")
+    }
+
+    /// Starts a fresh chat in the current workspace: the transcript clears
+    /// and the next send begins a brand-new session record — no continuation
+    /// seed, and the app no longer points at the old session on relaunch.
+    func newSession() {
+        startTask?.cancel()
+        startTask = nil
+        let oldLoop = loop
+        loop = nil
+        eventTask?.cancel()
+        eventTask = nil
+        if let oldLoop {
+            Task { await oldLoop.cancel() }
+        }
+        codexThreadID = nil
+        codexTurnID = nil
+        codexRecord = nil
+        codexItemInvocations.removeAll()
+        runID = UUID()
+        isRunning = false
+        currentPhase = .idle
+        clearPending()
+        finishReason = nil
+        dropTokenBuffer()
+        streamingText = ""
+        rawStreamingText = ""
+        exactAnswerOverride = nil
+        isReasoningVisible = false
+        liveReasoningText = ""
+        activeSessionID = nil
+        gitOutput = nil
+        transcript = []
+        SessionStore.shared.currentSessionID = nil
+        onSessionReset?()
+        NotificationCenter.default.post(name: .sessionTitleChanged, object: nil)
+    }
+
+    /// Stops the active run and WAITS for the loop to reach its terminal
+    /// state before returning. Engine transitions (load/unload/source swap)
+    /// must await this so a generation can never outlive its model.
+    func stopAndWait() async {
+        let wasRunning = isRunning
+        defer {
+            // The durable queue releases its active item on a terminal event.
+            // Model switches previously went idle silently and stranded it.
+            if wasRunning, !isRunning { finishReason = .cancelled }
+        }
+        startTask?.cancel()
+        startTask = nil
+        if loop == nil, isRunning, isACPRun {
+            cancelACPTurn()
+            cancelCodexState()
+            return
+        }
+        if loop == nil, codexTurnID != nil {
+            let threadID = codexThreadID
+            let turnID = codexTurnID
+            let client = codexAccount.client
+            if let threadID, let turnID {
+                try? await client.interrupt(threadID: threadID, turnID: turnID)
+            }
+            cancelCodexState()
+            return
+        }
+        guard let loop else {
+            runID = UUID()
+            isRunning = false
+            currentPhase = .finished
+            clearPending()
+            exactAnswerOverride = nil
+            return
+        }
+        self.loop = nil
+        runID = UUID()
+        await loop.cancel()
+        // Bounded wait: the loop yields .finished and closes the stream on
+        // cancellation; if that ever fails, the event task is force-cancelled.
+        let deadline = Date().addingTimeInterval(5)
+        while isRunning && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        eventTask?.cancel()
+        eventTask = nil
+        clearPending()
+        isRunning = false
+        dropTokenBuffer()
+        streamingText = ""
+        rawStreamingText = ""
+        exactAnswerOverride = nil
+        isReasoningVisible = false
+        liveReasoningText = ""
+    }
+
+    /// The stream ended without a .finished event (cancel path): clear the
+    /// run state ONLY if this is still the current run.
+    private func streamEnded(runID token: UUID) {
+        guard token == runID else { return }
+        if loop != nil { loop = nil }
+        eventTask = nil
+        isRunning = false
+        dropTokenBuffer()
+        streamingText = ""
+        rawStreamingText = ""
+        exactAnswerOverride = nil
+        isReasoningVisible = false
+        liveReasoningText = ""
+        clearPending()
+        if finishReason == nil {
+            finishReason = .engineError("The response stream ended before completing. Try the message again.")
+        }
+        startPendingSteerIfNeeded()
+    }
+
+    /// Clears a leftover completion or error banner without starting a new run.
+    /// Model switches use this so an API/model failure does not stay pinned
+    /// after the user already picked a different engine.
+    func dismissFinish() {
+        guard !isRunning else { return }
+        finishReason = nil
+    }
+
+    /// Design-preview fixture hook (`--design-preview`). Installs inert
+    /// transcript rows, a live plan snapshot, and a pending approval so the
+    /// real views render the reference conversation for visual capture.
+    /// Nothing is persisted and no tool or permission path is touched; the
+    /// preview approval clears like a resolved card without executing.
+    func installDesignPreview(
+        transcript items: [TranscriptItem],
+        plan: [PlanEntry],
+        approval: ApprovalRequest
+    ) {
+        transcript = items
+        livePlan = plan
+        pendingApproval = approval
+        currentPhase = .awaitingApproval
+        // A real chat screen always has its tab in the strip; without an id
+        // the preview would capture a window the app never actually shows.
+        if activeSessionID == nil { activeSessionID = UUID() }
+    }
+
+    /// Resolves a preview approval without any executor side effects.
+    func resolveDesignPreviewApproval(approved: Bool) {
+        guard pendingApproval != nil else { return }
+        pendingApproval = nil
+        currentPhase = .idle
+        transcript.append(TranscriptItem(
+            id: UUID(),
+            kind: .notice(approved ? "Preview approval allowed" : "Preview approval rejected")))
+    }
+
+    private func clearPending() {
+        pendingApproval = nil
+        pendingQuestion = nil
+        pendingQuestionChoices = []
+        pendingQuestionID = nil
+        pendingPlan = nil
+        pendingPlanID = nil
+        livePlan = []
+        codexApprovalRequestID = nil
+        codexApprovalInvocation = nil
+        codexApprovalKind = nil
+        codexQuestionRequestID = nil
+        codexQuestionID = nil
+    }
+
+    /// ACP cancel: answer any open permission prompt, then cancel the turn.
+    private func cancelACPTurn() {
+        guard let client = acpClient, let sessionID = acpSessionID else { return }
+        let openPermission: LFJSONValue?
+        if case .acpPermission(let id, _) = codexApprovalKind { openPermission = id } else { openPermission = nil }
+        Task {
+            if let openPermission { await client.respond(id: openPermission, result: ACPClient.cancelledPermission) }
+            await client.cancel(sessionID: sessionID)
+        }
+    }
+
+    private func cancelCodexState() {
+        runID = UUID()
+        eventTask?.cancel()
+        eventTask = nil
+        isRunning = false
+        finishReason = .cancelled
+        currentPhase = .finished
+        codexTurnID = nil
+        codexLastError = nil
+        clearPending()
+        dropTokenBuffer()
+        streamingText = ""
+        rawStreamingText = ""
+        isReasoningVisible = false
+        liveReasoningText = ""
+    }
+
+    /// Publishes buffered deltas. One scheduled flush per batch window; the
+    /// final text always flushes immediately on message completion.
+    private func scheduleTokenFlush() {
+        guard tokenFlushTask == nil else { return }
+        tokenFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self else { return }
+            self.tokenFlushTask = nil
+            self.flushTokens()
+        }
+    }
+
+    private func flushTokens() {
+        tokenFlushTask?.cancel()
+        tokenFlushTask = nil
+        guard !pendingTokenBuffer.isEmpty || pendingReasoningPublish else { return }
+        if !pendingTokenBuffer.isEmpty {
+            rawStreamingText += pendingTokenBuffer
+            pendingTokenBuffer = ""
+        }
+        if pendingReasoningPublish {
+            pendingReasoningPublish = false
+            liveReasoningText = codexReasoningText
+            isReasoningVisible = true
+        }
+        if exactAnswerOverride != nil {
+            // The final assistant event publishes the exact requested text.
+            // Suppress the raw generation path so filler cannot appear first.
+            streamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            return
+        }
+        // Display filtering: hide raw `…` blocks and repetition
+        // filler ("thinking thinking thinking…") — show a proper
+        // Reasoning indicator instead of the model's raw noise.
+        let (visible, reasoning) = StreamDisplayFilter.display(raw: rawStreamingText)
+        streamingText = visible
+        isReasoningVisible = reasoning
+        liveReasoningText = settings.showReasoning
+            ? StreamDisplayFilter.reasoningText(raw: rawStreamingText)
+            : ""
+    }
+
+    /// Drops buffered deltas without publishing (run cleanup paths only).
+    private func dropTokenBuffer() {
+        tokenFlushTask?.cancel()
+        tokenFlushTask = nil
+        pendingTokenBuffer = ""
+        pendingReasoningPublish = false
+    }
+
+    /// Turns attachments into part of the user message: files are quoted
+
+    /// Restores a persisted session: validates its workspace binding, rebuilds
+    /// the transcript from stored messages/checkpoints, and arms the session
+    /// for continuation (the next send seeds the loop with this record).
+    func restore(_ record: SessionRecord) -> Bool {
+        guard SessionStore.shared.validateWorkspaceBinding(record) else { return false }
+        // Cancel the actual loop, not just its consumer: a tool mid-flight
+        // must not keep writing into a workspace we are leaving.
+        startTask?.cancel()
+        startTask = nil
+        let oldLoop = loop
+        loop = nil
+        eventTask?.cancel()
+        eventTask = nil
+        if let oldLoop {
+            Task { await oldLoop.cancel() }
+        }
+        codexThreadID = record.codexThreadID
+        codexTurnID = nil
+        codexRecord = record.modelID.hasPrefix("openai-codex:") || record.modelID.hasPrefix("acp:") ? record : nil
+        codexItemInvocations.removeAll()
+        runID = UUID()
+        isRunning = false
+        pendingApproval = nil
+        pendingQuestion = nil
+        pendingQuestionChoices = []
+        pendingQuestionID = nil
+        pendingPlan = nil
+        pendingPlanID = nil
+        livePlan = []
+        finishReason = nil
+        dropTokenBuffer()
+        streamingText = ""
+        rawStreamingText = ""
+        isReasoningVisible = false
+        liveReasoningText = ""
+        workspaceURL = record.workspacePath.isEmpty
+            ? nil
+            : URL(fileURLWithPath: record.workspacePath)
+
+        var rebuilt: [TranscriptItem] = []
+        for message in record.messages {
+            switch message.role {
+            case .user:
+                rebuilt.append(TranscriptItem(id: UUID(), kind: .user(message.content)))
+            case .assistant:
+                // Sanitize restored history the same way as live events:
+                // older sessions stored raw tool-call JSON in assistant text.
+                let prose = Self.cleanedAssistantText(message.content)
+                if !prose.isEmpty {
+                    rebuilt.append(TranscriptItem(
+                        id: UUID(),
+                        kind: .assistant(prose),
+                        answerMetrics: message.answerMetrics))
+                }
+            case .reasoning:
+                if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    rebuilt.append(TranscriptItem(id: UUID(), kind: .reasoning(message.content)))
+                }
+            case .toolCall:
+                let call = ParsedToolCall(
+                    name: message.toolName ?? "tool",
+                    arguments: TolerantJSON.value(from: message.content) ?? .object([:]),
+                    index: 0)
+                let invocation = ToolInvocation(
+                    call: call,
+                    summary: Self.summary(for: message.toolName ?? "tool", content: message.content))
+                rebuilt.append(TranscriptItem(id: UUID(), kind: .toolCall(invocation)))
+            case .toolResult:
+                rebuilt.append(
+                    TranscriptItem(
+                        id: UUID(),
+                        kind: .toolResult(
+                            id: UUID(), output: message.content,
+                            failed: message.content.hasPrefix("error:") || message.content == "declined by user",
+                            toolName: message.toolName)))
+            case .system:
+                break
+            }
+        }
+        for checkpoint in record.checkpoints {
+            rebuilt.append(TranscriptItem(id: UUID(), kind: .checkpoint(checkpoint)))
+        }
+        transcript = rebuilt
+        // Remember the restored session as the current one.
+        SessionStore.shared.currentSessionID = record.id
+        activeSessionID = record.id
+        return true
+    }
+
+    /// The request identifier is needed by remote clients so a stale approval
+    /// or question response cannot resolve a newer interaction accidentally.
+    var pendingQuestionRequestID: UUID? { pendingQuestionID }
+    var pendingPlanRequestID: UUID? { pendingPlanID }
+
+    /// The transcript carries over; the next message continues the session
+    /// with its compacted history and checkpoints.
+    var restoredSeed: SessionRecord? {
+        guard let id = SessionStore.shared.currentSessionID,
+              let record = SessionStore.shared.load(id: id),
+              record.workspacePath == (workspaceURL?.path ?? "")
+        else { return nil }
+        return record
+    }
+
+    private static func summary(for name: String, content: String) -> String {
+        switch name {
+        case "run_command":
+            let value = TolerantJSON.value(from: content)?.objectValue?["command"]?.stringValue
+            return value ?? "Run a command"
+        case "read_file", "write_file", "apply_patch":
+            let value = TolerantJSON.value(from: content)?.objectValue?["path"]?.stringValue
+            return value ?? "Edit files"
+        case "search":
+            let value = TolerantJSON.value(from: content)?.objectValue?["pattern"]?.stringValue
+                ?? TolerantJSON.value(from: content)?.objectValue?["query"]?.stringValue
+            return value ?? "Search the workspace"
+        default:
+            // Never surface serialized arguments as the row summary; a
+            // neutral verb phrase keeps restored history readable.
+            let readable = name.replacingOccurrences(of: "_", with: " ")
+            return readable.prefix(1).uppercased() + readable.dropFirst()
+        }
+    }
+
+    // MARK: Git controls (Phase 5)
+
+    /// Runs a read-only git command in the workspace (UI-initiated, so no
+    /// approval card is needed — the user's click IS the consent).
+    func runGitCommand(_ command: String) {
+        guard let workspace = workspaceURL else { return }
+        gitOutput = "…running \(command)…"
+        Task { [weak self] in
+            let result = try? ShellRunner.run(
+                command: command,
+                workingDirectory: workspace,
+                timeout: 15)
+            await MainActor.run {
+                guard let self else { return }
+                self.gitOutput = result.map {
+                    $0.timedOut ? "command timed out" : ($0.output.isEmpty ? "(no changes)" : $0.output)
+                } ?? "git failed"
+            }
+        }
+    }
+
+    func gitStatus() { runGitCommand("git status --short") }
+    func gitDiff() { runGitCommand("git diff --stat") }
+
+    // MARK: Slash commands
+
+    /// Executes a parsed slash command locally. Returns true when the input
+    /// was consumed (the composer should not send it as a message).
+    /// AppState supplies the model-switch callback; everything else runs on
+    /// controller primitives only.
+    var modelSwitchHandler: ((String) -> Void)?
+
+    func handleSlash(_ text: String) -> Bool {
+        guard let command = SlashCommand.parse(text) else { return false }
+        switch command {
+        case .plan:
+            settings.planMode.toggle()
+            notice("Plan mode \(settings.planMode ? "ON — the agent plans first, you approve before it acts." : "OFF — direct execution.")")
+
+        case .auto:
+            settings.agentMode = .auto
+            notice("Auto mode ON — routine actions run continuously. macOS privacy and destructive safeguards still apply.")
+
+        case .goal:
+            settings.agentMode = .goal
+            notice("Goal mode ON — the agent plans first, then works through the goal until completion.")
+
+        case .undo:
+            undoLastCheckpoint()
+
+        case .compact:
+            compactSessionNow()
+
+        case .model(let id):
+            if let handler = modelSwitchHandler {
+                notice("Switching model to '\(id)'…")
+                handler(id)
+            } else {
+                notice("Model switching is unavailable right now.")
+            }
+
+        case .memory:
+            let facts = currentMemory()?.listFacts() ?? []
+            if facts.isEmpty {
+                notice("No stored facts for this workspace. Add one with /memory add <text>.")
+            } else {
+                let lines = facts.map { "• \($0.text)" }.joined(separator: "\n")
+                notice("Workspace memory (\(facts.count) facts):\n\(lines)")
+            }
+
+        case .memoryAdd(let fact):
+            if let memory = currentMemory() {
+                _ = memory.addFact(fact, source: "user")
+                notice("Stored fact: \(fact)")
+            } else {
+                notice("Memory is off — enable it in Settings → Agent → Memory first.")
+            }
+
+        case .help:
+            notice(Self.helpText(home: FileManager.default.homeDirectoryForCurrentUser,
+                                 workspace: workspaceURL))
+
+        case .unknown(let raw):
+            // Universal compatibility: an unrecognized slash name may be a
+            // Claude skill/command, a Codex prompt, or a BeetCode command
+            // discovered in the convention directories. Its text expands
+            // into the next user message — the same contract those tools
+            // give their own files.
+            let parts = raw.dropFirst().split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            let name = parts.first.map { String($0).lowercased() } ?? ""
+            let args = parts.count > 1 ? String(parts[1]) : ""
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let extraRoots = AppPreferencesStore.shared.current.externalResourceURLs
+            guard let command = ExternalCommands.command(
+                named: name, home: home, workspace: workspaceURL,
+                additionalRoots: extraRoots) else {
+                notice("Unknown command '\(name)'. Try /help.")
+                return true
+            }
+            guard workspaceURL != nil else {
+                notice("/\(name) needs an open workspace folder.")
+                return true
+            }
+            guard !isRunning else {
+                notice("Wait for the current run to finish before invoking /\(name).")
+                return true
+            }
+            notice("Running \(command.origin.rawValue) \(command.kind.label) '/\(name)'.")
+            let rendered = command.render(arguments: args)
+            let message: String
+            if command.origin == .openCode || args.isEmpty {
+                message = rendered.isEmpty ? args : rendered
+            } else {
+                message = rendered + "\n\nUser input:\n" + args
+            }
+            send(message, attachments: [])
+        }
+        return true
+    }
+
+    /// /help output: the built-in catalog plus any external commands
+    /// discovered in the workspace and home convention directories.
+    static func helpText(home: URL, workspace: URL?) -> String {
+        let external = ExternalCommands.discover(
+            home: home,
+            workspace: workspace,
+            additionalRoots: AppPreferencesStore.shared.current.externalResourceURLs)
+        guard !external.isEmpty else { return SlashCommand.helpText }
+        let lines = external.map { "  /\($0.name)  (\($0.origin.rawValue) \($0.kind.label))" }
+        return SlashCommand.helpText
+            + "\n\nExternal commands (Claude / Codex / BeetCode convention dirs):\n"
+            + lines.joined(separator: "\n")
+    }
+
+    /// Compresses the active session's history immediately and persists the
+    /// result — the next send continues with the compacted record. This is
+    /// exposed for the composer preflight meter; slash commands use the same
+    /// path so both entry points have identical behavior.
+    func compactNow() {
+        guard let id = activeSessionID,
+              let record = SessionStore.shared.load(id: id),
+              !record.messages.isEmpty
+        else {
+            notice("Nothing to compact.")
+            return
+        }
+        let before = record.messages.count
+        let level = settings.compressionLevel
+        let compacted = ContextCompactor.compact(
+            record.messages,
+            keepRecent: level.keepRecent,
+            maxToolResultChars: level.maxToolResultChars)
+        var updated = record
+        updated.messages = compacted
+        updated.updatedAt = Date()
+        if persistSessionRecord(updated) {
+            notice("Compacted history: \(before) → \(compacted.count) messages (level: \(settings.compressionLevel.rawValue)).")
+        }
+    }
+
+    private func compactSessionNow() {
+        compactNow()
+    }
+
+    private func currentMemory() -> AgentMemory? {
+        guard settings.memoryMode != .off, let workspace = workspaceURL else { return nil }
+        return AgentMemory(workspacePath: workspace.path)
+    }
+
+    private func notice(_ text: String) {
+        transcript.append(TranscriptItem(id: UUID(), kind: .notice(text)))
+    }
+
+    /// Makes model/API failures durable and visible to remote clients. A
+    /// failure can happen before an assistant message exists, so relying on
+    /// the ordinary final-message persistence path loses the only useful UI.
+    private func publishFailure(_ message: String) {
+        let clean = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        let persistedText = "error: \(clean)"
+        if !transcript.contains(where: {
+            if case .notice(let text) = $0.kind { return text == persistedText }
+            return false
+        }) {
+            notice(persistedText)
+        }
+
+        if codexRecord != nil {
+            if codexRecord?.messages.last?.content != persistedText {
+                appendCodexMessage(role: .assistant, content: persistedText)
+            }
+            return
+        }
+        guard let id = activeSessionID else { return }
+        var record = SessionStore.shared.load(id: id) ?? SessionRecord(
+            id: id,
+            title: "Failed chat",
+            createdAt: Date(),
+            updatedAt: Date(),
+            workspacePath: workspaceURL?.path ?? "",
+            modelID: activeModelIDHandler(),
+            messages: [],
+            checkpoints: [],
+            source: .app,
+            schemaVersion: SessionRecord.currentSchemaVersion)
+        if record.messages.last?.content != persistedText {
+            record.messages.append(SessionMessage(
+                role: .assistant,
+                content: persistedText,
+                toolName: nil,
+                timestamp: Date()))
+        }
+        record.updatedAt = Date()
+        _ = persistSessionRecord(record)
+        SessionStore.shared.invalidateCache()
+    }
+
+    @discardableResult
+    private func persistSessionRecord(_ record: SessionRecord) -> Bool {
+        switch SessionStore.shared.save(record) {
+        case .success:
+            persistenceError = nil
+            return true
+        case .failure(let error):
+            let detail = error.localizedDescription
+            if persistenceError != detail {
+                notice("This conversation is still in memory but is not saved yet: \(detail)")
+            }
+            persistenceError = detail
+            DiagnosticsCenter.shared.record(
+                .session,
+                "Conversation save failed",
+                detail: detail,
+                level: .error)
+            return false
+        }
+    }
+
+    /// Restores the workspace to the most recent checkpoint. Surfaces the
+    /// outcome in the transcript.
+    func undoLastCheckpoint() {
+        guard let workspace = workspaceURL else { return }
+        let record: SessionRecord? = activeSessionID.flatMap { SessionStore.shared.load(id: $0) }
+        guard let checkpoint = record?.checkpoints.last else {
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice("No checkpoint to restore.")))
+            return
+        }
+        do {
+            try GitCheckpointer(workspace: Workspace(root: workspace)).restore(checkpoint)
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .notice("Restored checkpoint: \(checkpoint.summary)")))
+        } catch {
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .notice("Undo failed: \(error.localizedDescription)")))
+        }
+    }
+    // MARK: Plan approval
+
+    @discardableResult
+    func approvePlan(requestID: UUID? = nil) -> Bool {
+        guard pendingPlan != nil,
+              requestID == nil || requestID == pendingPlanID else { return false }
+        pendingPlan = nil
+        pendingPlanID = nil
+        transcript.append(TranscriptItem(id: UUID(), kind: .notice("Plan approved — executing.")))
+        DiagnosticsCenter.shared.record(.approval, "Plan approved — executing")
+        if let loop {
+            Task { await loop.resolvePlan(approved: true) }
+        }
+        return true
+    }
+
+    @discardableResult
+    func revisePlan(_ feedback: String, requestID: UUID? = nil) -> Bool {
+        guard pendingPlan != nil,
+              requestID == nil || requestID == pendingPlanID else { return false }
+        pendingPlan = nil
+        pendingPlanID = nil
+        transcript.append(TranscriptItem(id: UUID(), kind: .user(feedback)))
+        DiagnosticsCenter.shared.record(.approval, "Plan sent back for revision")
+        if let loop {
+            Task { await loop.resolvePlanRevision(feedback: feedback) }
+        }
+        return true
+    }
+
+    // MARK: Interactive responses
+
+    func approve(_ approved: Bool) {
+        approve(approved, always: false)
+    }
+
+    /// Decides a pending approval. `always: true` additionally widens
+    /// approval for the rest of this run AND future runs (persisted):
+    /// - a write tool (edit/write) enables auto-approve file edits
+    /// - run_command enables auto-approve for policy-safe commands
+    /// Reads never ask, so they never reach this path. The widening keeps
+    /// every existing safety rail: command approval remains gated by the
+    /// allowlist policy in PermissionGate.
+    func approve(_ approved: Bool, always: Bool) {
+        guard let request = pendingApproval else { return }
+        let codexRequestID = codexApprovalRequestID
+        let codexKind = codexApprovalKind
+        pendingApproval = nil
+        if approved {
+            transcript.append(
+                TranscriptItem(id: UUID(), kind: .notice("Approved: \(request.invocation.name)")))
+            DiagnosticsCenter.shared.record(.approval, "\(request.invocation.name) approved\(always ? " (always)" : "")")
+            if always, !isACPRun {
+                applyAlwaysApproval(for: request)
+            }
+        } else {
+            transcript.append(
+                TranscriptItem(id: UUID(), kind: .notice("Declined: \(request.invocation.name)")))
+            DiagnosticsCenter.shared.record(.approval, "\(request.invocation.name) declined", level: .warning)
+        }
+        if case .acpPermission(let id, let options) = codexKind {
+            let client = acpClient
+            Task { await client?.respond(
+                id: id,
+                result: ACPClient.permissionResult(options: options, approved: approved, always: always)) }
+            codexApprovalKind = nil
+            currentPhase = .working
+            return
+        }
+        if let codexRequestID {
+            let client = codexAccount.client
+            switch codexKind {
+            case .permissions(let requested):
+                let granted = approved ? requested : .object([:])
+                Task {
+                    try? await client.respondToPermissions(
+                        requestID: codexRequestID,
+                        permissions: granted,
+                        scope: approved && always ? "session" : "turn")
+                }
+            case .dynamicTool(let call):
+                let executor = codexDynamicExecutor
+                Task {
+                    guard approved, let executor else {
+                        try? await client.respondToDynamicTool(
+                            requestID: codexRequestID,
+                            output: "Tool call declined by the user.",
+                            success: false)
+                        return
+                    }
+                    let outcome = await executor.execute(call)
+                    try? await client.respondToDynamicTool(
+                        requestID: codexRequestID,
+                        output: outcome.output,
+                        success: !outcome.failed)
+                }
+            case .commandOrFile:
+                Task {
+                    try? await client.respondToApproval(
+                        requestID: codexRequestID,
+                        decision: approved ? (always ? "acceptForSession" : "accept") : "decline")
+                }
+            case .none, .acpPermission:
+                Task {
+                    try? await client.respondToApproval(
+                        requestID: codexRequestID,
+                        decision: approved ? "accept" : "decline")
+                }
+            }
+            codexApprovalRequestID = nil
+            codexApprovalInvocation = nil
+            codexApprovalKind = nil
+            currentPhase = .working
+            return
+        }
+        if let loop {
+            Task { await loop.resolve(requestID: request.id, approved: approved) }
+        }
+    }
+
+    private func applyAlwaysApproval(for request: ApprovalRequest) {
+        if request.invocation.name.hasPrefix("computer_") {
+            approvalOverrides?.allowComputer()
+            transcript.append(TranscriptItem(
+                id: UUID(),
+                kind: .notice("Computer actions approved for this run. Target restoration and verification remain active.")))
+            return
+        }
+        let isCommand = request.invocation.name == "run_command"
+            || request.invocation.name == "build_diagnostics"
+        if isCommand {
+            approvalOverrides?.allowCommands()
+            SettingsStore.shared.autoApproveCommands = true
+            transcript.append(TranscriptItem(
+                id: UUID(),
+                kind: .notice("Always approve enabled for safe commands (this run + future runs)")))
+        } else {
+            approvalOverrides?.allowEdits()
+            SettingsStore.shared.autoApproveEdits = true
+            transcript.append(TranscriptItem(
+                id: UUID(),
+                kind: .notice("Always approve enabled for file edits (this run + future runs)")))
+        }
+    }
+
+    func answerQuestion(_ text: String) {
+        guard let requestID = pendingQuestionID, pendingQuestion != nil, !text.isEmpty else { return }
+        let codexRequestID = codexQuestionRequestID
+        let codexID = codexQuestionID ?? "answer"
+        pendingQuestion = nil
+        pendingQuestionChoices = []
+        pendingQuestionID = nil
+        transcript.append(TranscriptItem(id: UUID(), kind: .user(text)))
+        if let codexRequestID {
+            let client = codexAccount.client
+            Task {
+                try? await client.respondToUserInput(
+                    requestID: codexRequestID,
+                    questionID: codexID,
+                    answer: text)
+            }
+            self.codexQuestionRequestID = nil
+            self.codexQuestionID = nil
+            currentPhase = .working
+            return
+        }
+        if let loop {
+            Task { await loop.answerQuestion(requestID: requestID, text: text) }
+        }
+    }
+
+    // MARK: Events
+
+    private func handle(_ event: AgentEvent, runID token: UUID) {
+        guard token == runID else { return }
+        // Diagnostics: every event is also a breadcrumb (metadata only —
+        // never message contents). See docs/DIAGNOSTICS-SPEC.md.
+        let diagnostics = DiagnosticsCenter.shared
+        switch event {
+        case .taskStarted:
+            flushTokens()
+            streamingText = ""
+            rawStreamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            diagnostics.record(.session, "Task started")
+
+        case .tokenDelta(let chunk):
+            pendingTokenBuffer += chunk
+            scheduleTokenFlush()
+
+        case .assistantMessage(let text):
+            flushTokens()
+            streamingText = ""
+            rawStreamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            // Wire format never reaches the transcript: strip tool-call
+            // syntax, and drop the bubble entirely if nothing else remains.
+            let prose = Self.cleanedAssistantText(text)
+            if !prose.isEmpty {
+                transcript.append(TranscriptItem(id: UUID(), kind: .assistant(prose)))
+            }
+
+        case .toolCallStarted(let invocation):
+            flushTokens()
+            streamingText = ""
+            rawStreamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            transcript.append(TranscriptItem(id: UUID(), kind: .toolCall(invocation)))
+            diagnostics.record(.tool, "\(invocation.name) started", detail: invocation.summary)
+
+        case .awaitingApproval(let request):
+            pendingApproval = request
+            diagnostics.record(.approval, "Approval requested: \(request.invocation.name)",
+                               detail: request.invocation.summary, level: .warning)
+
+        case .toolCallFinished(let invocation, let output, let failed):
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .toolResult(id: invocation.id, output: output, failed: failed, toolName: invocation.name)))
+            diagnostics.record(
+                .tool, "\(invocation.name) \(failed ? "failed" : "finished")",
+                detail: Self.diagnosticToolDetail(output: output, failed: failed),
+                level: failed ? .error : .info)
+
+        case .askUser(let requestID, let question, let choices):
+            flushTokens()
+            streamingText = ""
+            rawStreamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            pendingQuestionID = requestID
+            pendingQuestion = question
+            pendingQuestionChoices = choices
+            diagnostics.record(.approval, "The agent asked a question",
+                               detail: String(question.prefix(120)))
+
+        case .checkpointCreated(let checkpoint):
+            transcript.append(
+                TranscriptItem(id: UUID(), kind: .checkpoint(checkpoint)))
+            diagnostics.record(.tool, "Checkpoint saved", detail: checkpoint.summary)
+
+        case .checkpointSkipped(let reason):
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .notice("Undo checkpoint unavailable: \(reason) The approved action continued.")))
+            diagnostics.record(
+                .tool, "Checkpoint unavailable — action continued",
+                detail: reason, level: .warning)
+
+        case .checkpointFailed(let reason):
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .notice("Checkpoint failed — the action was NOT executed: \(reason)")))
+            diagnostics.record(.tool, "Checkpoint failed — action not executed",
+                               detail: reason, level: .error)
+
+        case .persistenceFailed(let reason):
+            persistenceError = reason
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .notice("This conversation is still in memory but is not saved yet: \(reason)")))
+            diagnostics.record(.session, "Conversation save failed", detail: reason, level: .error)
+
+        case .protocolError(let message):
+            let rendered = "Tool protocol error: \(message)"
+            // Protocol repair observations are internal control flow. A model
+            // can emit the same malformed turn more than once while it
+            // recovers; repeating identical rows makes the transcript look
+            // like the answer itself is failing and pushes the useful output
+            // below the fold.
+            if let last = transcript.last,
+               case .notice(let previous) = last.kind,
+               previous == rendered {
+                diagnostics.record(.tool, "Protocol error repeated", detail: message, level: .warning)
+                return
+            }
+            transcript.append(
+                TranscriptItem(
+                    id: UUID(),
+                    kind: .notice(rendered)))
+            diagnostics.record(.tool, "Protocol error", detail: message, level: .warning)
+
+        case .guardrail(let notice):
+            let rendered: String
+            let category: DiagnosticsCenter.Breadcrumb.Category
+            let level: DiagnosticsCenter.Breadcrumb.Level
+            switch notice.kind {
+            case .contentScreening:
+                rendered = "TypeSafe screened untrusted content: \(notice.summary)"
+                category = .tool
+                level = .warning
+            case .contentHeuristic:
+                rendered = "Content scan: \(notice.summary)"
+                category = .tool
+                level = .info
+            case .commandEscalation:
+                rendered = "TypeSafe escalated an action to approval: \(notice.summary)"
+                category = .approval
+                level = .warning
+            }
+            transcript.append(
+                TranscriptItem(id: UUID(), kind: .notice(rendered)))
+            diagnostics.record(category, rendered, detail: notice.detail, level: level)
+
+        case .reasoning(let text):
+            liveReasoningText = text
+            if let lastIndex = transcript.indices.last,
+               case .reasoning(let previous) = transcript[lastIndex].kind {
+                transcript[lastIndex].kind = .reasoning(previous + "\n\n" + text)
+            } else {
+                transcript.append(
+                    TranscriptItem(id: UUID(), kind: .reasoning(text)))
+            }
+
+        case .planProposed(let plan):
+            pendingPlan = plan
+            pendingPlanID = UUID()
+            diagnostics.record(.approval, "Plan proposed — waiting for approval")
+
+        case .phaseChanged(let phase):
+            currentPhase = phase
+
+        case .userSteered(let text):
+            flushTokens()
+            streamingText = ""
+            rawStreamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            clearPending()
+            currentPhase = .working
+            transcript.append(TranscriptItem(id: UUID(), kind: .user(text)))
+            transcript.append(TranscriptItem(id: UUID(), kind: .notice("Steering this turn")))
+
+        case .finished(let reason):
+            flushTokens()
+            streamingText = ""
+            rawStreamingText = ""
+            isReasoningVisible = false
+            liveReasoningText = ""
+            isRunning = false
+            finishReason = reason
+            if case .engineError(let message) = reason {
+                publishFailure(message)
+            }
+            attachMetricsToLastAnswer()
+            clearPending()
+            loop = nil
+            eventTask = nil
+            switch reason {
+            case .completed:
+                diagnostics.record(.session, "Task completed")
+            case .cancelled:
+                diagnostics.record(.session, "Task stopped by user", level: .warning)
+            case .declined(let detail):
+                diagnostics.record(.session, "Task declined", detail: detail, level: .warning)
+            case .maxTurnsReached(let turns):
+                diagnostics.record(.session, "Turn limit reached (\(turns))", level: .warning)
+            case .engineError(let message):
+                diagnostics.record(.engine, "Engine error", detail: message, level: .error)
+            }
+        }
+    }
+
+    /// Enriches only the final visible answer for a run. Local and remote
+    /// engines provide exact generation counts when available; Codex account
+    /// runs and providers without usage data are clearly marked approximate.
+    private func attachMetricsToLastAnswer() {
+        guard let index = transcript.lastIndex(where: {
+            if case .assistant = $0.kind { return true }
+            return false
+        }), case .assistant(let answer) = transcript[index].kind else {
+            runStartedAt = nil
+            return
+        }
+
+        let answerID = transcript[index].id
+        let startedAt = runStartedAt
+        let elapsed = max(Date().timeIntervalSince(startedAt ?? Date()), 0.01)
+        let accountBacked = activeCodexModelIDHandler() != nil
+        runStartedAt = nil
+
+        Task { [weak self] in
+            guard let self else { return }
+            let stats = await engine.stats
+            let hasReportedUsage = !accountBacked && stats.generatedTokens > 0
+            let estimatedTokens = max(1, Int(ceil(Double(answer.utf8.count) / 4.0)))
+            let metrics = AnswerMetrics(
+                outputTokens: hasReportedUsage ? stats.generatedTokens : estimatedTokens,
+                tokensPerSecond: hasReportedUsage ? stats.tokensPerSecond : nil,
+                elapsedSeconds: elapsed,
+                tokenCountIsEstimated: !hasReportedUsage)
+
+            guard let liveIndex = transcript.firstIndex(where: { $0.id == answerID }) else { return }
+            transcript[liveIndex].answerMetrics = metrics
+            persistAnswerMetrics(metrics, matching: answer)
+        }
+    }
+
+    private func persistAnswerMetrics(_ metrics: AnswerMetrics, matching answer: String) {
+        guard let id = activeSessionID,
+              var record = SessionStore.shared.load(id: id),
+              let messageIndex = record.messages.lastIndex(where: {
+                  $0.role == .assistant && Self.cleanedAssistantText($0.content) == answer
+              }) else { return }
+
+        record.messages[messageIndex].answerMetrics = metrics
+        record.updatedAt = Date()
+        if persistSessionRecord(record), codexRecord?.id == id {
+            codexRecord = record
+        }
+    }
+
+    // MARK: Tool registry
+
+    /// Diagnostics detail for a tool result. Successful results record only
+    /// their size; failures include a bounded single-line preview so an
+    /// exported diagnostics log explains what went wrong without dumping full
+    /// file contents.
+    private static func diagnosticToolDetail(output: String, failed: Bool) -> String {
+        let size = ByteFormatter.bytes(Int64(output.utf8.count))
+        guard failed else { return size }
+        let preview = output
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !preview.isEmpty else { return size }
+        let bounded = preview.count > 180 ? String(preview.prefix(180)) + "…" : preview
+        return "\(size) · \(bounded)"
+    }
+
+    /// Coding, browser, simulator, and Apple-delivery tools. Computer-use is
+    /// opt-in via `sessionTools(computerControlEnabled:)`.
+    static let defaultTools: [any AgentTool] = [
+        ReadFileTool(),
+        WriteFileTool(),
+        MoveFileTool(),
+        ListDirectoryTool(),
+        SearchTool(),
+        FindFilesTool(),
+        FindFilesTool(name: "glob"),
+        WebFetchTool(),
+        TinyFishSearchTool(),
+        BackgroundProcessTool(),
+        BackgroundStatusTool(),
+        ApplyPatchTool(),
+        RunCommandTool(),
+        BuildDiagnosticsTool(),
+        CreateMacAppTool(),
+        CreateIOSAppTool(),
+        MacBuildRunTool(),
+        AppleShipTool(),
+        SimListDevicesTool(),
+        SimBootDeviceTool(),
+        SimLaunchAppTool(),
+        SimTapTool(),
+        SimSwipeTool(),
+        SimTypeTool(),
+        SimDescribeTool(),
+        SimScreenshotTool(),
+        DescribeImageTool(),
+        SimBuildRunTool(),
+        // In-app browser: extraction is auto-approved; navigation/click/
+        // type/eval go through the approval card like every other mutation.
+    ] + BrowserTools.all
+
+    /// Drive other Mac apps. Off the default coding path; Settings → Agent
+    /// → Computer control must be on before these enter the registry.
+    static let computerControlTools: [any AgentTool] = [
+        ComputerRequestAccessTool(),
+        ComputerStatusTool(),
+        ComputerUITreeTool(),
+        ComputerScreenshotTool(),
+        ComputerActivateAppTool(),
+        ComputerClickTool(),
+        ComputerTypeTool(),
+        ComputerKeyTool(),
+        ComputerScrollTool(),
+    ]
+
+    /// Project-free Assistant tools stay app-owned: bounded search/browser
+    /// operations plus a native user-chosen document Save panel. Computer
+    /// control can request its own least-privilege macOS access in context.
+    static let browserControlTools: [any AgentTool] = [
+        TinyFishSearchTool(),
+        SaveDocumentTool(),
+    ] + BrowserTools.all
+
+    static let botControlTools: [any AgentTool] = [
+        BotRunsTool(),
+        DelegateBotTool(),
+        OrchestrateBotsTool(),
+        BotSteerTool(),
+        BotStopTool(),
+        BotRespondTool(),
+    ]
+
+    static let linuxGuestTools: [any AgentTool] = [
+        ReadFileTool(),
+        WriteFileTool(),
+        MoveFileTool(),
+        ListDirectoryTool(),
+        SearchTool(),
+        FindFilesTool(),
+        FindFilesTool(name: "glob"),
+        WebFetchTool(),
+        TinyFishSearchTool(),
+        ApplyPatchTool(),
+        RunCommandTool(),
+    ] + BrowserTools.all
+
+    static func sessionTools(
+        computerControlEnabled: Bool,
+        chatOnly: Bool = false,
+        linuxGuest: Bool = false,
+        botRun: Bool = false
+    ) -> [any AgentTool] {
+        // Bots don't drive other bots: delegation stays one level deep, under the Assistant.
+        let botControlTools = botRun ? [] : Self.botControlTools
+        if chatOnly {
+            let statusTools: [any AgentTool] = [
+                TailscaleStatusTool(),
+                DiskSpaceStatusTool(),
+                MacSystemStatusTool(),
+            ]
+            // Assistant mode advertises the full computer family so a model
+            // can request least-privilege access in context. The request tool
+            // is approval-gated and TCC still enforces every OS capability.
+            return statusTools + browserControlTools + computerControlTools + botControlTools
+        }
+        if linuxGuest {
+            return computerControlEnabled
+                ? linuxGuestTools + computerControlTools + botControlTools
+                : linuxGuestTools + botControlTools
+        }
+        return computerControlEnabled
+            ? defaultTools + computerControlTools + botControlTools
+            : defaultTools + botControlTools
+    }
+
+    /// The compact registry used when a local model is close to the machine's
+    /// RAM ceiling. These tools preserve core coding, a minimal website
+    /// preview loop, and lightweight simulator inspection/interaction while
+    /// avoiding computer-use, app-scaffolding, build-run orchestration, and
+    /// advanced browser schemas in every model prefill.
+    static let constrainedLocalTools: [any AgentTool] = [
+        ReadFileTool(),
+        WriteFileTool(),
+        ListDirectoryTool(),
+        SearchTool(),
+        TinyFishSearchTool(),
+        FindFilesTool(),
+        ApplyPatchTool(),
+        RunCommandTool(),
+        BackgroundProcessTool(),
+        BackgroundStatusTool(),
+    ] + BrowserTools.core + [
+        SimListDevicesTool(),
+        SimBootDeviceTool(),
+        SimLaunchAppTool(),
+        SimTapTool(),
+        SimSwipeTool(),
+        SimTypeTool(),
+        SimDescribeTool(),
+        SimScreenshotTool(),
+    ]
+
+    /// Lean local mode still needs enough completion room to close a JSON
+    /// tool call containing a modest source file. The previous 768-token cap
+    /// routinely cut `write_file` calls mid-object. Respect a deliberately
+    /// smaller user/provider ceiling, but allow up to 2K tokens otherwise.
+    nonisolated static func constrainedLocalTokenBudget(_ configured: Int) -> Int {
+        min(configured, 2_048)
+    }
+
+    private static func isConstrainedLocalModel(
+        engine: any LLMEngine,
+        modelID: String
+    ) -> Bool {
+        guard let router = engine as? EngineRouter,
+            router.source == .localMLX,
+            let model = ModelCatalog.model(id: modelID),
+            model.role == .chat
+        else { return false }
+
+        // On a 16 GB Apple Silicon Mac, even a smaller local model can spend
+        // most of a turn prefilling thousands of tool-schema tokens. Keep the
+        // full agent surface on machines with more headroom and use the core
+        // coding surface below 24 GB of physical RAM.
+        let constrainedMachine = MemoryAdvisor.physicalMemory < 24 * 1024 * 1024 * 1024
+        return constrainedMachine
+    }
+    /// Turns attachments into part of the user message: files are quoted
+    /// (bounded), images are described through the active vision-capable
+    /// provider and their descriptions attached.
+    /// Loads the persisted record for a session, but only when it still binds
+    /// to the given workspace — a stale session must never be resumed.
+    private static func persistedSeed(sessionID: UUID?, workspacePath: String) -> SessionRecord? {
+        guard let sessionID else { return nil }
+        guard let record = SessionStore.shared.load(id: sessionID),
+              record.workspacePath == workspacePath
+        else { return nil }
+        return record
+    }
+
+    private static func chatRuntimeDirectory() throws -> URL {
+        let directory = overrideChatRuntimeDirectory
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("BeetCode/ChatRuntime", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+    /// Async: local VLM first load can take seconds (weights page-in), and a
+    /// BYOK describe is a network call — a synchronous bridge with a fixed
+    /// timeout here used to misreport slow-but-working vision as missing.
+    /// Prepared turn: the model-facing text plus any images that go to the
+    /// model as real pixels rather than as a description.
+    struct PreparedTurn: Sendable {
+        var text: String
+        var images: [ChatImage]
+    }
+
+    /// Native image input wins when the resident model actually has a
+    /// projector loaded: sending the bytes lets the model see the image
+    /// instead of reading someone else's summary of it. Every other case —
+    /// no projector, an unsupported container (HEIC), an oversized file, a
+    /// BYOK model — keeps the described-image fallback unchanged.
+    private static func expand(
+        attachments: [ComposerAttachment],
+        message: String,
+        nativeImageInput: Bool
+    ) async -> PreparedTurn {
+        guard !attachments.isEmpty else { return PreparedTurn(text: message, images: []) }
+        var blocks: [String] = []
+        var images: [ChatImage] = []
+        for attachment in attachments {
+            if attachment.isImage {
+                if nativeImageInput, let image = ChatImage.fromFile(at: attachment.url) {
+                    images.append(image)
+                    blocks.append(
+                        "Image attached: \(attachment.name) — the image itself is part of this request; "
+                        + "read it directly instead of asking for a description.")
+                } else if let description = try? await VisionProvider.describe(
+                    imageAt: attachment.url,
+                    prompt: "Describe this image concisely for a coding agent.") {
+                    blocks.append("Image \(attachment.name): \(description)")
+                } else {
+                    blocks.append("Image attached: \(attachment.name) (\(attachment.url.path)) — no vision model available to describe it (download SmolVLM2 in the Model Manager or add a vision API key in Settings).")
+                }
+            } else if let data = try? Data(contentsOf: attachment.url),
+                      data.count < 16_384 {
+                let text = String(decoding: data, as: UTF8.self)
+                blocks.append("Attachment \(attachment.name):\n```\n\(text)\n```")
+            } else {
+                blocks.append("Attachment: \(attachment.name) (\(attachment.url.path)) — too large to inline; use read_file to inspect it.")
+            }
+        }
+        return PreparedTurn(
+            text: blocks.joined(separator: "\n\n") + "\n\n" + message,
+            images: images)
+    }
+
+    /// Compact human-readable attachment note for the visible transcript
+    /// (the model gets the expanded context; the bubble stays clean).
+    private static func attachmentSummary(_ attachments: [ComposerAttachment]) -> String {
+        if attachments.count == 1, let only = attachments.first {
+            return "1 attachment · \(only.name)"
+        }
+        return "\(attachments.count) attachments"
+    }
+
+}

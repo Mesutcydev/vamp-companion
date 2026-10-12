@@ -1,0 +1,293 @@
+import Foundation
+@testable import BeetCode
+
+/// A fully scripted, deterministic LLMEngine for agent-loop tests. No model
+/// weights, no Metal, no network — every generation returns the next scripted
+/// response, and every stream(adding:) call records the exact turns it was
+/// given so tests can assert history sequencing.
+final class FakeLLMEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
+
+    /// A scripted generation outcome, consumed FIFO by stream(adding:).
+    enum Scripted: Sendable {
+        /// Yield `text` in small chunks, then finish.
+        case text(String)
+        /// Finish without yielding anything.
+        case empty
+        /// Throw the error (used to simulate engine failures).
+        case failure(any Error & Sendable)
+    }
+
+    private let imageInput: Bool
+    init(supportsImageInput: Bool = false) { imageInput = supportsImageInput }
+    var supportsImageInput: Bool { get async { imageInput } }
+
+    private let lock = NSLock()
+
+    // Script state.
+    private var script: [Scripted] = []
+    private var holdsNextStream = false
+
+    // Recorded behavior (asserted by tests).
+    private var recordedTurns: [[ChatTurn]] = []
+    private var resetCount = 0
+    private var cancelCount = 0
+    private var streamCount = 0
+    private var configuredNativeTools: [NativeToolSpec] = []
+    private var semanticRebases: [[ChatTurn]] = []
+    private var _semanticRebaseEnabled = false
+    private var transientTrimCount = 0
+
+    // Runtime state.
+    private var cancelRequested = false
+    private var holdContinuation: CheckedContinuation<Void, Never>?
+    private var releasePending = false
+    private var loadedID: String?
+    private var statsState = EngineStats()
+    private var loadCounter = 0
+    private var wasUnloaded = false
+
+    // MARK: Scripting (test side) — all sync, safe from any context
+
+    func enqueue(_ responses: Scripted...) {
+        withLock {
+            script.append(contentsOf: responses)
+        }
+    }
+
+    func enqueue(texts: [String]) {
+        withLock {
+            script.append(contentsOf: texts.map(Scripted.text))
+        }
+    }
+
+    /// When true, the next stream(adding:) call blocks until release() is
+    /// called — giving tests a deterministic point at which to cancel.
+    func holdNextStream() {
+        withLock {
+            holdsNextStream = true
+            releasePending = false
+        }
+    }
+
+    func release() {
+        let continuation = withLock { () -> CheckedContinuation<Void, Never>? in
+            let held = holdContinuation
+            holdContinuation = nil
+            if held == nil {
+                // `streamCallCount` is incremented before the stream task installs
+                // its continuation. Remember an early release so tests cannot lose
+                // the signal in that small scheduling window.
+                releasePending = true
+            }
+            return held
+        }
+        continuation?.resume()
+    }
+
+    var streamCallCount: Int {
+        withLock { streamCount }
+    }
+
+    /// How many times load(...) was invoked (pool warm-switch tests assert
+    /// exactly one load per resident engine).
+    var loadCount: Int {
+        withLock { loadCounter }
+    }
+
+    /// True once unload() has been called (eviction tests).
+    var unloaded: Bool {
+        withLock { wasUnloaded }
+    }
+
+    var resetCallCount: Int {
+        withLock { resetCount }
+    }
+
+    var cancelCallCount: Int {
+        withLock { cancelCount }
+    }
+
+    /// All stream(adding:) turn-arguments, in call order.
+    var turnHistory: [[ChatTurn]] {
+        withLock { recordedTurns }
+    }
+
+    var configuredNativeToolNames: [String] {
+        withLock { configuredNativeTools.map(\.name) }
+    }
+
+    var semanticRebaseEnabled: Bool {
+        get { withLock { _semanticRebaseEnabled } }
+        set { withLock { _semanticRebaseEnabled = newValue } }
+    }
+
+    var semanticRebaseCallCount: Int {
+        withLock { semanticRebases.count }
+    }
+
+    var trimTransientMemoryCallCount: Int {
+        withLock { transientTrimCount }
+    }
+
+    var isCancelRequested: Bool {
+        withLock { cancelRequested }
+    }
+
+    // MARK: LLMEngine
+
+    var loadedModelID: String? {
+        get async { withLock { loadedID } }
+    }
+
+    /// Test stub for the engine-reported real context window (GGUF-style).
+    var stubbedContextWindow: Int? {
+        get { withLock { _stubbedContextWindow } }
+        set { withLock { _stubbedContextWindow = newValue } }
+    }
+    private var _stubbedContextWindow: Int?
+
+    var effectiveContextWindow: Int? {
+        get async { withLock { _stubbedContextWindow } }
+    }
+
+    var stats: EngineStats {
+        get async { withLock { statsState } }
+    }
+
+    func configureNativeTools(_ tools: [NativeToolSpec]) {
+        withLock { configuredNativeTools = tools }
+    }
+
+    func load(directory: URL, modelID: String, diskBytes: Int64) async throws {
+        withLock {
+            loadedID = modelID
+            loadCounter += 1
+        }
+    }
+
+    func unload() async {
+        withLock {
+            loadedID = nil
+            statsState = EngineStats()
+            wasUnloaded = true
+        }
+    }
+
+    func reset() async {
+        withLock {
+            resetCount += 1
+            cancelRequested = false
+        }
+    }
+
+    func rebaseConversation(to turns: [ChatTurn]) async -> SemanticRebaseResult {
+        withLock {
+            semanticRebases.append(turns)
+            return _semanticRebaseEnabled
+                ? SemanticRebaseResult(installedHistory: true)
+                : .unsupported
+        }
+    }
+
+    func trimTransientMemory() async {
+        withLock { transientTrimCount += 1 }
+    }
+
+    func stream(
+        adding turns: [ChatTurn],
+        maxTokens: Int?,
+        temperature: Double?
+    ) -> AsyncThrowingStream<String, Error> {
+        let (response, shouldHold) = withLock { () -> (Scripted, Bool) in
+            cancelRequested = false
+            recordedTurns.append(turns)
+            streamCount += 1
+            let response: Scripted = script.isEmpty ? .empty : script.removeFirst()
+            let shouldHold = holdsNextStream
+            holdsNextStream = false
+            return (response, shouldHold)
+        }
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                // Deterministic cancellation point: block until released.
+                if shouldHold {
+                    _ = await withCheckedContinuation { inner in
+                        let resumeNow = withLock { () -> Bool in
+                            if cancelRequested || releasePending {
+                                releasePending = false
+                                return true
+                            }
+                            holdContinuation = inner
+                            return false
+                        }
+                        if resumeNow { inner.resume() }
+                    }
+                }
+
+                if self.isCancelRequested {
+                    continuation.finish(throwing: CancellationError())
+                    return
+                }
+
+                switch response {
+                case .text(let text):
+                    // Yield in character chunks so tokenDelta events flow.
+                    var index = text.startIndex
+                    while index < text.endIndex {
+                        if self.isCancelRequested {
+                            continuation.finish(throwing: CancellationError())
+                            return
+                        }
+                        let next = text.index(index, offsetBy: 1, limitedBy: text.endIndex) ?? text.endIndex
+                        continuation.yield(String(text[index..<next]))
+                        index = next
+                    }
+                    continuation.finish()
+                case .empty:
+                    continuation.finish()
+                case .failure(let error):
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+    }
+
+    func cancelGeneration() async {
+        let held = withLock { () -> CheckedContinuation<Void, Never>? in
+            cancelCount += 1
+            cancelRequested = true
+            let held = holdContinuation
+            holdContinuation = nil
+            return held
+        }
+        held?.resume()
+    }
+
+    // MARK: Locking
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+/// Convenience for tests that need the failure case without carrying an
+/// arbitrary error type.
+enum FakeEngineTestError: Error, LocalizedError, Sendable {
+    case simulated
+    case contextOverflow
+
+    var errorDescription: String? {
+        switch self {
+        case .simulated:
+            return "simulated engine failure"
+        case .contextOverflow:
+            return "Provider returned HTTP 400: request (20915 tokens) exceeds the available context size (19712 tokens)"
+        }
+    }
+}

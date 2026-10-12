@@ -1,0 +1,304 @@
+name: BeetCode
+options:
+  bundleIdPrefix: com.beetcode
+  deploymentTarget:
+    macOS: "15.0"
+    iOS: "18.0"
+  createIntermediateGroups: true
+  # Xcode 16-era pbxproj (objectVersion 77) opens in Xcode 26.x and 27.x.
+  projectFormat: xcode16_0
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+    ARCHS: arm64
+    EXCLUDED_ARCHS: x86_64
+
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    version: "2.10.0"
+  MLX:
+    url: https://github.com/ml-explore/mlx-swift
+    version: "0.31.6"
+  MLXLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    version: "3.31.4"
+  SwiftTransformers:
+    url: https://github.com/huggingface/swift-transformers
+    from: "1.3.0"
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    version: "1.19.0"
+
+targets:
+  BeetCode:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Core
+    resources:
+      - App/Assets.xcassets
+    dependencies:
+      - package: Sparkle
+        product: Sparkle
+      - package: MLX
+        products:
+          - MLX
+      - package: MLXLM
+        products:
+          - MLXLLM
+          - MLXLMCommon
+          - MLXVLM
+      - package: SwiftTransformers
+        products:
+          - Tokenizers
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: "Vamp Assistant"
+        CFBundleIconName: AppIcon
+        CFBundleShortVersionString: "0.10.53"
+        CFBundleVersion: "132"
+        SUFeedURL: https://mesutcydev.github.io/vamp-assistant/appcast.xml
+        SUPublicEDKey: "yjY7zlQpF4bDqZV/vVo21Am1NKtAFnypz2szzMvU4cc="
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: false
+        SUSendProfileInfo: false
+        SUVerifyUpdateBeforeExtraction: true
+        SURequireSignedFeed: true
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSMinimumSystemVersion: "15.0"
+        NSHumanReadableCopyright: "Copyright © 2026 Vamp Assistant contributors"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.app
+        PRODUCT_NAME: "Vamp Assistant"
+        PRODUCT_MODULE_NAME: BeetCode
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_APP_SANDBOX: NO
+        # Beet Code must launch developer tools and operate on explicitly
+        # selected workspaces, which is incompatible with App Sandbox. Keep
+        # that privilege boundary explicit while still opting into hardened
+        # runtime protections for signed builds.
+        ENABLE_HARDENED_RUNTIME: YES
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Stable signature across rebuilds: ad-hoc ("-") gives every binary a
+        # new cdhash, so Keychain's "Always Allow" never sticks and the app
+        # re-prompts for every item on every launch. A real development
+        # identity keeps the designated requirement stable — one Always
+        # Allow, forever.
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: "438VSM6P5L"
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  BeetCodeCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - Core
+      - CLI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.cli
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+    dependencies:
+      - package: MLX
+        products:
+          - MLX
+      - package: MLXLM
+        products:
+          - MLXLLM
+          - MLXLMCommon
+          - MLXVLM
+      - package: SwiftTransformers
+        products:
+          - Tokenizers
+
+  BeetCodeTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    resources:
+      - Tests/Fixtures
+    dependencies:
+      - target: BeetCode
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Vamp Assistant.app/Contents/MacOS/Vamp Assistant"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+        # The unit-test bundle is loaded into BeetCode's process, so hardened
+        # runtime requires both binaries to carry the same Team ID.
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: "438VSM6P5L"
+
+  BeetCodeUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - UITests
+    dependencies:
+      - target: BeetCode
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.uitests
+        TEST_TARGET_NAME: BeetCode
+        GENERATE_INFOPLIST_FILE: YES
+
+  BeetCodeRemoteIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - iOSApp
+      - Core/Tools/RemoteInputCommandQueue.swift
+      - Core/Tools/RemotePointerCurve.swift
+      - Core/Tools/RemoteStreamProfile.swift
+      - Core/Tools/RemoteDisplayMapping.swift
+      # Shared theme vocabulary (accent palettes, typeface) — one source of
+      # truth for both clients instead of duplicated hex tables.
+      - Core/Persistence/AppTheme.swift
+      - path: App/Assets.xcassets
+        buildPhase: resources
+    info:
+      path: iOSApp/Info.plist
+      properties:
+        CFBundleDisplayName: "Vamp Assist"
+        # xcodegen writes iOSApp/Info.plist from this block, so these were the real version —
+        # the target's MARKETING_VERSION / CURRENT_PROJECT_VERSION settings below had no effect
+        # on the shipped app at all, and a bump there silently produced an identically-numbered
+        # IPA with different code inside. Point them at the settings so there is one source.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        NSLocalNetworkUsageDescription: "Vamp Assistant connects to Vamp Assistant running on your trusted Mac."
+        NSCameraUsageDescription: "Vamp Assistant scans the one-time pairing QR code shown by your Mac."
+        NSMicrophoneUsageDescription: "Vamp Assistant can dictate text onto your Mac from the Control keyboard."
+        NSSpeechRecognitionUsageDescription: "Vamp Assistant turns on-device speech into keystrokes on your Mac."
+        LSApplicationQueriesSchemes:
+          - tailscale
+        NSAppTransportSecurity:
+          # Vamp Assistant is intentionally a private-network HTTP peer. The client enforces the
+          # LAN/Tailscale-only address policy before any request is made. Do not combine this
+          # with NSAllowsLocalNetworking: on current iOS the fine-grained key causes the global
+          # dynamic-IP allowance to be ignored. (Same rationale as vampstream-project.yml.)
+          NSAllowsArbitraryLoads: true
+        UILaunchScreen:
+          UIColorName: AccentColor
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.remote.ios
+        PRODUCT_NAME: "Vamp Assistant"
+        PRODUCT_MODULE_NAME: BeetCodeRemoteIOS
+        MARKETING_VERSION: "0.10.54"
+        CURRENT_PROJECT_VERSION: "133"
+        CODE_SIGN_ENTITLEMENTS: iOSApp/BeetCodeRemote.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: iOSApp/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        DEVELOPMENT_TEAM: ""
+    dependencies:
+      - package: SwiftTerm
+        products:
+          - SwiftTerm
+    entitlements:
+      path: iOSApp/BeetCodeRemote.entitlements
+      properties:
+        application-identifier: com.beetcode.remote.ios
+        get-task-allow: true
+        keychain-access-groups:
+          - com.beetcode.remote.ios
+
+  BeetCodeRemoteIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - iOSTests
+    dependencies:
+      - target: BeetCodeRemoteIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.remote.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Vamp Assistant.app/Vamp Assistant"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+
+  BeetCodeRemoteIOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - iOSUITests
+    dependencies:
+      - target: BeetCodeRemoteIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.remote.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: BeetCodeRemoteIOS
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+
+schemes:
+  BeetCode:
+    build:
+      targets:
+        BeetCode: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BeetCodeTests
+        - BeetCodeUITests
+  BeetCodeCLI:
+    build:
+      targets:
+        BeetCodeCLI: all
+    run:
+      config: Debug
+  BeetCodeRemoteIOS:
+    build:
+      targets:
+        BeetCodeRemoteIOS: all
+        BeetCodeRemoteIOSTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BeetCodeRemoteIOSTests
+        - BeetCodeRemoteIOSUITests

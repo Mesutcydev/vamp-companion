@@ -1,0 +1,555 @@
+import Foundation
+
+/// Multi-model residency for local engines.
+///
+/// Previously the app was single-resident: loading a second model unloaded
+/// the first. The pool keeps several models resident simultaneously — each
+/// with its own engine instance and warm KV cache — behind ONE shared
+/// `GenerationGate` (MLX permits only one command buffer in flight per
+/// process, so resident engines must serialize their Metal work).
+///
+/// Admission stays with `MemoryAdvisor`: because already-resident models
+/// inflate the process footprint, `admitLoad` naturally evaluates a new load
+/// against the REMAINING budget. When a load is rejected, the pool evicts
+/// least-recently-used idle engines (never the active one) and retries.
+///
+/// All eviction planning is pure (`Planner`) and unit-testable.
+actor EnginePool {
+
+    /// One resident engine plus its residency metadata.
+    struct Resident: Sendable {
+        var modelID: String
+        var directory: URL
+        var diskBytes: Int64
+        var lastUsed: Date
+        var format: CatalogModel.Format = .mlx
+        /// Conservative reservation: projected lazy weight working set, raised
+        /// to the measured helper-process footprint when GGUF reports more.
+        var reservedBytes: UInt64 = 0
+    }
+
+    /// Pure residency planning — deterministic, no engines involved.
+    enum Planner {
+
+        enum ContextPressureLevel: Int, Sendable, Equatable {
+            case none
+            case trimTransientCaches
+            case evictIdleAndTrim
+        }
+
+        /// Orders eviction candidates: idle (not active) residents, least
+        /// recently used first. The active model is never a candidate.
+        static func evictionCandidates(
+            residents: [Resident],
+            activeModelID: String?
+        ) -> [Resident] {
+            residents
+                .filter { $0.modelID != activeModelID }
+                .sorted { $0.lastUsed < $1.lastUsed }
+        }
+
+        /// Whether the pool may admit one more resident without evicting:
+        /// under the residency cap.
+        static func underCap(residentCount: Int, maxResident: Int) -> Bool {
+            residentCount < maxResident
+        }
+
+        /// Multi-residency must be affordable on a clean machine even when
+        /// MLX has not paged lazy mappings yet or GGUF runs in another task.
+        /// Saturating addition makes corrupt metadata fail closed.
+        static func residentSetFits(
+            residents: [Resident],
+            candidateDiskBytes: Int64,
+            cleanUsableBudget: UInt64,
+            candidateFormat: CatalogModel.Format = .mlx
+        ) -> Bool {
+            let candidate = MemoryAdvisor.projectedFootprint(
+                diskBytes: candidateDiskBytes,
+                format: candidateFormat)
+            let total = residents.reduce(candidate) { partial, resident in
+                let reserved = resident.reservedBytes > 0
+                    ? resident.reservedBytes
+                    : MemoryAdvisor.projectedFootprint(
+                        diskBytes: resident.diskBytes,
+                        format: resident.format)
+                let (sum, overflow) = partial.addingReportingOverflow(reserved)
+                return overflow ? UInt64.max : sum
+            }
+            return MemoryAdvisor.verdict(
+                projected: total,
+                budget: cleanUsableBudget).fitsLoad
+        }
+
+        /// Proactive safe-point policy for a growing agent transcript. Small
+        /// unified-memory Macs act earlier because KV growth competes directly
+        /// with app, Metal, and model pages. The active model is never a
+        /// candidate; the strongest action only releases idle residents.
+        static func contextPressureLevel(
+            contextTokens: Int,
+            contextWindow: Int,
+            physicalMemory: UInt64,
+            availableBudget: UInt64
+        ) -> ContextPressureLevel {
+            guard contextTokens > 0, contextWindow > 0 else { return .none }
+            let fraction = Double(contextTokens) / Double(contextWindow)
+            let gib: UInt64 = 1_024 * 1_024 * 1_024
+            let smallUnifiedMemoryMac = physicalMemory <= 24 * gib
+            let lowHeadroom = max(gib, UInt64(Double(physicalMemory) * 0.08))
+
+            if availableBudget < lowHeadroom
+                || fraction >= (smallUnifiedMemoryMac ? 0.50 : 0.75) {
+                return .evictIdleAndTrim
+            }
+            if fraction >= (smallUnifiedMemoryMac ? 0.35 : 0.60) {
+                return .trimTransientCaches
+            }
+            return .none
+        }
+    }
+
+    // MARK: State
+
+    /// All resident engines share this gate: exactly one command buffer in
+    /// flight for the whole process, however many models are loaded.
+    private let gate: GenerationGate
+
+    /// The process-wide Metal gate, exposed so the vision sidecar
+    /// (`VisionEngine`) serializes its MLX work with every resident LLM.
+    nonisolated var sharedGate: GenerationGate { gate }
+    private var engines: [String: any LLMEngine] = [:]
+    private var residents: [String: Resident] = [:]
+    /// In-flight activations keyed by model ID. Without this, two concurrent
+    /// activations both observed an empty `engines` slot and both loaded; the
+    /// second insert overwrote the first, leaking that engine (and, for GGUF,
+    /// a live llama-server process).
+    private var activations: [String: Task<Void, Error>] = [:]
+    private(set) var activeModelID: String?
+    private let maxResident: Int
+    private var engineFactory: @Sendable (CatalogModel.Format, GenerationGate) -> any LLMEngine
+    /// Prevents repeated cache purges on every token turn while the context
+    /// remains in the same pressure band. Compaction or a model switch lowers
+    /// the band and arms the next transition again.
+    private var lastContextPressureLevel: Planner.ContextPressureLevel = .none
+    private var pressureModelID: String?
+
+    /// Test seam: swap the admission authority (tests inject a fixed budget).
+    var admitLoad: @Sendable (_ diskBytes: Int64) throws -> Void = { diskBytes in
+        try MemoryAdvisor.admitLoad(diskBytes: diskBytes)
+    }
+    private var admitLoadForFormat: @Sendable (_ diskBytes: Int64, _ format: CatalogModel.Format) throws -> Void = { diskBytes, format in
+        try MemoryAdvisor.admitLoad(diskBytes: diskBytes, format: format)
+    }
+
+    init(gate: GenerationGate = GenerationGate(), maxResident: Int = 4) {
+        self.gate = gate
+        self.maxResident = maxResident
+        // Default: MLX safetensors run in-process on the shared gate; GGUF
+        // runs through llama.cpp's llama-server subprocess (its Metal work is
+        // serialized inside that child, not in our process).
+        self.engineFactory = { format, sharedGate in
+            switch format {
+            case .mlx:
+                return ManagedMLXEngine(fallback: MLXEngine(
+                    gate: sharedGate,
+                    experimentalPromptCacheEnabled:
+                        ExperimentalInferencePreferences.mlxPromptCacheEnabledForNewEngine,
+                    experimentalQuantizedKVEnabled:
+                        ExperimentalInferencePreferences.mlxQuantizedKVEnabledForNewEngine))
+            case .gguf:
+                return GGUFEngine(
+                    experimentalDFlashEnabled:
+                        ExperimentalInferencePreferences.dflashEnabledForNewEngine,
+                    experimentalNGramEnabled:
+                        ExperimentalInferencePreferences.ngramEnabledForNewEngine,
+                    loraScale:
+                        ExperimentalInferencePreferences.loraScaleForNewEngine)
+            case .qwenStreaming:
+                return QwenStreamingEngine(gate: sharedGate)
+            case .coreAI:
+                return UnsupportedFormatEngine(
+                    reason: "Apple Core AI packs are recognized but not runnable yet. Use an MLX or GGUF model.")
+            }
+        }
+    }
+
+    /// Test seam: inject a fake engine factory (deterministic suites never
+    /// touch MLX).
+    func setEngineFactory(_ factory: @escaping @Sendable (CatalogModel.Format, GenerationGate) -> any LLMEngine) {
+        engineFactory = factory
+    }
+
+    /// Test seam: swap the admission authority (actor-safe setter).
+    func setAdmitLoad(_ block: @escaping @Sendable (_ diskBytes: Int64) throws -> Void) {
+        admitLoad = block
+        admitLoadForFormat = { diskBytes, _ in try block(diskBytes) }
+    }
+
+    // MARK: Queries
+
+    var residentModelIDs: [String] {
+        residents.keys.sorted()
+    }
+
+    var isResident: (String) -> Bool {
+        { self.residents[$0] != nil }
+    }
+
+    func residentInfo(modelID: String) -> Resident? {
+        residents[modelID]
+    }
+
+    /// The active engine (the one generation routes through).
+    private var activeEngine: (any LLMEngine)? {
+        guard let activeModelID else { return nil }
+        return engines[activeModelID]
+    }
+
+    // MARK: Activation
+
+    /// Ensures `modelID` is resident and makes it the active engine.
+    /// - Already resident: warm switch — the engine's KV cache survives.
+    /// - Not resident: admit against the REMAINING budget, evicting LRU idle
+    ///   engines when necessary, then load a fresh engine on the shared gate.
+    /// Throws `EngineError` / `MemoryAdvisor.AdmissionError` when the model
+    /// cannot be admitted even after evicting every idle resident.
+    func activate(
+        directory: URL, modelID: String, diskBytes: Int64,
+        format: CatalogModel.Format = .mlx, contextSize: Int? = nil
+    ) async throws {
+        touch(modelID)
+        if engines[modelID] != nil {
+            activateResident(modelID)
+            return
+        }
+        // Join an in-flight load for the same model instead of racing it.
+        if let inFlight = activations[modelID] {
+            try await inFlight.value
+            return
+        }
+        let task = Task {
+            try await self.performActivation(
+                directory: directory, modelID: modelID, diskBytes: diskBytes,
+                format: format, contextSize: contextSize)
+        }
+        activations[modelID] = task
+        defer { activations[modelID] = nil }
+        try await task.value
+    }
+
+    /// Warm switch to an already-resident engine (KV cache survives).
+    private func activateResident(_ modelID: String) {
+        if activeModelID != modelID {
+            pressureModelID = modelID
+            lastContextPressureLevel = .none
+        }
+        activeModelID = modelID
+    }
+
+    private func performActivation(
+        directory: URL, modelID: String, diskBytes: Int64,
+        format: CatalogModel.Format, contextSize: Int?
+    ) async throws {
+        if engines[modelID] != nil {
+            activateResident(modelID)
+            return
+        }
+        await refreshExternalReservations()
+
+        // Make room: residency cap first, then memory budget. Each eviction
+        // frees one model's weights + cache; admission is re-checked after
+        // every eviction because the footprint only drops once the kernel
+        // reclaims the pages.
+        while !Planner.underCap(residentCount: residents.count, maxResident: maxResident)
+            || !Planner.residentSetFits(
+                residents: Array(residents.values),
+                candidateDiskBytes: diskBytes,
+                cleanUsableBudget: MemoryAdvisor.cleanUsableBudget,
+                candidateFormat: format)
+            || !admissible(diskBytes: diskBytes, format: format) {
+            guard let victim = Planner.evictionCandidates(
+                residents: Array(residents.values), activeModelID: modelID).first
+            else { break }
+            await evict(modelID: victim.modelID)
+        }
+        // Final hard admission — never bypass the advisor's safety stops.
+        try admitLoadForFormat(diskBytes, format)
+
+        let engine = engineFactory(format, gate)
+        do {
+            try await engine.load(directory: directory, modelID: modelID, diskBytes: diskBytes, contextSize: contextSize)
+        } catch {
+            await engine.unload()
+            throw error
+        }
+        engines[modelID] = engine
+        let measuredExternal = await engine.externalResidentMemoryBytes ?? 0
+        residents[modelID] = Resident(
+            modelID: modelID,
+            directory: directory,
+            diskBytes: diskBytes,
+            lastUsed: Date(),
+            format: format,
+            reservedBytes: max(
+                MemoryAdvisor.projectedFootprint(
+                    diskBytes: diskBytes,
+                    format: format),
+                measuredExternal))
+        activeModelID = modelID
+        pressureModelID = modelID
+        lastContextPressureLevel = .none
+        Log.engine.info("Pool: model \(modelID, privacy: .public) resident (\(self.residents.count) total)")
+    }
+
+    /// True when the advisor would admit this load right now.
+    private func admissible(diskBytes: Int64, format: CatalogModel.Format) -> Bool {
+        (try? admitLoadForFormat(diskBytes, format)) != nil
+    }
+
+    /// Unloads and removes one resident engine (LRU eviction path).
+    private func evict(modelID: String) async {
+        guard let engine = engines[modelID] else { return }
+        await engine.unload()
+        engines[modelID] = nil
+        residents[modelID] = nil
+        if activeModelID == modelID {
+            activeModelID = nil
+            pressureModelID = nil
+            lastContextPressureLevel = .none
+        }
+        Log.engine.info("Pool: evicted \(modelID, privacy: .public)")
+    }
+
+    private func touch(_ modelID: String) {
+        residents[modelID]?.lastUsed = Date()
+    }
+
+    /// GGUF model memory belongs to llama-server, not Beet Code's task. Raise
+    /// each reservation to the helper's live phys_footprint before planning a
+    /// switch. MLX keeps the projected reservation because its weights may be
+    /// mapped but not resident until a later first generation.
+    private func refreshExternalReservations() async {
+        for (modelID, engine) in engines {
+            guard let measured = await engine.externalResidentMemoryBytes,
+                  var resident = residents[modelID]
+            else { continue }
+            resident.reservedBytes = max(
+                resident.reservedBytes,
+                max(
+                    MemoryAdvisor.projectedFootprint(
+                        diskBytes: resident.diskBytes,
+                        format: resident.format),
+                    measured))
+            residents[modelID] = resident
+        }
+    }
+
+    /// Applies the task-specific native function catalog to the active local
+    /// backend when it supports one (currently GGUF/llama-server).
+    func configureActiveNativeTools(_ tools: [NativeToolSpec]) {
+        guard let id = activeModelID,
+              let configurable = engines[id] as? any NativeToolConfigurable
+        else { return }
+        configurable.configureNativeTools(tools)
+    }
+
+    // MARK: Generation routing
+
+    /// Streams through the active engine. Throws `EngineError.notLoaded`
+    /// when nothing is active.
+    func stream(
+        adding turns: [ChatTurn],
+        maxTokens: Int?,
+        temperature: Double?
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        guard let engine = activeEngine else { throw EngineError.notLoaded }
+        touch(activeModelID ?? "")
+        return engine.stream(adding: turns, maxTokens: maxTokens, temperature: temperature)
+    }
+
+    func streamReplay(
+        _ turns: [ChatTurn],
+        maxTokens: Int?,
+        temperature: Double?
+    ) async throws -> AsyncThrowingStream<String, Error> {
+        guard let engine = activeEngine else { throw EngineError.notLoaded }
+        touch(activeModelID ?? "")
+        return engine.streamReplay(turns, maxTokens: maxTokens, temperature: temperature)
+    }
+
+    func resetActive() async {
+        await activeEngine?.reset()
+        lastContextPressureLevel = .none
+    }
+
+    func rebaseActiveConversation(to turns: [ChatTurn]) async -> SemanticRebaseResult {
+        guard let activeEngine else { return .unsupported }
+        return await activeEngine.rebaseConversation(to: turns)
+    }
+
+    func trimActiveTransientMemory() async {
+        await activeEngine?.trimTransientMemory()
+    }
+
+    /// Runs only before a generation begins. Idle engines are evicted LRU;
+    /// the active engine merely releases disposable allocator/workspace cache.
+    func prepareForGeneration(
+        contextTokens: Int,
+        contextWindow: Int,
+        physicalMemory: UInt64 = MemoryAdvisor.physicalMemory,
+        availableBudget: UInt64 = MemoryAdvisor.availableBudget
+    ) async {
+        guard let activeModelID, let activeEngine else { return }
+        if pressureModelID != activeModelID {
+            pressureModelID = activeModelID
+            lastContextPressureLevel = .none
+        }
+
+        let level = Planner.contextPressureLevel(
+            contextTokens: contextTokens,
+            contextWindow: contextWindow,
+            physicalMemory: physicalMemory,
+            availableBudget: availableBudget)
+        guard level.rawValue > lastContextPressureLevel.rawValue else {
+            // A successful compaction may lower the band; remember that so a
+            // later long-context climb can trigger reclamation once more.
+            lastContextPressureLevel = level
+            return
+        }
+
+        if level == .evictIdleAndTrim {
+            let idle = Planner.evictionCandidates(
+                residents: Array(residents.values),
+                activeModelID: activeModelID)
+            for resident in idle {
+                await evict(modelID: resident.modelID)
+            }
+        }
+        await activeEngine.trimTransientMemory()
+        lastContextPressureLevel = level
+        Log.memory.info(
+            "Context memory governor entered level \(level.rawValue) at \(contextTokens)/\(contextWindow) tokens")
+    }
+
+    func cancelActiveGeneration() async {
+        await activeEngine?.cancelGeneration()
+    }
+
+    func stats() async -> EngineStats {
+        await activeEngine?.stats ?? EngineStats()
+    }
+
+    func activeLoadedModelID() async -> String? {
+        await activeEngine?.loadedModelID
+    }
+
+    /// Whether the ACTIVE resident can accept native image content (a GGUF
+    /// model launched with a multimodal projector).
+    func activeSupportsImageInput() async -> Bool {
+        await activeEngine?.supportsImageInput ?? false
+    }
+
+    /// Developer-only access for the Qwen lifecycle oracle. Production UI
+    /// code routes through `stream`; validation needs the accepted explicit
+    /// token fixture after a real pool model switch without exposing a second
+    /// inference API to the app.
+    func debugQwenEngine(modelID: String? = nil) -> QwenStreamingEngine? {
+        let id = modelID ?? activeModelID
+        return id.flatMap { engines[$0] as? QwenStreamingEngine }
+    }
+
+    /// The active engine's real context window (GGUF: RAM-fitted launch ctx).
+    func activeEffectiveContextWindow() async -> Int? {
+        await activeEngine?.effectiveContextWindow
+    }
+
+    // MARK: Lifecycle
+
+    /// Unloads the active model only (other residents stay warm).
+    func unloadActive() async {
+        guard let modelID = activeModelID, let engine = engines[modelID] else { return }
+        await engine.unload()
+        engines[modelID] = nil
+        residents[modelID] = nil
+        activeModelID = nil
+        pressureModelID = nil
+        lastContextPressureLevel = .none
+    }
+
+    /// Unloads every resident model (app quit / deactivate-all).
+    func unloadAll() async {
+        for (_, engine) in engines {
+            await engine.unload()
+        }
+        engines.removeAll()
+        residents.removeAll()
+        activeModelID = nil
+        pressureModelID = nil
+        lastContextPressureLevel = .none
+    }
+
+    /// Emergency: dump the largest idle resident first (most bytes back),
+    /// falling back to the active model. Returns true when something was
+    /// actually dumped.
+    @discardableResult
+    func dumpLargestResident() async -> Bool {
+        let candidates = residents.values.sorted { $0.diskBytes > $1.diskBytes }
+        // Idle residents first — the active model is the last resort.
+        if let victim = candidates.first(where: { $0.modelID != activeModelID }) {
+            await evict(modelID: victim.modelID)
+            await clearCaches()
+            return true
+        }
+        if let modelID = activeModelID {
+            await evict(modelID: modelID)
+            await clearCaches()
+            return true
+        }
+        return false
+    }
+
+    /// Clears Metal caches across the pool once generation is idle.
+    func clearCaches() async {
+        // Delegate to whichever engines know their own cache semantics rather
+        // than importing MLX here (keeps the pool backend-agnostic).
+        await gate.clearCacheWhenIdle {
+            // MLX's buffer cache is process-wide; a single clear suffices.
+        }
+        for (_, engine) in engines {
+            await engine.clearCaches()
+        }
+    }
+
+    /// True when at least one model is resident.
+    var hasResidentModels: Bool {
+        !residents.isEmpty
+    }
+}
+
+/// Detected Core AI packs must not go to MLX or llama.cpp. No OS 27 runner
+/// ships in this product yet, so load fails with a clear message.
+fileprivate final class UnsupportedFormatEngine: LLMEngine, @unchecked Sendable {
+    private let reason: String
+
+    init(reason: String) {
+        self.reason = reason
+    }
+
+    var loadedModelID: String? { get async { nil } }
+    var stats: EngineStats { get async { EngineStats() } }
+
+    func load(directory: URL, modelID: String, diskBytes: Int64) async throws {
+        throw EngineError.loadFailed(reason)
+    }
+
+    func unload() async {}
+    func reset() async {}
+    func cancelGeneration() async {}
+
+    func stream(
+        adding turns: [ChatTurn],
+        maxTokens: Int?,
+        temperature: Double?
+    ) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { $0.finish(throwing: EngineError.notLoaded) }
+    }
+}

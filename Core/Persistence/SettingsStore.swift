@@ -1,0 +1,930 @@
+import Foundation
+
+/// Foundation-only preference seam used when a new GGUF engine is created.
+/// Tests never inherit the developer machine's experimental switch.
+enum ExperimentalInferencePreferences {
+    static let dflashEnabledKey = "experimentalDFlashEnabled"
+    static let ngramEnabledKey = "experimentalNGramEnabled"
+    static let qwenThinkingKey = "qwenStreamingThinking"
+    static let mlxPromptCacheEnabledKey = "experimentalMLXPromptCacheEnabled"
+    static let mlxQuantizedKVEnabledKey = "experimentalMLXQuantizedKVEnabled"
+    /// Strength of a LoRA adapter staged beside a GGUF's weights (1.0 = the
+    /// adapter exactly as authored). 0 disables it without deleting the file.
+    static let loraScaleKey = "localLoraScale"
+
+    /// LoRA strength for a new GGUF engine. Tests always read 1.0 so a
+    /// developer machine's preference can never change hermetic behavior.
+    static var loraScaleForNewEngine: Double {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return 1.0
+        }
+        guard UserDefaults.standard.object(forKey: loraScaleKey) != nil else { return 1.0 }
+        return UserDefaults.standard.double(forKey: loraScaleKey)
+    }
+
+    static var dflashEnabledForNewEngine: Bool {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return false
+        }
+        return UserDefaults.standard.bool(forKey: dflashEnabledKey)
+    }
+
+    static var ngramEnabledForNewEngine: Bool {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return false
+        }
+        return UserDefaults.standard.bool(forKey: ngramEnabledKey)
+    }
+
+    static var mlxPromptCacheEnabledForNewEngine: Bool {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return false
+        }
+        return UserDefaults.standard.bool(forKey: mlxPromptCacheEnabledKey)
+    }
+
+    static var mlxQuantizedKVEnabledForNewEngine: Bool {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return false
+        }
+        return UserDefaults.standard.bool(forKey: mlxQuantizedKVEnabledKey)
+    }
+}
+
+/// App color appearance. `system` follows macOS; `light`/`dark` force it.
+/// Dark is the default. Kept Foundation-only (no SwiftUI) so the CLI target
+/// can compile this file; the SwiftUI `ColorScheme` mapping lives in the app.
+enum AppAppearance: String, CaseIterable, Codable, Identifiable, Sendable {
+    case system
+    case light
+    case dark
+    case oled
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        case .oled: "OLED Black"
+        }
+    }
+}
+
+/// User-controlled reading density. This changes the app's proportional
+/// reading/navigation type while leaving code and diagnostic monospace sizes
+/// stable, so larger prose never makes diffs or terminals misleading.
+enum AppTextSize: String, CaseIterable, Codable, Identifiable, Sendable {
+    case compact
+    case comfortable
+    case large
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .compact: "Compact"
+        case .comfortable: "Comfortable"
+        case .large: "Large"
+        }
+    }
+    var scale: Double {
+        switch self {
+        case .compact: 0.92
+        case .comfortable: 1
+        case .large: 1.14
+        }
+    }
+}
+
+/// How a new task should begin. Auto is the fast direct path; Goal asks for
+/// an explicit plan before tools run and then keeps working until completion.
+enum AgentMode: String, CaseIterable, Codable, Identifiable, Sendable {
+    case auto
+    case goal
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .auto: "Auto"
+        case .goal: "Goal"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .auto: "wand.and.stars"
+        case .goal: "target"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .auto: "Run the task directly without approval interruptions."
+        case .goal: "Make a plan first, then continue through the goal until it is complete."
+        }
+    }
+}
+
+/// User-facing settings. Defaults encode the safety posture: edits and shell
+/// commands always ask, reads never do.
+@MainActor
+final class SettingsStore: ObservableObject {
+
+    static let shared = SettingsStore()
+
+    private let defaults: UserDefaults
+    private let apiTokenService: String
+    private var cachedAPIServerToken: String?
+
+    init(
+        defaults: UserDefaults = .standard,
+        persistentDomainName: String? = Bundle.main.bundleIdentifier,
+        apiTokenService: String = "com.beetcode.local-api"
+    ) {
+        self.defaults = defaults
+        self.apiTokenService = apiTokenService
+        let storedAppearance = defaults.string(forKey: DefaultsKeys.appearance)
+        let appearanceMigrationApplied =
+            defaults.object(forKey: DefaultsKeys.appearanceDefaultMigration) != nil
+        let persistentSettings = persistentDomainName.flatMap {
+            defaults.persistentDomain(forName: $0)
+        }
+        let storedRemoteSessionLAN =
+            persistentSettings?[DefaultsKeys.remoteSessionAllowLAN] as? Bool
+        let hadRemoteSessionSetup =
+            defaults.bool(forKey: DefaultsKeys.remoteSessionEnabled)
+                || defaults.bool(forKey: DefaultsKeys.remoteAccessConsentCompleted)
+
+        // Register defaults so first read is well-defined.
+        defaults.register(defaults: [
+            DefaultsKeys.autoApproveEdits: false,
+            DefaultsKeys.autoApproveCommands: false,
+            DefaultsKeys.maxTurns: 40,
+            DefaultsKeys.maxTokensPerTurn: 4096,
+            DefaultsKeys.temperature: 0.6,
+            DefaultsKeys.checkpointingEnabled: true,
+            DefaultsKeys.verifyAfterEdits: false,
+            DefaultsKeys.memoryMode: "off",
+            DefaultsKeys.compressionLevel: "standard",
+            // Reasoning is a first-class, collapsed-by-default transcript
+            // surface. New installs can see it immediately; users who have
+            // explicitly switched it off keep that choice.
+            DefaultsKeys.showReasoning: true,
+            DefaultsKeys.planMode: false,
+            DefaultsKeys.agentMode: AgentMode.auto.rawValue,
+            DefaultsKeys.appearance: AppAppearance.dark.rawValue,
+            DefaultsKeys.accentPalette: AccentPalette.graphite.rawValue,
+            DefaultsKeys.textSize: AppTextSize.comfortable.rawValue,
+            // The registered default MUST match the getter's fallback: a
+            // registered default is returned by string(forKey:) as a VALUE
+            // (never nil), so a mismatch silently defeats the `?? .sans`
+            // path and every fresh install rendered serif chrome.
+            DefaultsKeys.typeface: AppTypeface.sans.rawValue,
+            DefaultsKeys.apiServerEnabled: false,
+            DefaultsKeys.apiServerPort: 1234,
+            DefaultsKeys.typeSafeContentScreening: false,
+            DefaultsKeys.typeSafeCommandEscalation: false,
+            DefaultsKeys.typeSafeModel: TypeSafeClient.defaultModel,
+            DefaultsKeys.typeSafeScreeningThreshold: 0.7,
+            DefaultsKeys.typeSafeEscalationThreshold: 0.7,
+            DefaultsKeys.remoteSessionEnabled: false,
+            DefaultsKeys.remoteSessionPort: RemoteSessionPorts.defaultPort,
+            DefaultsKeys.remoteSessionAllowLAN: false,
+            DefaultsKeys.remoteAccessConsentCompleted: false,
+            DefaultsKeys.remoteClipboardSharingEnabled: false,
+            DefaultsKeys.remoteFileSharingEnabled: false,
+            DefaultsKeys.remoteMacControlEnabled: false,
+            DefaultsKeys.remoteMacUnlockEnabled: false,
+            DefaultsKeys.computerControlEnabled: false,
+            DefaultsKeys.intelligenceInspectorEnabled: false,
+            DefaultsKeys.enterSends: true,
+            DefaultsKeys.showHomeSuggestions: true,
+            DefaultsKeys.outputStyle: ProjectPolicy.OutputStyle.normal.rawValue,
+            DefaultsKeys.sendShortcut: "cmd+return",
+            DefaultsKeys.stopShortcut: "cmd+.",
+            DefaultsKeys.planShortcut: "cmd+shift+p",
+            DefaultsKeys.experimentalDFlashEnabled: false,
+            DefaultsKeys.experimentalNGramEnabled: false,
+            ExperimentalInferencePreferences.qwenThinkingKey: false,
+            DefaultsKeys.experimentalMLXPromptCacheEnabled: false,
+            ManagedInferenceRuntime.Kind.omlx.preferenceKey: false,
+            ManagedInferenceRuntime.Kind.mlxfast.preferenceKey: false,
+            ManagedInferenceRuntime.Kind.llamaMetal.preferenceKey: false,
+            DefaultsKeys.experimentalMLXQuantizedKVEnabled: false,
+        ])
+
+        // Earlier builds hid reasoning by default. Migrate that implicit
+        // default once so an existing installation actually sees the new
+        // first-class reasoning surface; a later explicit toggle is retained.
+        if defaults.object(forKey: DefaultsKeys.reasoningVisibilityMigration) == nil {
+            defaults.set(true, forKey: DefaultsKeys.showReasoning)
+            defaults.set(true, forKey: DefaultsKeys.reasoningVisibilityMigration)
+        }
+
+        // A previous build could leave Beet as the saved launch appearance.
+        // Move that legacy default to native Dark once.
+        if !appearanceMigrationApplied {
+            if storedAppearance == "beet" {
+                defaults.set(AppAppearance.dark.rawValue, forKey: DefaultsKeys.appearance)
+            }
+            defaults.set(true, forKey: DefaultsKeys.appearanceDefaultMigration)
+        }
+
+        // Vamp Host owns 9471–9473 and 9475. Existing Beet installs that
+        // inherited 9475 would fail to start Remote Sessions beside Vamp.
+        if defaults.object(forKey: DefaultsKeys.remoteSessionPortVampMigration) == nil {
+            let stored = defaults.object(forKey: DefaultsKeys.remoteSessionPort) as? Int
+            if stored == nil || RemoteSessionPorts.reservedForeignPorts.contains(stored ?? 0) {
+                defaults.set(RemoteSessionPorts.defaultPort, forKey: DefaultsKeys.remoteSessionPort)
+            }
+            defaults.set(true, forKey: DefaultsKeys.remoteSessionPortVampMigration)
+        }
+
+        // LAN fallback used to be implicitly on. New installs now follow the
+        // documented opt-in posture, while an existing installation that had
+        // already configured Remote Sessions keeps working until the user
+        // changes the toggle. An explicit prior true or false is never altered.
+        if defaults.object(forKey: DefaultsKeys.remoteSessionLANOptInMigration) == nil {
+            if storedRemoteSessionLAN == nil, hadRemoteSessionSetup {
+                defaults.set(true, forKey: DefaultsKeys.remoteSessionAllowLAN)
+            }
+            defaults.set(true, forKey: DefaultsKeys.remoteSessionLANOptInMigration)
+        }
+    }
+
+    /// Color appearance. Defaults to native Dark; `system` follows macOS.
+    var appearance: AppAppearance {
+        get {
+            let raw = defaults.string(forKey: DefaultsKeys.appearance)
+                ?? AppAppearance.dark.rawValue
+            if raw == "beet" { return .dark }
+            return AppAppearance(rawValue: raw) ?? .light
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.appearance)
+            objectWillChange.send()
+        }
+    }
+
+    /// Accent palette. The app layer mirrors this into its draw-time theme
+    /// globals on change, so the dynamic colors re-resolve live.
+    var accentPalette: AccentPalette {
+        get {
+            AccentPalette(rawValue: defaults.string(forKey: DefaultsKeys.accentPalette)
+                ?? AccentPalette.graphite.rawValue) ?? .graphite
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.accentPalette)
+            objectWillChange.send()
+        }
+    }
+
+    /// Proportional typeface for reading and navigation text.
+    var typeface: AppTypeface {
+        get {
+            AppTypeface(rawValue: defaults.string(forKey: DefaultsKeys.typeface)
+                ?? AppTypeface.sans.rawValue) ?? .sans
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.typeface)
+            objectWillChange.send()
+        }
+    }
+
+    var textSize: AppTextSize {
+        get {
+            AppTextSize(rawValue: defaults.string(forKey: DefaultsKeys.textSize)
+                ?? AppTextSize.comfortable.rawValue) ?? .comfortable
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.textSize)
+            objectWillChange.send()
+        }
+    }
+
+    var autoApproveEdits: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.autoApproveEdits) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.autoApproveEdits)
+            objectWillChange.send()
+        }
+    }
+
+    var autoApproveCommands: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.autoApproveCommands) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.autoApproveCommands)
+            objectWillChange.send()
+        }
+    }
+
+    /// `ACPHarness.builtInID` runs Vamp's own agent loop; any other id hands
+    /// the turn to that external ACP harness.
+    var harnessID: String {
+        get { defaults.string(forKey: DefaultsKeys.harnessID) ?? ACPHarness.builtInID }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.harnessID)
+            objectWillChange.send()
+        }
+    }
+
+    var customHarnessCommand: String {
+        get { defaults.string(forKey: DefaultsKeys.customHarnessCommand) ?? "" }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.customHarnessCommand)
+            objectWillChange.send()
+        }
+    }
+
+    var selectedHarness: ACPHarness? {
+        ACPHarness.resolve(id: harnessID, customCommand: customHarnessCommand, registry: registryHarnesses)
+    }
+
+    /// Last list fetched from the ACP registry (Settings → Agent → Harness).
+    var registryHarnesses: [ACPHarness] {
+        get { decoded(DefaultsKeys.registryHarnesses) ?? [] }
+        set { encode(newValue, DefaultsKeys.registryHarnesses) }
+    }
+
+    /// Models each harness reported for its last session, by harness id.
+    var harnessModels: [String: [ACPModel]] {
+        get { decoded(DefaultsKeys.harnessModels) ?? [:] }
+        set { encode(newValue, DefaultsKeys.harnessModels) }
+    }
+
+    /// The user's model per harness id; absent means the harness default.
+    var harnessModelChoice: [String: String] {
+        get { defaults.dictionary(forKey: DefaultsKeys.harnessModelChoice) as? [String: String] ?? [:] }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.harnessModelChoice)
+            objectWillChange.send()
+        }
+    }
+
+    private func decoded<T: Decodable>(_ key: String) -> T? {
+        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) }
+    }
+
+    private func encode<T: Encodable>(_ value: T, _ key: String) {
+        defaults.set(try? JSONEncoder().encode(value), forKey: key)
+        objectWillChange.send()
+    }
+
+    /// Explicit remote-session authority. Unlike the safe-command preference,
+    /// this is the user's deliberate “Full Access” choice for remote runs.
+    /// Workspace confinement and hard imported denies still apply.
+    var remoteFullAccessEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteFullAccessEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteFullAccessEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var maxTurns: Int {
+        get { defaults.integer(forKey: DefaultsKeys.maxTurns) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.maxTurns)
+            objectWillChange.send()
+        }
+    }
+
+    var maxTokensPerTurn: Int {
+        get { defaults.integer(forKey: DefaultsKeys.maxTokensPerTurn) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.maxTokensPerTurn)
+            objectWillChange.send()
+        }
+    }
+
+    var temperature: Double {
+        get { defaults.double(forKey: DefaultsKeys.temperature) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.temperature)
+            objectWillChange.send()
+        }
+    }
+
+    var checkpointingEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.checkpointingEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.checkpointingEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var memoryMode: MemoryMode {
+        get {
+            MemoryMode(rawValue: defaults.string(forKey: DefaultsKeys.memoryMode) ?? "off") ?? .off
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.memoryMode)
+            objectWillChange.send()
+        }
+    }
+
+    /// Show the model's chain-of-thought (think blocks) in the transcript.
+    var showReasoning: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.showReasoning) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.showReasoning)
+            objectWillChange.send()
+        }
+    }
+
+    /// Plan mode: the agent presents a plan and waits for approval before
+    /// any tool executes.
+    var planMode: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.planMode) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.planMode)
+            objectWillChange.send()
+        }
+    }
+
+    /// User-facing mode shortcut. Goal mode owns the plan gate so the two
+    /// concepts cannot drift apart when selected from the composer or slash
+    /// commands. The legacy plan toggle remains available for compatibility.
+    var agentMode: AgentMode {
+        get {
+            AgentMode(rawValue: defaults.string(forKey: DefaultsKeys.agentMode)
+                      ?? AgentMode.auto.rawValue) ?? .auto
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.agentMode)
+            defaults.set(newValue == .goal, forKey: DefaultsKeys.planMode)
+            objectWillChange.send()
+        }
+    }
+
+    var compressionLevel: CompressionLevel {
+        get {
+            CompressionLevel(rawValue: defaults.string(forKey: DefaultsKeys.compressionLevel) ?? "standard") ?? .standard
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.compressionLevel)
+            objectWillChange.send()
+        }
+    }
+
+    /// When true, the loop runs build diagnostics after each successful edit.
+    /// Diagnostics run through the normal command approval path — this never
+    /// silently executes arbitrary commands.
+    var verifyAfterEdits: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.verifyAfterEdits) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.verifyAfterEdits)
+            objectWillChange.send()
+        }
+    }
+
+    /// Local API server (OpenAI-compatible, loopback-only). When enabled the
+    /// app serves /v1/chat/completions etc. on 127.0.0.1:<port>.
+    var apiServerEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.apiServerEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.apiServerEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var apiServerPort: Int {
+        get {
+            let value = defaults.integer(forKey: DefaultsKeys.apiServerPort)
+            return value == 0 ? 1234 : value
+        }
+        set {
+            // Keep it in the unprivileged, collision-sane range.
+            let clamped = min(max(newValue, 1024), 65_535)
+            defaults.set(clamped, forKey: DefaultsKeys.apiServerPort)
+            objectWillChange.send()
+        }
+    }
+
+    // MARK: TypeSafe guardrails
+
+    /// Screen content that came from outside the workspace (web pages, fetched
+    /// documents) before the model reads it.
+    var typeSafeContentScreening: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.typeSafeContentScreening) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.typeSafeContentScreening)
+            objectWillChange.send()
+        }
+    }
+
+    /// Let TypeSafe turn a would-be auto-approved action back into an approval
+    /// card when it reads as destructive or as acting outside the project.
+    /// Additive only — it can never approve anything.
+    var typeSafeCommandEscalation: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.typeSafeCommandEscalation) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.typeSafeCommandEscalation)
+            objectWillChange.send()
+        }
+    }
+
+    /// Model id sent to TypeSafe. Pinned to a versioned id by default: the
+    /// `jev-latest` alias has served transient 503s while the versioned id
+    /// answered moments later.
+    var typeSafeModel: String {
+        get { defaults.string(forKey: DefaultsKeys.typeSafeModel) ?? TypeSafeClient.defaultModel }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            defaults.set(
+                trimmed.isEmpty ? TypeSafeClient.defaultModel : trimmed,
+                forKey: DefaultsKeys.typeSafeModel)
+            objectWillChange.send()
+        }
+    }
+
+    /// Probability above which a screening verdict counts as "flagged".
+    var typeSafeScreeningThreshold: Double {
+        get {
+            let value = defaults.double(forKey: DefaultsKeys.typeSafeScreeningThreshold)
+            return value == 0 ? 0.7 : value
+        }
+        set {
+            defaults.set(min(max(newValue, 0.1), 0.99), forKey: DefaultsKeys.typeSafeScreeningThreshold)
+            objectWillChange.send()
+        }
+    }
+
+    /// Probability above which an action verdict counts as "escalate".
+    var typeSafeEscalationThreshold: Double {
+        get {
+            let value = defaults.double(forKey: DefaultsKeys.typeSafeEscalationThreshold)
+            return value == 0 ? 0.7 : value
+        }
+        set {
+            defaults.set(min(max(newValue, 0.1), 0.99), forKey: DefaultsKeys.typeSafeEscalationThreshold)
+            objectWillChange.send()
+        }
+    }
+
+    /// Bearer required by the local API. Generated on first use so browser
+    /// origins cannot CSRF the loopback endpoint.
+    var apiServerToken: String {
+        get {
+            if let cachedAPIServerToken { return cachedAPIServerToken }
+            if let secured = Keychain.read(
+                service: apiTokenService,
+                account: DefaultsKeys.apiServerToken),
+               !secured.isEmpty {
+                cachedAPIServerToken = secured
+                defaults.removeObject(forKey: DefaultsKeys.apiServerToken)
+                return secured
+            }
+
+            let legacy = defaults.string(forKey: DefaultsKeys.apiServerToken) ?? ""
+            if !legacy.isEmpty,
+               Keychain.write(
+                   legacy,
+                   service: apiTokenService,
+                   account: DefaultsKeys.apiServerToken) {
+                defaults.removeObject(forKey: DefaultsKeys.apiServerToken)
+            }
+            cachedAPIServerToken = legacy
+            return legacy
+        }
+        set {
+            _ = setAPIServerToken(newValue)
+        }
+    }
+
+    /// Returns false only when Keychain storage is unavailable. In that case
+    /// the legacy preference remains as a compatibility fallback so an
+    /// existing sideloaded server is never silently locked out.
+    @discardableResult
+    func setAPIServerToken(_ value: String) -> Bool {
+        if value.isEmpty {
+            Keychain.delete(service: apiTokenService, account: DefaultsKeys.apiServerToken)
+            defaults.removeObject(forKey: DefaultsKeys.apiServerToken)
+            cachedAPIServerToken = ""
+            objectWillChange.send()
+            return true
+        }
+        let secured = Keychain.write(
+            value,
+            service: apiTokenService,
+            account: DefaultsKeys.apiServerToken)
+        if secured {
+            defaults.removeObject(forKey: DefaultsKeys.apiServerToken)
+        } else {
+            defaults.set(value, forKey: DefaultsKeys.apiServerToken)
+        }
+        cachedAPIServerToken = value
+        objectWillChange.send()
+        return secured
+    }
+
+    @discardableResult
+    func ensureAPIServerToken() -> String {
+        let existing = apiServerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !existing.isEmpty { return existing }
+        let generated = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        apiServerToken = generated
+        return generated
+    }
+
+    /// Remote Beetcode browser control. Disabled by default because enabling
+    /// it creates a network listener, even though every control route still
+    /// requires a one-time pairing code followed by a bearer token.
+    var remoteSessionEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteSessionEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteSessionEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var remoteSessionPort: Int {
+        get {
+            let value = defaults.integer(forKey: DefaultsKeys.remoteSessionPort)
+            return RemoteSessionPorts.resolved(value)
+        }
+        set {
+            let clamped = min(max(newValue, 1024), 65_535)
+            defaults.set(RemoteSessionPorts.resolved(clamped), forKey: DefaultsKeys.remoteSessionPort)
+            objectWillChange.send()
+        }
+    }
+
+    /// When false (the default), computer-use tools are omitted from the
+    /// agent registry. Accessibility and Screen Recording grants still sit
+    /// behind this switch so a coding session never drives other Mac apps.
+    var computerControlEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.computerControlEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.computerControlEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    /// Status-bar workspace inspector. Indexing still runs for the agent;
+    /// this only shows the debug chrome.
+    var intelligenceInspectorEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.intelligenceInspectorEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.intelligenceInspectorEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    /// LAN fallback is opt-in. Tailscale is the safer default because its
+    /// direct interface is encrypted; enabling this is useful only when both
+    /// devices are on a trusted private Wi-Fi network.
+    var remoteSessionAllowLAN: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteSessionAllowLAN) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteSessionAllowLAN)
+            objectWillChange.send()
+        }
+    }
+
+    /// The first Remote Sessions launch explains the network listener and
+    /// asks separately for clipboard and file exchange. These choices are
+    /// enforced by the host routes, not just hidden in the interface.
+    var remoteAccessConsentCompleted: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteAccessConsentCompleted) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteAccessConsentCompleted)
+            objectWillChange.send()
+        }
+    }
+
+    var remoteClipboardSharingEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteClipboardSharingEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteClipboardSharingEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var remoteFileSharingEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteFileSharingEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteFileSharingEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    /// Off by default. Paired phones can stream the Mac screen and send
+    /// clicks, keys, and scrolls only after this switch and TCC grants.
+    var remoteMacControlEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteMacControlEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteMacControlEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    /// Off by default. A paired iPhone may submit the Mac login password only
+    /// over the encrypted Tailscale path, while the Mac is actually locked.
+    /// The password remains request-scoped and is never persisted.
+    var remoteMacUnlockEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.remoteMacUnlockEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.remoteMacUnlockEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var showHomeSuggestions: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.showHomeSuggestions) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.showHomeSuggestions)
+            objectWillChange.send()
+        }
+    }
+
+    /// When true, Enter sends and Shift+Enter inserts a newline.
+    /// When false, Enter inserts a newline and only ⌘↩ sends.
+    var enterSends: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.enterSends) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.enterSends)
+            objectWillChange.send()
+        }
+    }
+
+    /// Controls the shape of the agent's final response. A workspace policy
+    /// can override this for repository-local conventions.
+    var outputStyle: ProjectPolicy.OutputStyle {
+        get {
+            ProjectPolicy.OutputStyle(
+                rawValue: defaults.string(forKey: DefaultsKeys.outputStyle)
+                    ?? ProjectPolicy.OutputStyle.normal.rawValue) ?? .normal
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: DefaultsKeys.outputStyle)
+            objectWillChange.send()
+        }
+    }
+
+    /// Keyboard shortcuts are stored as readable strings such as
+    /// `cmd+return` or `cmd+shift+p`; the SwiftUI layer parses them into
+    /// native key equivalents at the point of use.
+    var sendShortcut: String {
+        get { defaults.string(forKey: DefaultsKeys.sendShortcut) ?? "cmd+return" }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.sendShortcut)
+            objectWillChange.send()
+        }
+    }
+
+    var stopShortcut: String {
+        get { defaults.string(forKey: DefaultsKeys.stopShortcut) ?? "cmd+." }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.stopShortcut)
+            objectWillChange.send()
+        }
+    }
+
+    var planShortcut: String {
+        get { defaults.string(forKey: DefaultsKeys.planShortcut) ?? "cmd+shift+p" }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.planShortcut)
+            objectWillChange.send()
+        }
+    }
+
+    /// Opt-in DFlash speculative decoding for compatible Qwen3.5 9B GGUF
+    /// targets. New engines read this value when the model is loaded; toggling
+    /// it never mutates a running inference process.
+    var experimentalDFlashEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.experimentalDFlashEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.experimentalDFlashEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    /// Opt-in model-free n-gram speculative decoding for GGUF targets that do
+    /// not already expose a stronger DFlash or MTP path.
+    var experimentalNGramEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.experimentalNGramEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.experimentalNGramEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    /// Strength applied to a LoRA adapter staged beside a GGUF model's weights
+    /// (0.5 = half strength, 1.0 = the adapter exactly as authored, 0 = off).
+    /// New engines read this when the model is loaded; changing it never
+    /// mutates a running llama-server.
+    var localLoraScale: Double {
+        get {
+            defaults.object(forKey: ExperimentalInferencePreferences.loraScaleKey) == nil
+                ? 1.0
+                : defaults.double(forKey: ExperimentalInferencePreferences.loraScaleKey)
+        }
+        set {
+            defaults.set(min(max(newValue, 0), 4), forKey: ExperimentalInferencePreferences.loraScaleKey)
+            objectWillChange.send()
+        }
+    }
+
+    /// Reuse an in-memory MLX prompt prefix only when Beet Code can prove the
+    /// assistant echo matches the cached generation. Reload to apply.
+    var qwenStreamingThinking: Bool {
+        get { defaults.bool(forKey: ExperimentalInferencePreferences.qwenThinkingKey) }
+        set {
+            defaults.set(newValue, forKey: ExperimentalInferencePreferences.qwenThinkingKey)
+            objectWillChange.send()
+        }
+    }
+
+    var experimentalMLXPromptCacheEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.experimentalMLXPromptCacheEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.experimentalMLXPromptCacheEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    var omlxEnabled: Bool {
+        get { defaults.bool(forKey: ManagedInferenceRuntime.Kind.omlx.preferenceKey) }
+        set { defaults.set(newValue, forKey: ManagedInferenceRuntime.Kind.omlx.preferenceKey); objectWillChange.send() }
+    }
+
+    var mlxfastEnabled: Bool {
+        get { defaults.bool(forKey: ManagedInferenceRuntime.Kind.mlxfast.preferenceKey) }
+        set { defaults.set(newValue, forKey: ManagedInferenceRuntime.Kind.mlxfast.preferenceKey); objectWillChange.send() }
+    }
+
+    var updatedMetalEnabled: Bool {
+        get { defaults.bool(forKey: ManagedInferenceRuntime.Kind.llamaMetal.preferenceKey) }
+        set { defaults.set(newValue, forKey: ManagedInferenceRuntime.Kind.llamaMetal.preferenceKey); objectWillChange.send() }
+    }
+
+    /// Quantize eligible MLX attention KV entries to 8-bit after the first
+    /// 512 tokens. Model weights and saved conversations are never modified.
+    var experimentalMLXQuantizedKVEnabled: Bool {
+        get { defaults.bool(forKey: DefaultsKeys.experimentalMLXQuantizedKVEnabled) }
+        set {
+            defaults.set(newValue, forKey: DefaultsKeys.experimentalMLXQuantizedKVEnabled)
+            objectWillChange.send()
+        }
+    }
+
+    private enum DefaultsKeys {
+        static let autoApproveEdits = "autoApproveEdits"
+        static let autoApproveCommands = "autoApproveCommands"
+        static let harnessID = "harnessID"
+        static let customHarnessCommand = "customHarnessCommand"
+        static let registryHarnesses = "registryHarnesses"
+        static let harnessModels = "harnessModels"
+        static let harnessModelChoice = "harnessModelChoice"
+        static let remoteFullAccessEnabled = "remoteFullAccessEnabled"
+        static let maxTurns = "maxTurns"
+        static let maxTokensPerTurn = "maxTokensPerTurn"
+        static let temperature = "temperature"
+        static let checkpointingEnabled = "checkpointingEnabled"
+        static let verifyAfterEdits = "verifyAfterEdits"
+        static let memoryMode = "memoryMode"
+        static let compressionLevel = "compressionLevel"
+        static let showReasoning = "showReasoning"
+        static let reasoningVisibilityMigration = "reasoningVisibilityMigration.v1"
+        static let planMode = "planMode"
+        static let agentMode = "agentMode"
+        static let appearance = "appearance"
+        static let appearanceDefaultMigration = "appearanceDefaultMigration.v1"
+        static let accentPalette = "accentPalette"
+        static let textSize = "textSize"
+        static let typeface = "typeface"
+        static let apiServerEnabled = "apiServerEnabled"
+        static let apiServerPort = "apiServerPort"
+        static let typeSafeContentScreening = "typeSafeContentScreening"
+        static let typeSafeCommandEscalation = "typeSafeCommandEscalation"
+        static let typeSafeModel = "typeSafeModel"
+        static let typeSafeScreeningThreshold = "typeSafeScreeningThreshold"
+        static let typeSafeEscalationThreshold = "typeSafeEscalationThreshold"
+        static let apiServerToken = "apiServerToken"
+        static let remoteSessionEnabled = "remoteSessionEnabled"
+        static let remoteSessionPort = "remoteSessionPort"
+        static let remoteSessionPortVampMigration = "remoteSessionPortVampMigration.v1"
+        static let remoteSessionAllowLAN = "remoteSessionAllowLAN"
+        static let remoteSessionLANOptInMigration = "remoteSessionLANOptInMigration.v1"
+        static let remoteAccessConsentCompleted = "remoteAccessConsentCompleted.v1"
+        static let remoteClipboardSharingEnabled = "remoteClipboardSharingEnabled"
+        static let remoteFileSharingEnabled = "remoteFileSharingEnabled"
+        static let remoteMacControlEnabled = "remoteMacControlEnabled"
+        static let remoteMacUnlockEnabled = "remoteMacUnlockEnabled"
+        static let computerControlEnabled = "computerControlEnabled"
+        static let intelligenceInspectorEnabled = "intelligenceInspectorEnabled"
+        static let showHomeSuggestions = "showHomeSuggestions"
+        static let enterSends = "enterSends"
+        static let outputStyle = "outputStyle"
+        static let sendShortcut = "sendShortcut"
+        static let stopShortcut = "stopShortcut"
+        static let planShortcut = "planShortcut"
+        static let experimentalDFlashEnabled = ExperimentalInferencePreferences.dflashEnabledKey
+        static let experimentalNGramEnabled = ExperimentalInferencePreferences.ngramEnabledKey
+        static let experimentalMLXPromptCacheEnabled = ExperimentalInferencePreferences.mlxPromptCacheEnabledKey
+        static let experimentalMLXQuantizedKVEnabled = ExperimentalInferencePreferences.mlxQuantizedKVEnabledKey
+    }
+}

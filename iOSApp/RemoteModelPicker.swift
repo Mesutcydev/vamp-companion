@@ -1,0 +1,318 @@
+import SwiftUI
+
+#if DEBUG
+struct RemoteModelPickerFixture: View {
+    @State private var source = "local"
+    @State private var selectedModelID = "local|huihui"
+    @State private var loaded: RemoteLoadedLocalModel? = .init(
+        id: "local|huihui", name: "Huihui Qwen3.8 27B abliterated Q2 K",
+        canUnload: ProcessInfo.processInfo.environment["VAMP_REMOTE_FIXTURE"] != "busy")
+    @State private var unloading = false
+    var body: some View {
+        RemoteModelPickerSheet(models: [
+            .init(id: "local|huihui", name: "Huihui Qwen3.8 27B abliterated Q2 K", source: "local",
+                  detail: "Downloaded · GGUF", reasoningEfforts: nil, defaultReasoningEffort: nil),
+            .init(id: "local|bonsai", name: "Ternary Bonsai 27B", source: "local",
+                  detail: "Downloaded · GGUF", reasoningEfforts: nil, defaultReasoningEffort: nil),
+        ], source: $source, selectedModelID: $selectedModelID,
+           loadedLocalModel: loaded, isUnloadingModel: unloading,
+           isConnected: ProcessInfo.processInfo.environment["VAMP_REMOTE_FIXTURE"] != "offline",
+           onUnload: {
+               unloading = true
+               try? await Task.sleep(for: .milliseconds(300))
+               loaded = nil
+               unloading = false
+               return true
+           })
+    }
+}
+#endif
+
+// MARK: - Searchable model picker
+
+/// The one place the iOS client lists models.
+///
+/// The new-session sheet used to render every model inline with no search, and
+/// the in-conversation switcher used a `Menu` — both fall apart the moment a
+/// gateway like OpenRouter contributes a few hundred API models. This is a
+/// searchable, sectioned, counted list instead, presented as a sheet from both.
+struct RemoteModelPickerSheet: View {
+    let models: [RemoteStartModelOption]
+    var modeName: String? = nil
+    @Binding var source: String
+    @Binding var selectedModelID: String
+    /// Called with the chosen model so callers can also apply its default
+    /// reasoning effort without re-looking it up.
+    var onSelect: (RemoteStartModelOption) -> Void = { _ in }
+    /// Pull-to-refresh, so a model configured on the Mac while this sheet is
+    /// open can be picked up without closing and reopening it.
+    var onRefresh: (() async -> Void)? = nil
+    var loadedLocalModel: RemoteLoadedLocalModel? = nil
+    var isUnloadingModel = false
+    var isConnected = true
+    var onUnload: (() async -> Bool)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.remoteAppearance) private var appearance
+    @State private var query = ""
+    @State private var didUnload = false
+
+    static let sources = ["local", "chatgpt", "api"]
+
+    static func sourceLabel(_ source: String) -> String {
+        switch source {
+        case "chatgpt": "ChatGPT"
+        case "api": "API"
+        default: "Local"
+        }
+    }
+
+    static func sourceIcon(_ source: String) -> String {
+        switch source {
+        case "chatgpt": "person.crop.circle"
+        case "api": "cloud"
+        default: "cpu"
+        }
+    }
+
+    private var inSource: [RemoteStartModelOption] {
+        models.filter { $0.source == source }
+    }
+
+    /// Matches name, model id, and the provider shown in `detail`, so an exact
+    /// id typed from a provider's docs finds its model.
+    private var filtered: [RemoteStartModelOption] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return inSource }
+        return inSource.filter { model in
+            [model.name, model.id, model.detail].contains {
+                $0.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            }
+        }
+    }
+
+    /// API models come from many providers at once; grouping by `detail` keeps
+    /// each provider's models together instead of interleaving them.
+    private var groups: [(title: String, models: [RemoteStartModelOption])] {
+        if source == "chatgpt" {
+            let latest = filtered.filter(\.isLatest)
+            let rest = filtered.filter { !$0.isLatest }
+            var sections: [(String, [RemoteStartModelOption])] = []
+            if !latest.isEmpty { sections.append(("Latest", latest)) }
+            if !rest.isEmpty {
+                sections.append((latest.isEmpty ? "ChatGPT" : "More", rest))
+            }
+            return sections
+        }
+        guard source == "api" else {
+            return filtered.isEmpty ? [] : [(Self.sourceLabel(source), filtered)]
+        }
+        let byProvider = Dictionary(grouping: filtered, by: \.detail)
+        return byProvider.keys
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+            .map { ($0, byProvider[$0]!.sorted { lhs, rhs in
+                if lhs.isLatest != rhs.isLatest { return lhs.isLatest }
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }) }
+    }
+
+    private var emptyDescription: String {
+        switch source {
+        case "chatgpt": "Sign in with ChatGPT on your Mac, then refresh."
+        case "api": "Add an API key in Settings → API providers, then refresh."
+        default: "Download a model on your Mac first."
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                RemoteBackdrop()
+                VStack(spacing: 0) {
+                    if let modeName {
+                        Text("Conversation mode: \(modeName)")
+                            .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16).padding(.bottom, 12)
+                    }
+                    SearchField(text: $query, placeholder: "Search name, id, or provider")
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 12)
+                    RemoteInstrumentSegments(selection: $source, options: Self.sources.map { option in
+                        let count = models.filter { $0.source == option }.count
+                        return (count > 0 ? "\(Self.sourceLabel(option)) \(count)" : Self.sourceLabel(option), option)
+                    })
+                    .accessibilityLabel("Model source")
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 12)
+
+                    if inSource.isEmpty {
+                        ContentUnavailableView(
+                            "No \(Self.sourceLabel(source)) models",
+                            systemImage: Self.sourceIcon(source),
+                            description: Text(emptyDescription))
+                        .frame(maxHeight: .infinity)
+                    } else if filtered.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                            .frame(maxHeight: .infinity)
+                    } else {
+                        RemoteInstrumentForm {
+                            ForEach(groups, id: \.title) { group in
+                                Section {
+                                    ForEach(group.models) { model in
+                                        row(model)
+                                    }
+                                } header: {
+                                    Text("\(group.title.uppercased()) · \(group.models.count)")
+                                        .font(.caption2.bold())
+                                        .tracking(0.8)
+                                        .foregroundStyle(BeetTheme.secondaryText(appearance))
+                                }
+                                .listRowBackground(BeetTheme.surface(appearance))
+                            }
+                        }
+                        .scrollContentBackground(.hidden)
+                        .refreshable { await onRefresh?() }
+                    }
+                    if source == "local", onUnload != nil {
+                        unloadControl
+                    }
+                }
+                .padding(.top, 10)
+            }
+            .navigationTitle("Model")
+            .navigationBarTitleDisplayMode(.inline)
+            .remoteNavigationChrome()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.vampUtilityAction()
+            }
+            .toolbarBackground(BeetTheme.background(appearance).opacity(0.94), for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .task { await onRefresh?() }
+        }
+    }
+
+    @ViewBuilder
+    private var unloadControl: some View {
+        if let loaded = loadedLocalModel {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(loaded.name)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(BeetTheme.secondaryText(appearance))
+                    .lineLimit(2)
+                Button {
+                    Task { didUnload = await onUnload?() ?? false }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isUnloadingModel { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "eject") }
+                        Text(isUnloadingModel ? "Unloading…" : "Unload model")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: RemoteInstrument.controlHeight)
+                }
+                .buttonStyle(RemoteKeyButtonStyle())
+                .disabled(!isConnected || !loaded.canUnload || isUnloadingModel)
+                .accessibilityIdentifier("remote.model.unload")
+                .accessibilityHint("Frees memory on your Mac. Keeps the downloaded model and your conversations.")
+                Text(loaded.canUnload
+                     ? "Frees Mac memory. Keeps the model downloaded."
+                     : "Stop the active task to unload this model.")
+                    .font(.caption)
+                    .foregroundStyle(BeetTheme.secondaryText(appearance))
+            }
+            .padding(18)
+            .background(BeetTheme.surface(appearance))
+            .overlay(alignment: .top) { Rectangle().fill(BeetTheme.line(appearance)).frame(height: 0.75) }
+        } else if didUnload {
+            Label("Model unloaded", systemImage: "checkmark.circle")
+                .font(.caption).foregroundStyle(RemoteInstrument.green)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(18)
+                .accessibilityIdentifier("remote.model.unloaded")
+        }
+    }
+
+    private func row(_ model: RemoteStartModelOption) -> some View {
+        Button {
+            selectedModelID = model.id
+            onSelect(model)
+            dismiss()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: selectedModelID == model.id
+                      ? "checkmark.circle.fill" : Self.sourceIcon(model.source))
+                    .foregroundStyle(selectedModelID == model.id
+                                     ? RemoteInstrument.green : BeetTheme.secondaryText(appearance))
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(model.name).font(.body.weight(.semibold))
+                        if model.isLatest {
+                            Text("LATEST")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(BeetTheme.accentBright)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(BeetTheme.accentBright.opacity(0.14), in: Capsule())
+                                .accessibilityLabel("Latest model")
+                        }
+                    }
+                    Text(model.detail)
+                        .font(.caption)
+                        .foregroundStyle(BeetTheme.secondaryText(appearance))
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: RemoteInstrument.controlHeight)
+            .contentShape(Rectangle())
+            .accessibilityAddTraits(selectedModelID == model.id ? .isSelected : [])
+        }
+        .buttonStyle(RemotePressButtonStyle())
+    }
+}
+
+/// The summary row that opens the picker. Shows the current model, its source,
+/// and how many are available, so the size of the catalog is visible without
+/// opening anything.
+struct RemoteModelSummaryRow: View {
+    let models: [RemoteStartModelOption]
+    let selectedModelID: String
+    let action: () -> Void
+    @Environment(\.remoteAppearance) private var appearance
+
+    private var selected: RemoteStartModelOption? {
+        models.first { $0.id == selectedModelID }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: RemoteModelPickerSheet.sourceIcon(selected?.source ?? "local"))
+                    .foregroundStyle(BeetTheme.accentBright)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selected?.name ?? "Choose a model")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(RemoteInstrument.ink)
+                    Text(selected?.detail ?? "\(models.count) available")
+                        .font(.caption)
+                        .foregroundStyle(BeetTheme.secondaryText(appearance))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(BeetTheme.secondaryText(appearance))
+                    .accessibilityHidden(true)
+            }
+            .padding(14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(BeetTheme.line(appearance)) }
+        .accessibilityLabel("Model, \(selected?.name ?? "none chosen")")
+        .accessibilityHint("Opens the searchable model list")
+    }
+}

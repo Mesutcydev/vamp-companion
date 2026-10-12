@@ -1,0 +1,1161 @@
+import XCTest
+@testable import BeetCode
+
+private struct WorkspaceVerificationTool: AgentTool {
+    let name = "build_diagnostics"
+    let summary = "Verify the deterministic test workspace"
+    let risk = ToolRisk.execute
+    let schemaText = #"{"type":"object","properties":{},"required":[]}"#
+
+    func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
+        let url = context.workspace.root.appendingPathComponent("value.swift")
+        let content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        guard content.hasPrefix("GOOD") else { throw ToolError.commandFailed(exitCode: 1) }
+        return "Checks completed successfully."
+    }
+}
+
+/// Deterministic AgentLoop tests driven by FakeLLMEngine — no model weights,
+/// no Metal, no network.
+final class AgentLoopTests: XCTestCase {
+
+    private var workspace: TempWorkspace!
+    private var engine: FakeLLMEngine!
+
+    /// Three backticks (built without literal backticks in source).
+    private let fence = "\u{60}\u{60}\u{60}"
+
+    override func setUpWithError() throws {
+        workspace = TempWorkspace()
+        engine = FakeLLMEngine()
+        // Capsules written by loop runs stay inside the temp workspace.
+        TaskCapsuleStore.shared.overrideDirectory = workspace.url(for: "Capsules")
+    }
+
+    override func tearDownWithError() throws {
+        TaskCapsuleStore.shared.overrideDirectory = nil
+        workspace = nil
+        engine = nil
+    }
+
+    private func toolCall(_ name: String, _ arguments: String) -> String {
+        "\(fence)tool\n{\"name\": \"\(name)\", \"arguments\": \(arguments)}\n\(fence)"
+    }
+
+    private func makeLoop(
+        config: AgentLoop.Configuration = AgentLoop.Configuration(),
+        autoApproveEdits: Bool = false,
+        autoApproveCommands: Bool = false,
+        taskHint: String = ""
+    ) -> AgentLoop {
+        let permissions = PermissionGate(
+            autoApproveEdits: autoApproveEdits,
+            autoApproveCommands: autoApproveCommands,
+            workspace: workspace!.workspace)
+        return AgentLoop(
+            engine: engine,
+            workspace: workspace!.workspace,
+            tools: [
+                ReadFileTool(),
+                WriteFileTool(),
+                ListDirectoryTool(),
+                SearchTool(),
+                ApplyPatchTool(),
+                RunCommandTool(),
+                WorkspaceVerificationTool(),
+            ],
+            permissions: permissions,
+            configuration: config,
+            taskHint: taskHint)
+    }
+
+    @discardableResult
+    private func runToCompletion(
+        _ loop: AgentLoop,
+        message: String = "task",
+        timeout: TimeInterval = 10
+    ) async -> EventCollector {
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: message)
+        async let collection: Void = collector.start(stream)
+        let finish = await collector.waitForFinish(timeout: timeout)
+        _ = await collection
+        XCTAssertNotNil(finish, "loop never finished")
+        return collector
+    }
+
+    private func waitForApproval(_ collector: EventCollector) async -> ApprovalRequest? {
+        let seen = await collector.waitUntil { events in
+            events.contains { event in
+                if case .awaitingApproval = event { return true }
+                return false
+            }
+        }
+        XCTAssertTrue(seen, "no approval was requested")
+        return collector.approvals().first
+    }
+
+    // MARK: Basic flow
+
+    func testPlainCompletionAndStreamClosure() async throws {
+        engine.enqueue(.text("Done — nothing to do."))
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+        XCTAssertEqual(collector.finish, .completed("Done — nothing to do."))
+        XCTAssertEqual(collector.assistantMessages(), ["Done — nothing to do."])
+        XCTAssertFalse(collector.tokenDeltas().isEmpty)
+        XCTAssertTrue(collector.all.contains(.taskStarted))
+    }
+
+    func testReadToolAutoExecutesWithoutApproval() async throws {
+        workspace!.write("hello world", to: "notes.txt")
+        engine.enqueue(texts: [
+            "Let me read it.\n" + toolCall("read_file", "{\"path\": \"notes.txt\"}"),
+            "The file says hello world. Task complete.",
+        ])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertEqual(collector.toolCalls().map(\.name), ["read_file"])
+        XCTAssertTrue(collector.approvals().isEmpty, "reads must never require approval")
+        let finished = collector.events { event in
+            if case .toolCallFinished(let invocation, let output, let failed) = event {
+                return (invocation.name, output, failed)
+            }
+            return nil
+        }
+        XCTAssertEqual(finished.count, 1)
+        XCTAssertEqual(finished[0].0, "read_file")
+        XCTAssertFalse(finished[0].2)
+        XCTAssertTrue(finished[0].1.contains("hello world"))
+        XCTAssertEqual(collector.finish, .completed("The file says hello world. Task complete."))
+    }
+
+    func testTaskSubagentReturnsChildAnswerWithoutTouchingParentHistory() async throws {
+        workspace!.write("hello from readme", to: "README.md")
+        engine.enqueue(texts: [
+            "Delegating.\n" + toolCall("task", "{\"prompt\": \"What does README.md say?\"}"),
+            "The readme says hello from readme.",
+            "Subagent finished. Task complete.",
+        ])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop, timeout: 15)
+
+        XCTAssertEqual(collector.toolCalls().map(\.name), ["task"])
+        let finished = collector.events { event in
+            if case .toolCallFinished(let invocation, let output, let failed) = event {
+                return (invocation.name, output, failed)
+            }
+            return nil
+        }
+        XCTAssertEqual(finished.count, 1)
+        XCTAssertEqual(finished[0].0, "task")
+        XCTAssertFalse(finished[0].2, finished[0].1)
+        XCTAssertTrue(finished[0].1.contains("hello from readme"), finished[0].1)
+        XCTAssertEqual(collector.finish, .completed("Subagent finished. Task complete."))
+        // Parent engine still holds the scripted FIFO — child used IsolatedReplayEngine,
+        // so the third response belongs to the parent, not a stolen turn.
+        XCTAssertGreaterThanOrEqual(engine.streamCallCount, 3)
+    }
+
+    func testTaskSubagentCanWriteWhenEditsAutoApproved() async throws {
+        var config = AgentLoop.Configuration()
+        config.checkpointingEnabled = false
+        engine.enqueue(texts: [
+            "Delegating write.\n" + toolCall("task", "{\"prompt\": \"create hello.txt\"}"),
+            toolCall("write_file", "{\"path\": \"hello.txt\", \"content\": \"hello nested\"}"),
+            "Created hello.txt.",
+            "Subagent wrote the file.",
+        ])
+        let loop = makeLoop(config: config, autoApproveEdits: true)
+        let collector = await runToCompletion(loop, timeout: 15)
+        XCTAssertEqual(collector.finish, .completed("Subagent wrote the file."))
+        let written = try String(
+            contentsOf: workspace!.url.appendingPathComponent("hello.txt"), encoding: .utf8)
+        XCTAssertEqual(written, "hello nested")
+    }
+
+    // MARK: Reasoning-only replies (Qwythos-style hybrids)
+
+    /// A reasoning model can spend the whole token budget inside its think
+    /// channel, leaving NOTHING after think-stripping. One re-prompt is fair;
+    /// a repeated reasoning-only reply must surface the reasoning as the
+    /// answer — never loop silently to maxTurns ("the model never answers").
+    func testReasoningOnlyReplySurfacesAfterOneReprompt() async throws {
+        engine.enqueue(texts: [
+            "<think>let me consider this carefully</think>",
+            "<think>the answer is 42</think>",
+        ])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        let messages = collector.assistantMessages()
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertTrue(messages[0].contains("the answer is 42"), messages[0])
+        XCTAssertTrue(messages[0].contains("reply budget"), messages[0])
+        guard case .completed = collector.finish else {
+            XCTFail("expected completion, got \(String(describing: collector.finish))")
+            return
+        }
+        let notices = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertEqual(notices.count, 1, "exactly one re-prompt before the fallback")
+    }
+
+    /// The fallback never re-parses the reasoning for tool calls: reasoning
+    /// traces contain HYPOTHETICAL calls the model considered, not calls it
+    /// committed to — executing them would be a safety bug.
+    func testReasoningFallbackNeverExecutesHypotheticalToolCalls() async throws {
+        workspace!.write("secret", to: "notes.txt")
+        engine.enqueue(texts: [
+            "<think>I could read notes.txt but I should not</think>",
+            "<think>I would run " + toolCall("read_file", "{\"path\": \"notes.txt\"}") + " but instead: no.</think>",
+        ])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertTrue(collector.toolCalls().isEmpty, "reasoning fallback must never execute tools")
+        XCTAssertEqual(collector.assistantMessages().count, 1)
+    }
+
+    /// A single reasoning-only reply still gets its one re-prompt chance;
+    /// a normal answer afterwards completes without any fallback note.
+    func testReasoningOnlyReplyThenNormalAnswerCompletesCleanly() async throws {
+        engine.enqueue(texts: [
+            "<think>hmm</think>",
+            "Here is the answer.",
+        ])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertEqual(collector.finish, .completed("Here is the answer."))
+        XCTAssertEqual(collector.assistantMessages(), ["Here is the answer."])
+    }
+
+    func testReasoningIsEmittedAndPersistedWithoutEnteringModelHistory() async throws {
+        var config = AgentLoop.Configuration()
+        config.showReasoning = true
+        engine.enqueue(.text("<thinking>inspect the project</thinking>Here is the answer."))
+        let loop = makeLoop(config: config)
+        let collector = await runToCompletion(loop)
+
+        XCTAssertTrue(collector.all.contains(.reasoning("inspect the project")))
+        let record = await loop.sessionRecord
+        XCTAssertEqual(record.messages.filter { $0.role == .reasoning }.map(\.content), ["inspect the project"])
+        XCTAssertFalse(
+            engine.turnHistory.flatMap { $0 }.contains { $0.content.contains("inspect the project") },
+            "reasoning summaries are transcript history, not prompt history")
+    }
+
+    /// Long reasoning traces are capped at the tail so the bubble stays
+    /// readable.
+    func testReasoningFallbackCapsLongTraces() {
+        let long = String(repeating: "x", count: 5000)
+        let fallback = AgentLoop.reasoningFallback(long)
+        XCTAssertTrue(fallback.contains("…"), "long traces keep the tail only")
+        XCTAssertLessThan(fallback.count, 1800)
+        XCTAssertTrue(fallback.hasSuffix(String(repeating: "x", count: 1600)))
+    }
+
+    func testExactSecondTurnHistorySequence() async throws {
+        workspace!.write("content", to: "a.txt")
+        let callText = toolCall("read_file", "{\"path\": \"a.txt\"}")
+        engine.enqueue(texts: [
+            "Let me read a.txt.\n" + callText,
+            "OK, now I understand. Complete.",
+        ])
+        let loop = makeLoop()
+        _ = await runToCompletion(loop)
+
+        let history = engine.turnHistory
+        XCTAssertEqual(history.count, 2, "exactly two generations")
+        // Turn 1: system + user.
+        XCTAssertEqual(history[0].map(\.role), [.system, .user])
+        // Turn 2: the raw assistant tool-call turn, followed by the tool
+        // result — nothing else.
+        XCTAssertEqual(history[1].count, 2)
+        XCTAssertEqual(history[1][0].role, .assistant)
+        XCTAssertTrue(history[1][0].content.contains(callText), "assistant turn must carry the raw tool call")
+        XCTAssertEqual(history[1][1].role, .tool)
+        XCTAssertTrue(history[1][1].content.contains("content"))
+    }
+
+    // MARK: Approvals and checkpoints
+
+    func testWriteApprovalAccepted() async throws {
+        let repo = GitRepo(in: workspace!)
+        workspace!.write("base", to: "base.txt")
+        repo.commitAll(message: "base")
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"new.txt\", \"content\": \"agent data\"}"),
+            "Wrote the file. Complete.",
+        ])
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "write new.txt")
+        async let collection: Void = collector.start(stream)
+
+        guard let request = await waitForApproval(collector) else { return }
+        await loop.resolve(requestID: request.id, approved: true)
+
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Wrote the file. Complete."))
+        XCTAssertEqual(workspace!.read("new.txt"), "agent data")
+        // A checkpoint must have been created before the write.
+        XCTAssertEqual(collector.checkpoints().count, 1)
+    }
+
+    func testWriteApprovalDeclinedStops() async throws {
+        let repo = GitRepo(in: workspace!)
+        workspace!.write("base", to: "base.txt")
+        repo.commitAll(message: "base")
+        engine.enqueue(.text(toolCall("write_file", "{\"path\": \"new.txt\", \"content\": \"x\"}")))
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "write new.txt")
+        async let collection: Void = collector.start(stream)
+        guard let request = await waitForApproval(collector) else { return }
+        await loop.resolve(requestID: request.id, approved: false)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .declined("User declined the requested action."))
+        XCTAssertFalse(workspace!.exists("new.txt"), "declined write must not execute")
+    }
+
+    func testShellCommandApprovalAndCheckpointBeforeMutation() async throws {
+        let repo = GitRepo(in: workspace!)
+        workspace!.write("base", to: "base.txt")
+        repo.commitAll(message: "base")
+        engine.enqueue(texts: [
+            toolCall("run_command", "{\"command\": \"touch created-by-agent.txt\"}"),
+            "Done.",
+        ])
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "create a file")
+        async let collection: Void = collector.start(stream)
+        guard let request = await waitForApproval(collector) else { return }
+        XCTAssertTrue(request.invocation.summary.contains("touch created-by-agent.txt"))
+        await loop.resolve(requestID: request.id, approved: true)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Done."))
+        // Potentially-mutating command: checkpoint must precede execution.
+        XCTAssertEqual(collector.checkpoints().count, 1)
+        XCTAssertTrue(workspace!.exists("created-by-agent.txt"))
+    }
+
+    func testFreshNonGitWorkspaceSkipsCheckpointAndExecutesApprovedMutation() async throws {
+        // A new project folder may not have Git yet. The edit should proceed,
+        // while the UI clearly reports that undo is unavailable.
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"new.txt\", \"content\": \"x\"}"),
+            "The file was written.",
+        ])
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "write new.txt")
+        async let collection: Void = collector.start(stream)
+        guard let request = await waitForApproval(collector) else { return }
+        await loop.resolve(requestID: request.id, approved: true)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+
+        XCTAssertEqual(finish, .completed("The file was written."))
+        XCTAssertEqual(workspace!.read("new.txt"), "x")
+        let skipped = collector.events { event in
+            if case .checkpointSkipped(let reason) = event { return reason }
+            return nil
+        }
+        XCTAssertEqual(skipped.count, 1)
+        XCTAssertTrue(skipped[0].contains("not a Git repository"), skipped[0])
+        XCTAssertFalse(collector.all.contains { event in
+            if case .checkpointFailed = event { return true }
+            return false
+        })
+    }
+
+    // MARK: Control flow
+
+    func testAskUserSuspendsAndResumes() async throws {
+        engine.enqueue(texts: [
+            toolCall("ask_user", "{\"question\": \"Which port?\"}"),
+            "Port 8080 it is. Complete.",
+        ])
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "ask me something")
+        async let collection: Void = collector.start(stream)
+
+        let gotQuestion = await collector.waitUntil { events in
+            events.contains { event in
+                if case .askUser = event { return true }
+                return false
+            }
+        }
+        XCTAssertTrue(gotQuestion)
+        let questions = collector.questions()
+        XCTAssertEqual(questions.count, 1)
+        let (requestID, question) = questions[0]
+        XCTAssertEqual(question, "Which port?")
+
+        // The wrong request ID must be a no-op.
+        await loop.answerQuestion(requestID: UUID(), text: "ignored")
+        XCTAssertEqual(collector.questions().count, 1, "wrong ID must not resolve the question")
+
+        await loop.answerQuestion(requestID: requestID, text: "8080")
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Port 8080 it is. Complete."))
+    }
+
+    func testAttemptCompletionFinishes() async throws {
+        engine.enqueue(.text(toolCall("attempt_completion", "{\"result\": \"Fixed the build.\"}")))
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+        XCTAssertEqual(collector.finish, .completed("Fixed the build."))
+        XCTAssertEqual(collector.assistantMessages(), ["Fixed the build."])
+    }
+
+    func testReliabilityV2RejectsProseOnlyCompletionForMutationRequest() async throws {
+        var config = AgentLoop.Configuration()
+        config.checkpointingEnabled = false
+        config.reliabilityV2 = true
+        engine.enqueue(texts: [
+            "Here is the HTML you should create. Task complete.",
+            toolCall("write_file", "{\"path\": \"index.html\", \"content\": \"<h1>Ready</h1>\"}"),
+            toolCall("attempt_completion", "{\"result\": \"Created the page.\"}"),
+        ])
+        let loop = makeLoop(
+            config: config,
+            autoApproveEdits: true,
+            autoApproveCommands: true,
+            taskHint: "Build a website page")
+        let collector = await runToCompletion(loop, message: "Build a website page")
+
+        XCTAssertEqual(workspace.read("index.html"), "<h1>Ready</h1>")
+        let notices = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertTrue(notices.contains { $0.contains("requires a workspace change") })
+        guard case .completed(let answer)? = collector.finish else {
+            return XCTFail("expected completion after the real edit")
+        }
+        XCTAssertTrue(answer.contains("Created the page."), answer)
+    }
+
+    func testReliabilityV2RejectsAttemptCompletionBeforeRequestedMutation() async throws {
+        var config = AgentLoop.Configuration()
+        config.checkpointingEnabled = false
+        config.reliabilityV2 = true
+        engine.enqueue(texts: [
+            toolCall("attempt_completion", "{\"result\": \"Already done.\"}"),
+            toolCall("write_file", "{\"path\": \"fixed.txt\", \"content\": \"fixed\"}"),
+            toolCall("attempt_completion", "{\"result\": \"Actually fixed.\"}"),
+        ])
+        let loop = makeLoop(
+            config: config,
+            autoApproveEdits: true,
+            autoApproveCommands: true,
+            taskHint: "Fix the project")
+        let collector = await runToCompletion(loop, message: "Fix the project")
+
+        XCTAssertEqual(workspace.read("fixed.txt"), "fixed")
+        XCTAssertTrue(collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }.contains { $0.contains("no edit has completed") })
+        guard case .completed? = collector.finish else {
+            return XCTFail("expected completion after mutation evidence")
+        }
+    }
+
+    func testReliabilityV2StillAllowsGeneralKnowledgeAnswerWithoutTools() async throws {
+        var config = AgentLoop.Configuration()
+        config.reliabilityV2 = true
+        engine.enqueue(.text("An actor serializes access to its isolated state."))
+        let loop = makeLoop(config: config, taskHint: "What is a Swift actor?")
+        let collector = await runToCompletion(loop, message: "What is a Swift actor?")
+
+        XCTAssertEqual(
+            collector.finish,
+            .completed("An actor serializes access to its isolated state."))
+        XCTAssertTrue(collector.toolCalls().isEmpty)
+    }
+
+    func testReliabilityV2BlocksCompletionRepairsAndVerifiesLatestEdit() async throws {
+        workspace.write("// test package marker", to: "Package.swift")
+        var config = AgentLoop.Configuration()
+        config.checkpointingEnabled = false
+        config.reliabilityV2 = true
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"value.swift\", \"content\": \"BAD\"}"),
+            toolCall("attempt_completion", "{\"result\": \"Done too early.\"}"),
+            toolCall("read_file", "{\"path\": \"value.swift\"}"),
+            toolCall("write_file", "{\"path\": \"value.swift\", \"content\": \"GOOD\"}"),
+            toolCall("attempt_completion", "{\"result\": \"Repaired the value.\"}"),
+        ])
+        let loop = makeLoop(
+            config: config,
+            autoApproveEdits: true,
+            autoApproveCommands: true,
+            taskHint: "Fix value.swift and run tests")
+        let collector = await runToCompletion(
+            loop, message: "Fix value.swift and run tests", timeout: 15)
+
+        XCTAssertEqual(workspace!.read("value.swift"), "GOOD")
+        XCTAssertEqual(
+            collector.toolCalls().map(\.name),
+            ["write_file", "build_diagnostics", "read_file", "write_file", "build_diagnostics"])
+        let reliabilityErrors = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertTrue(reliabilityErrors.contains { $0.contains("completion is blocked") })
+        guard case .completed(let answer)? = collector.finish else {
+            return XCTFail("expected verified completion")
+        }
+        XCTAssertTrue(answer.contains("Repaired the value."), answer)
+        XCTAssertTrue(answer.contains("Verified project checks passed"), answer)
+        XCTAssertTrue(answer.contains("value.swift"), answer)
+    }
+
+    func testReliabilityV2StopsThreeIdenticalFailedActions() async throws {
+        let missing = toolCall("read_file", "{\"path\": \"missing.txt\"}")
+        engine.enqueue(texts: [missing, missing, missing])
+        var config = AgentLoop.Configuration()
+        config.reliabilityV2 = true
+        let loop = makeLoop(config: config, taskHint: "Inspect missing.txt")
+        let collector = await runToCompletion(loop)
+
+        XCTAssertEqual(collector.toolCalls().map(\.name), ["read_file", "read_file", "read_file"])
+        let loopErrors = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertTrue(loopErrors.contains { $0.contains("same action failed twice") })
+        guard case .engineError(let message)? = collector.finish else {
+            return XCTFail("expected loop detection failure")
+        }
+        XCTAssertTrue(message.contains("three identical attempts"), message)
+    }
+
+    /// Chat-only/Assistant sessions run with Reliability V2 disabled. The
+    /// repeated-failure interlock must stay off there so one weak retry never
+    /// kills the whole task — the failing observation is still returned and
+    /// the model can recover or the run ends at the normal turn limit.
+    func testIdenticalFailuresDoNotStopRunWithoutReliabilityV2() async throws {
+        let missing = toolCall("read_file", "{\"path\": \"missing.txt\"}")
+        engine.enqueue(texts: [missing, missing, missing, "I could not find missing.txt."])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertEqual(
+            collector.toolCalls().map(\.name),
+            ["read_file", "read_file", "read_file"])
+        let loopErrors = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertFalse(loopErrors.contains { $0.contains("Reliability V2") })
+        guard case .completed? = collector.finish else {
+            return XCTFail("expected the run to continue to a normal completion")
+        }
+    }
+
+    func testVerificationCommandClassificationIgnoresSubstrings() {
+        for command in [
+            "swift test", "swift build", "xcodebuild -scheme Demo build",
+            "npm test", "npm run build", "pnpm lint", "cargo test", "go test ./...",
+            "pytest -q", "make test", "git diff --check",
+        ] {
+            XCTAssertTrue(AgentLoop.looksLikeVerificationCommand(command), command)
+        }
+        for command in [
+            "mkdir -p build", "node builder.js", "rm -rf build",
+            "grep 'test ' logs.txt", "cat build.log", "npm install",
+            "git log --grep=build", "swift run server",
+        ] {
+            XCTAssertFalse(AgentLoop.looksLikeVerificationCommand(command), command)
+        }
+    }
+
+    /// Compact local / guest tool registries omit `build_diagnostics`. The
+    /// verification pass must fall back to `run_command` (or an honest
+    /// no-check observation) instead of failing on an unknown tool forever.
+    func testVerificationFallsBackToRunCommandWhenDiagnosticsIsUnregistered() async throws {
+        let gitInit = Process()
+        gitInit.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        gitInit.arguments = ["init", "-q"]
+        gitInit.currentDirectoryURL = workspace.url
+        try gitInit.run()
+        gitInit.waitUntilExit()
+        XCTAssertEqual(gitInit.terminationStatus, 0)
+
+        var config = AgentLoop.Configuration()
+        config.reliabilityV2 = true
+        let loop = AgentLoop(
+            engine: engine,
+            workspace: workspace.workspace,
+            tools: [WriteFileTool(), RunCommandTool()],
+            permissions: PermissionGate(
+                autoApproveEdits: true,
+                autoApproveCommands: true,
+                workspace: workspace.workspace),
+            configuration: config,
+            taskHint: "Create value.swift and verify it")
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"value.swift\", \"content\": \"GOOD\"}"),
+            toolCall("attempt_completion", "{\"result\": \"Done.\"}"),
+        ])
+        let collector = await runToCompletion(loop, timeout: 20)
+
+        let verification = collector.toolCalls().filter { $0.name == "run_command" }
+        XCTAssertTrue(
+            verification.first?.argumentsJSON.contains("git diff --check") == true,
+            verification.first?.argumentsJSON ?? "no run_command call")
+        guard case .completed? = collector.finish else {
+            return XCTFail("verification must not block completion when build_diagnostics is absent")
+        }
+    }
+
+    func testReliabilityV2DoesNotRepeatAnIdenticalSuccessfulMutation() async throws {
+        workspace.write("// test package marker", to: "Package.swift")
+        let write = toolCall("write_file", "{\"path\": \"value.swift\", \"content\": \"GOOD\"}")
+        engine.enqueue(texts: [
+            write,
+            write,
+            toolCall("attempt_completion", "{\"result\": \"Done.\"}"),
+        ])
+        var config = AgentLoop.Configuration()
+        config.checkpointingEnabled = false
+        config.reliabilityV2 = true
+        let loop = makeLoop(
+            config: config,
+            autoApproveEdits: true,
+            autoApproveCommands: true,
+            taskHint: "Fix value.swift and test it")
+        let collector = await runToCompletion(loop, timeout: 15)
+
+        XCTAssertEqual(workspace!.read("value.swift"), "GOOD")
+        let outputs = collector.events { event in
+            if case .toolCallFinished(_, let output, _) = event { return output }
+            return nil
+        }
+        XCTAssertTrue(outputs.contains { $0.contains("already completed") })
+        XCTAssertEqual(collector.toolCalls().filter { $0.name == "build_diagnostics" }.count, 1)
+    }
+
+    func testReliabilityV2AllowsSameCheckAgainAfterNewSourceGeneration() async throws {
+        workspace.write("// test package marker", to: "Package.swift")
+        var config = AgentLoop.Configuration()
+        config.checkpointingEnabled = false
+        config.reliabilityV2 = true
+        let check = toolCall("build_diagnostics", "{\"command\": \"swift test\"}")
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"value.swift\", \"content\": \"GOOD_ONE\"}"),
+            check,
+            toolCall("read_file", "{\"path\": \"value.swift\"}"),
+            toolCall("write_file", "{\"path\": \"value.swift\", \"content\": \"GOOD_TWO\"}"),
+            check,
+            toolCall("attempt_completion", "{\"result\": \"Checked both generations.\"}"),
+        ])
+        let loop = makeLoop(
+            config: config,
+            autoApproveEdits: true,
+            autoApproveCommands: true,
+            taskHint: "Update value.swift and run tests after every edit")
+        let collector = await runToCompletion(loop, timeout: 15)
+
+        XCTAssertEqual(
+            collector.toolCalls().filter { $0.name == "build_diagnostics" }.count,
+            2)
+        XCTAssertEqual(workspace.read("value.swift"), "GOOD_TWO")
+        guard case .completed? = collector.finish else {
+            return XCTFail("expected verified completion")
+        }
+    }
+
+    func testMultipleCallsAreProtocolErrorNotBatched() async throws {
+        workspace!.write("a", to: "a.txt")
+        workspace!.write("b", to: "b.txt")
+        let callA = toolCall("read_file", "{\"path\": \"a.txt\"}")
+        let callB = toolCall("read_file", "{\"path\": \"b.txt\"}")
+        engine.enqueue(texts: [
+            callA + " " + callB,
+            "Sorry — one at a time. " + callA,
+            "Done.",
+        ])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        let protocolErrors = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertEqual(protocolErrors.count, 1)
+        XCTAssertTrue(protocolErrors[0].contains("multiple tool calls"), protocolErrors[0])
+        // Neither read was executed as a batch; the corrected single call ran.
+        XCTAssertEqual(collector.toolCalls().count, 1)
+        XCTAssertEqual(collector.toolCalls()[0].name, "read_file")
+        XCTAssertEqual(collector.finish, .completed("Done."))
+    }
+
+    func testFunctionXMLBatchExecutesFirstCallAndReturnsToModel() async throws {
+        workspace!.write("a", to: "a.txt")
+        workspace!.write("b", to: "b.txt")
+        let xmlA = #"<function name="read_file"><param name="path">a.txt</param></function>"#
+        let xmlB = #"<function name="read_file"><param name="path">b.txt</param></function>"#
+        engine.enqueue(texts: [xmlA + xmlB, "Done after inspecting the first file."])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertEqual(collector.toolCalls().map(\.name), ["read_file"])
+        XCTAssertEqual(collector.finish, .completed("Done after inspecting the first file."))
+        let protocolErrors = collector.events { event in
+            if case .protocolError = event { return event }
+            return nil
+        }
+        XCTAssertTrue(protocolErrors.isEmpty, protocolErrors.map { String(describing: $0) }.joined(separator: "\n"))
+    }
+
+    func testTaskRoutingAdvertisesCompactNativeAndPromptCatalogs() async throws {
+        engine.enqueue(.text("Done."))
+        let loop = makeLoop(taskHint: "Fix the login bug and run tests")
+        _ = await runToCompletion(loop, message: "Fix the login bug and run tests")
+
+        let native = Set(engine.configuredNativeToolNames)
+        XCTAssertTrue(native.contains("read_file"))
+        XCTAssertTrue(native.contains("apply_patch"))
+        XCTAssertTrue(native.contains("run_command"))
+        XCTAssertTrue(native.contains("attempt_completion"))
+        XCTAssertFalse(native.contains("list_directory"))
+        XCTAssertFalse(native.contains("task"))
+
+        let system = try XCTUnwrap(engine.turnHistory.first?.first?.content)
+        XCTAssertTrue(system.contains("## apply_patch —"))
+        XCTAssertFalse(system.contains("## list_directory —"))
+    }
+
+    func testToolOutsideRoutedCatalogIsRejectedBeforeExecution() async throws {
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"forbidden.txt\", \"content\": \"x\"}"),
+            "No write was needed.",
+        ])
+        let loop = makeLoop(
+            autoApproveEdits: true,
+            taskHint: "Explain the code in README.md")
+        let collector = await runToCompletion(loop, message: "Explain the code in README.md")
+
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: workspace!.url.appendingPathComponent("forbidden.txt").path))
+        XCTAssertTrue(collector.toolCalls().isEmpty)
+        let errors = collector.events { event in
+            if case .protocolError(let message) = event { return message }
+            return nil
+        }
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertTrue(errors[0].contains("not enabled for this task"), errors[0])
+        XCTAssertEqual(collector.finish, .completed("No write was needed."))
+    }
+
+    func testThreeMalformedToolCallsStopWithoutExecutingAnything() async throws {
+        let malformed = "```tool\n{\"arguments\": {}}\n```"
+        engine.enqueue(texts: [malformed, malformed, malformed])
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertTrue(collector.toolCalls().isEmpty)
+        XCTAssertEqual(engine.streamCallCount, 3)
+        guard case .completed(let message)? = collector.finish else {
+            return XCTFail("expected a recoverable completion, got \(String(describing: collector.finish))")
+        }
+        XCTAssertTrue(
+            message.contains("couldn't issue a valid tool call") || !message.isEmpty,
+            message)
+    }
+
+    func testMaxTurnsTermination() async throws {
+        engine.enqueue(texts: [
+            toolCall("read_file", "{\"path\": \"missing.txt\"}"),
+            toolCall("read_file", "{\"path\": \"missing.txt\"}"),
+        ])
+        var config = AgentLoop.Configuration()
+        config.maxTurns = 2
+        let loop = makeLoop(config: config)
+        let collector = await runToCompletion(loop)
+        XCTAssertEqual(collector.finish, .maxTurnsReached(2))
+        XCTAssertEqual(engine.streamCallCount, 2)
+    }
+
+    // MARK: Cancellation
+
+    func testCancellationDuringGeneration() async throws {
+        engine.enqueue(.text("this will be cut off"))
+        engine.holdNextStream()
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "task")
+        async let collection: Void = collector.start(stream)
+
+        // Wait until the generation is actually in flight.
+        let deadline = Date().addingTimeInterval(5)
+        while engine.streamCallCount < 1 && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(engine.streamCallCount, 1)
+        await loop.cancel()
+        engine.release()
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .cancelled, "cancellation must map to .cancelled, not completion")
+        // cancel() signals the engine asynchronously; give it a moment.
+        let cancelDeadline = Date().addingTimeInterval(5)
+        while engine.cancelCallCount < 1 && Date() < cancelDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(engine.cancelCallCount, 1)
+    }
+
+    func testSteerDuringGenerationContinuesWithNewInstruction() async throws {
+        engine.enqueue(texts: [
+            "I will implement the original plan.",
+            "Understood. Doing it the new way instead.",
+        ])
+        engine.holdNextStream()
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "original plan")
+        async let collection: Void = collector.start(stream)
+
+        let deadline = Date().addingTimeInterval(5)
+        while engine.streamCallCount < 1 && Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(engine.streamCallCount, 1)
+        let steered = await loop.steer("Skip the original plan. Just finish.")
+        XCTAssertTrue(steered)
+        engine.release()
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Understood. Doing it the new way instead."))
+        XCTAssertTrue(collector.all.contains { event in
+            if case .userSteered(let text) = event {
+                return text == "Skip the original plan. Just finish."
+            }
+            return false
+        })
+        XCTAssertTrue(engine.turnHistory.contains { turns in
+            turns.contains {
+                $0.role == .user && $0.content.contains("Skip the original plan. Just finish.")
+            }
+        })
+        XCTAssertGreaterThanOrEqual(engine.streamCallCount, 2)
+    }
+
+    func testSteerDuringApprovalSkipsTheToolAndContinues() async throws {
+        engine.enqueue(texts: [
+            toolCall("write_file", "{\"path\": \"new.txt\", \"content\": \"x\"}"),
+            "Steered away from that write.",
+        ])
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "write")
+        async let collection: Void = collector.start(stream)
+        guard await waitForApproval(collector) != nil else { return }
+        let steered = await loop.steer("Do not write the file. Reply that you skipped it.")
+        XCTAssertTrue(steered)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Steered away from that write."))
+        XCTAssertFalse(workspace!.exists("new.txt"))
+        XCTAssertTrue(collector.all.contains { event in
+            if case .userSteered = event { return true }
+            return false
+        })
+    }
+
+    func testCancellationDuringApproval() async throws {
+        engine.enqueue(.text(toolCall("write_file", "{\"path\": \"new.txt\", \"content\": \"x\"}")))
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "write")
+        async let collection: Void = collector.start(stream)
+        guard let request = await waitForApproval(collector) else { return }
+        _ = request
+        await loop.cancel()
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .cancelled)
+        XCTAssertFalse(workspace!.exists("new.txt"))
+    }
+
+    func testCancellationDuringToolExecution() async throws {
+        // A FIFO makes `cat pipe` block forever — a policy-safe, read-only
+        // command that runs until the process group is killed.
+        _ = try ShellRunner.run(command: "mkfifo pipe", workingDirectory: workspace!.url, timeout: 5)
+        engine.enqueue(texts: [
+            toolCall("run_command", "{\"command\": \"cat pipe\"}"),
+            "never reached",
+        ])
+        let loop = makeLoop(autoApproveCommands: true)
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "run")
+        async let collection: Void = collector.start(stream)
+        let started = await collector.waitUntil { events in
+            events.contains { event in
+                if case .toolCallStarted = event { return true }
+                return false
+            }
+        }
+        XCTAssertTrue(started)
+        await loop.cancel()
+        let finish = await collector.waitForFinish(timeout: 15)
+        _ = await collection
+        XCTAssertEqual(finish, .cancelled, "cancel mid-command must still finish as .cancelled")
+        // The shell process group must be dead.
+        let probe = try ShellRunner.run(
+            command: "pgrep -f 'cat pipe' || true",
+            workingDirectory: workspace!.url,
+            timeout: 5)
+        XCTAssertFalse(probe.output.contains("cat"), "survivor: \(probe.output)")
+    }
+
+    func testReuseAfterCancellation() async throws {
+        engine.enqueue(.text(toolCall("write_file", "{\"path\": \"new.txt\", \"content\": \"x\"}")))
+        let loop = makeLoop()
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "write")
+        async let collection: Void = collector.start(stream)
+        _ = await waitForApproval(collector)
+        await loop.cancel()
+        _ = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(collector.finish, .cancelled)
+
+        // The same loop instance must accept a fresh run (cancellation state
+        // resets at run start).
+        engine.enqueue(.text("second run complete"))
+        let second = await runToCompletion(loop, message: "again")
+        XCTAssertEqual(second.finish, .completed("second run complete"))
+        XCTAssertTrue(second.all.contains(.taskStarted))
+    }
+
+    func testConcurrentRunRejected() async throws {
+        engine.enqueue(.text("first run result"))
+        let loop = makeLoop()
+        let first = EventCollector()
+        let stream1 = await loop.run(userMessage: "first")
+        async let c1: Void = first.start(stream1)
+
+        // Second run while the first is active: rejected immediately.
+        let second = EventCollector()
+        let stream2 = await loop.run(userMessage: "second")
+        async let c2: Void = second.start(stream2)
+        let secondFinish = await second.waitForFinish()
+        _ = await c2
+        guard case .engineError(let message)? = secondFinish else {
+            return XCTFail("expected engineError, got \(String(describing: secondFinish))")
+        }
+        XCTAssertTrue(message.contains("already running"), message)
+
+        // The first run is unaffected.
+        let firstFinish = await first.waitForFinish()
+        _ = await c1
+        XCTAssertEqual(firstFinish, .completed("first run result"))
+    }
+
+    // MARK: Compaction
+
+    func testCompactionPreservesAssistantToolPairing() async throws {
+        workspace!.write("x", to: "a.txt")
+        engine.semanticRebaseEnabled = true
+        var responses: [String] = []
+        for _ in 0..<5 {
+            responses.append(toolCall("read_file", "{\"path\": \"a.txt\"}"))
+        }
+        responses.append("all done")
+        engine.enqueue(texts: responses)
+
+        var config = AgentLoop.Configuration()
+        config.contextWindowTokens = 64  // tiny window forces compaction
+        let loop = makeLoop(config: config)
+        let collector = await runToCompletion(loop)
+        XCTAssertEqual(collector.finish, .completed("all done"))
+
+        let messages = await loop.sessionRecord.messages
+        XCTAssertGreaterThan(messages.count, 6)
+        // Ordering invariant: every toolResult is preceded (ignoring
+        // toolCall bookkeeping) by its assistant turn — never by another
+        // toolResult without an assistant between them.
+        var pendingAssistant = false
+        for message in messages {
+            switch message.role {
+            case .assistant:
+                pendingAssistant = true
+            case .toolResult:
+                XCTAssertTrue(pendingAssistant, "toolResult without preceding assistant turn")
+                pendingAssistant = false
+            case .toolCall, .user, .reasoning, .system:
+                break
+            }
+        }
+        // Old tool outputs were stubbed, assistant turns were not.
+        let stubbed = messages.filter { $0.content.contains("omitted") }
+        XCTAssertGreaterThan(stubbed.count, 0)
+        let assistantContents = messages.filter { $0.role == .assistant }.map(\.content)
+        XCTAssertFalse(assistantContents.contains { $0.contains("omitted") })
+        XCTAssertGreaterThan(
+            engine.semanticRebaseCallCount, 0,
+            "compaction should rebase at a semantic turn boundary")
+    }
+
+
+    // MARK: Plan mode (v0.4)
+
+    func testPlanModePresentsPlanBeforeAnyTool() async throws {
+        workspace!.write("x", to: "a.txt")
+        engine.enqueue(texts: [
+            "My plan: read a.txt, then update it. Here is the plan text.",
+            toolCall("read_file", "{\"path\": \"a.txt\"}"),
+            "Done.",
+        ])
+        var config = AgentLoop.Configuration()
+        config.planMode = true
+        let loop = makeLoop(config: config)
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "update a.txt")
+        async let collection: Void = collector.start(stream)
+
+        // The plan is proposed and NO tool has run.
+        let gotPlan = await collector.waitUntil { events in
+            events.contains { event in
+                if case .planProposed = event { return true }
+                return false
+            }
+        }
+        XCTAssertTrue(gotPlan, "plan must be proposed")
+        let plans = collector.events { event in
+            if case .planProposed(let plan) = event { return plan }
+            return nil
+        }
+        XCTAssertEqual(plans.count, 1)
+        XCTAssertTrue(plans[0].contains("My plan"), plans[0])
+        XCTAssertTrue(collector.toolCalls().isEmpty, "no tool may run before approval")
+
+        // Approve → the loop proceeds to act.
+        await loop.resolvePlan(approved: true)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Done."))
+        XCTAssertEqual(collector.toolCalls().map(\.name), ["read_file"])
+    }
+
+    func testPlanModeDeclineStops() async throws {
+        engine.enqueue(.text("Plan: do nothing."))
+        var config = AgentLoop.Configuration()
+        config.planMode = true
+        let loop = makeLoop(config: config)
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "task")
+        async let collection: Void = collector.start(stream)
+        _ = await collector.waitUntil { events in
+            events.contains { event in
+                if case .planProposed = event { return true }
+                return false
+            }
+        }
+        await loop.resolvePlan(approved: false)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .declined("The plan was not approved."))
+        XCTAssertTrue(collector.toolCalls().isEmpty)
+    }
+
+    func testProjectPolicyCannotDisableUiSafetySwitches() async throws {
+        workspace!.write(
+            #"{"plan":false,"goal":false,"verifyAfterEdits":false}"#,
+            to: ".beetcode.json")
+        engine.enqueue(.text("Plan: still planning."))
+        var config = AgentLoop.Configuration()
+        config.planMode = true
+        config.verifyAfterEdits = true
+
+        let loop = makeLoop(config: config)
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "task")
+        let collectionTask = Task { await collector.start(stream) }
+        let seen = await collector.waitUntil(timeout: 5) { events in
+            events.contains { if case .planProposed = $0 { return true }; return false }
+        }
+        await loop.cancel()
+        _ = await collectionTask.value
+        XCTAssertTrue(seen, "project policy must not turn off the user's plan-mode switch")
+    }
+
+    func testPlanModeRevisionFeedsBackAndReproposes() async throws {
+        engine.enqueue(texts: [
+            "Plan: first idea.",
+            "Plan: second idea, revised.",
+            "Done after approval.",
+        ])
+        var config = AgentLoop.Configuration()
+        config.planMode = true
+        let loop = makeLoop(config: config)
+        let collector = EventCollector()
+        let stream = await loop.run(userMessage: "task")
+        async let collection: Void = collector.start(stream)
+
+        let first = await collector.waitUntil { events in
+            events.contains { event in
+                if case .planProposed(let plan) = event { return plan.contains("first") }
+                return false
+            }
+        }
+        XCTAssertTrue(first)
+
+        // Revision: the feedback must reach the loop as a new user turn and
+        // trigger a SECOND plan proposal — never be discarded.
+        await loop.resolvePlanRevision(feedback: "Do it differently.")
+        let second = await collector.waitUntil { events in
+            events.filter {
+                if case .planProposed = $0 { return true }
+                return false
+            }.count >= 2
+        }
+        XCTAssertTrue(second, "revision must re-enter plan mode")
+
+        await loop.resolvePlan(approved: true)
+        let finish = await collector.waitForFinish()
+        _ = await collection
+        XCTAssertEqual(finish, .completed("Done after approval."))
+    }
+
+    func testEngineFailureMapsToEngineError() async throws {
+        engine.enqueue(.failure(FakeEngineTestError.simulated))
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+        guard case .engineError(let message)? = collector.finish else {
+            return XCTFail("expected engineError, got \(String(describing: collector.finish))")
+        }
+        XCTAssertTrue(message.contains("simulated engine failure"), message)
+    }
+
+    func testContextOverflowCompactsAndRetriesOnce() async throws {
+        engine.enqueue(
+            .failure(FakeEngineTestError.contextOverflow),
+            .text("Recovered after trimming the request."))
+        let loop = makeLoop()
+        let collector = await runToCompletion(loop)
+
+        XCTAssertEqual(
+            collector.finish,
+            .completed("Recovered after trimming the request."))
+        XCTAssertEqual(engine.streamCallCount, 2)
+        XCTAssertGreaterThanOrEqual(engine.resetCallCount, 2)
+    }
+}

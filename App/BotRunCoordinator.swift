@@ -1,0 +1,690 @@
+import Combine
+import Foundation
+
+/// Draft lifetime is independent of navigation. Files are local and owner-only.
+@MainActor
+final class BotDraftStore: ObservableObject {
+    static let shared = BotDraftStore()
+    @Published private(set) var errorMessage: String?
+    private var values: [String: String] = [:]
+    private let url: URL?
+
+    init(url: URL? = nil) {
+        self.url = url ?? (AppState.isTestHost || ProcessInfo.processInfo.arguments.contains("--design-preview")
+            ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("BeetCode/BotDrafts/drafts.json"))
+        if let file = self.url, let data = try? Data(contentsOf: file) {
+            values = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+        }
+    }
+
+    func value(for key: String) -> String { values[key] ?? "" }
+    func set(_ value: String, for key: String) {
+        values[key] = value.isEmpty ? nil : value
+        retry()
+    }
+    func retry() {
+        guard let url else { return }
+        do {
+            let manager = FileManager.default
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+            try JSONEncoder().encode(values).write(to: url, options: .atomic)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            errorMessage = nil
+        } catch {
+            errorMessage = "Drafts are retained in memory, but could not be saved: \(error.localizedDescription)"
+        }
+    }
+}
+
+@MainActor
+final class BotRunCoordinator: ObservableObject {
+    struct StartError: Error, LocalizedError, Equatable {
+        let message: String
+        var errorDescription: String? { message }
+    }
+    typealias StartHandler = (BotRunRecord) async -> RemoteSessionStartOutcome
+    typealias SteerHandler = (UUID, String) -> Bool
+    typealias StopHandler = (UUID) -> Bool
+    typealias ApprovalHandler = (UUID, Bool) -> Bool
+    typealias AnswerHandler = (UUID, String) -> Bool
+
+    @Published private(set) var runs: [BotRunRecord] = []
+    @Published private(set) var eventsByRun: [UUID: [BotRunEvent]] = [:]
+
+    var startHandler: StartHandler?
+    var steerHandler: SteerHandler?
+    var stopHandler: StopHandler?
+    var approvalHandler: ApprovalHandler?
+    var answerHandler: AnswerHandler?
+    /// Receives the IDs of runs dropped from history, to delete their private folders.
+    var pruneHandler: (([UUID]) -> Void)?
+    static let retainedFinishedRuns = 100
+
+    private let store: BotRunStore
+    private var pendingIDs: [UUID] = []
+    private var activeRunIDs: Set<UUID> = []
+    private var activeLocalRunID: UUID?
+    private var budgetTasks: [UUID: Task<Void, Never>] = [:]
+    /// Tail of the persistence chain. See `persist()`.
+    private var persistTask: Task<Void, Never>?
+    @Published private(set) var persistenceError: String?
+    private var deliveringCommands: Set<UUID> = []
+
+    init(store: BotRunStore = .shared) {
+        self.store = store
+        Task { await restore() }
+    }
+
+    var activeRuns: [BotRunRecord] { runs.filter { !$0.state.isTerminal } }
+
+    func run(for profileID: String) -> BotRunRecord? {
+        runs.first { $0.profileID == profileID && !$0.state.isTerminal }
+            ?? runs.first { $0.profileID == profileID }
+    }
+
+    func events(for runID: UUID) -> [BotRunEvent] {
+        eventsByRun[runID] ?? []
+    }
+
+    @discardableResult
+    func start(
+        profileID: String, profileName: String, modelID: String, prompt: String,
+        projectPath: String? = nil
+    ) -> Result<UUID, StartError> {
+        let task = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else { return .failure(StartError(message: "Enter a task for this specialist.")) }
+        guard !modelID.isEmpty else { return .failure(StartError(message: "Choose a model first.")) }
+        guard !activeRuns.contains(where: { $0.profileID == profileID }) else {
+            return .failure(StartError(message: "\(profileName) already has an active run."))
+        }
+
+        var record = BotRunRecord.queued(
+            profileID: profileID, profileName: profileName,
+            modelID: modelID, prompt: task)
+        record.evidence = Self.evidenceContract(for: profileID)
+        record.projectPath = projectPath
+        pendingIDs.append(record.id)
+        record.queuePosition = pendingIDs.count
+        runs.insert(record, at: 0)
+        persist()
+        recordEvent(runID: record.id, kind: .created, phase: record.phase, detail: task)
+        recordEvent(runID: record.id, kind: .queued, phase: record.phase)
+        drain()
+        return .success(record.id)
+    }
+
+    @discardableResult
+    func orchestrate(prompt: String, modelID: String, projectPath: String? = nil) -> Result<UUID, StartError> {
+        let task = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !task.isEmpty else { return .failure(StartError(message: "Enter a workflow objective.")) }
+        guard !modelID.isEmpty else { return .failure(StartError(message: "Choose a model first.")) }
+        let plan = BotAdaptivePlanner.plan(prompt: task)
+        let specialistIDs = Set(plan.nodes.map(\.specialistID))
+        if let busy = activeRuns.first(where: { specialistIDs.contains($0.profileID) }) {
+            return .failure(StartError(message: "\(busy.profileName) already has an active run."))
+        }
+
+        var idsByKey: [String: UUID] = [:]
+        var created: [BotRunRecord] = []
+        for node in plan.nodes {
+            var record = BotRunRecord.queued(
+                profileID: node.specialistID, profileName: node.specialistName,
+                modelID: modelID, prompt: node.prompt)
+            record.workflowID = plan.id
+            record.projectPath = projectPath
+            record.evidence = BotRunEvidence(
+                phase: node.phase, confidence: .notRun,
+                required: node.requiredEvidence, observed: [])
+            record.acceptanceCriteria = node.acceptanceCriteria.enumerated().map {
+                BotAcceptanceCriterion(
+                    id: "AC\($0.offset + 1)", summary: $0.element,
+                    satisfied: false, evidenceReferences: [])
+            }
+            idsByKey[node.key] = record.id
+            created.append(record)
+        }
+        for index in created.indices {
+            let template = plan.nodes[index]
+            created[index].dependencyRunIDs = template.dependencyKeys.compactMap { idsByKey[$0] }
+            pendingIDs.append(created[index].id)
+            runs.insert(created[index], at: 0)
+            recordEvent(
+                runID: created[index].id, kind: .created, phase: "Workflow planned",
+                detail: "\(plan.rationale) · workflow \(plan.id.uuidString)")
+        }
+        refreshQueuePositions()
+        persist()
+        drain()
+        return .success(plan.id)
+    }
+
+    func stop(runID: UUID) -> Bool {
+        guard let run = record(runID), !run.state.isTerminal else { return false }
+        pendingIDs.removeAll { $0 == runID }
+        update(runID) { $0.phase = "Cancelling"; $0.updatedAt = Date() }
+        Task {
+            // The command log is an audit trail, not the mechanism. It used to gate the whole
+            // cancel behind `guard let ... else { return }`, so a failed write left the run
+            // parked in "Cancelling" forever — off the queue, never dispatched, never terminal,
+            // and with nothing shown to the user.
+            let command = try? await store.enqueueCommand(runID: runID, kind: .cancel)
+            let accepted = await MainActor.run {
+                // Still starting (container boot, model load): there is no runtime to refuse yet.
+                // The dispatch task sees the stopped state and cancels the runtime once it exists.
+                guard activeRunIDs.contains(runID), record(runID)?.sessionID != nil else { return true }
+                return stopHandler?(runID) ?? false
+            }
+            if let command {
+                try? await store.acknowledgeCommand(
+                    command.id, accepted: accepted,
+                    result: accepted ? "Cancellation requested." : "Runtime rejected cancellation.")
+            }
+            await MainActor.run {
+                guard accepted else {
+                    // The runtime refused. Put the run back the way it was rather than leaving
+                    // a phase that never resolves.
+                    update(runID) {
+                        $0.phase = "Stop rejected"
+                        $0.errorMessage = "The runtime would not cancel this run."
+                        $0.updatedAt = Date()
+                    }
+                    return
+                }
+                update(runID) {
+                    $0.state = .stopped
+                    $0.phase = "Stopped"
+                    $0.evidence?.confidence = .cancelled
+                    $0.queuePosition = nil
+                    $0.pendingInteraction = nil
+                    $0.updatedAt = Date()
+                }
+                finishScheduling(runID)
+            }
+        }
+        return true
+    }
+
+    /// UI callers await actual runtime acceptance before clearing their draft.
+    func deliverCommand(runID: UUID, kind: BotRunCommandRecord.Kind,
+                        payload: String? = nil) async -> Bool {
+        guard !deliveringCommands.contains(runID), let run = record(runID) else { return false }
+        let text = payload?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch kind {
+        case .approve, .decline:
+            guard run.state == .needsApproval, approvalHandler != nil else { return false }
+        case .answer:
+            guard run.state == .needsInput, answerHandler != nil, !text.isEmpty else { return false }
+        case .steer:
+            guard !run.state.isTerminal, run.sessionID != nil,
+                  steerHandler != nil, !text.isEmpty else { return false }
+        default: return false
+        }
+        deliveringCommands.insert(runID)
+        defer { deliveringCommands.remove(runID) }
+        do {
+            let command = try await store.enqueueCommand(runID: runID, kind: kind, payload: payload)
+            let accepted: Bool
+            switch kind {
+            case .approve, .decline: accepted = approvalHandler?(runID, kind == .approve) == true
+            case .answer: accepted = answerHandler?(runID, text) == true
+            case .steer: accepted = steerHandler?(runID, text) == true
+            default: accepted = false
+            }
+            do {
+                try await store.acknowledgeCommand(command.id, accepted: accepted,
+                    result: accepted ? "Delivered." : "Runtime rejected the command.")
+            } catch {
+                // Runtime already accepted: do not suggest retrying a delivered command.
+                persistenceError = "Command delivery occurred, but its receipt could not be saved: \(error.localizedDescription)"
+            }
+            if !accepted {
+                update(runID) { $0.errorMessage = "Command was not accepted. Your input has been retained." }
+            }
+            recordEvent(runID: runID, kind: accepted ? .commandAccepted : .commandRejected,
+                        phase: record(runID)?.phase ?? run.phase, detail: kind.rawValue)
+            return accepted
+        } catch {
+            update(runID) { $0.errorMessage = "Command was not sent: \(error.localizedDescription)" }
+            return false
+        }
+    }
+
+    func retryPersistence() async {
+        persist()
+        await persistTask?.value
+        if persistenceError == nil { drain() }
+    }
+
+    func resume(runID: UUID) -> Bool {
+        guard let run = record(runID), run.state == .recoverable || run.state == .interrupted else {
+            return false
+        }
+        update(runID) {
+            $0.state = .queued
+            $0.phase = "Queued for recovery"
+            $0.evidence?.confidence = .notRun
+            $0.errorMessage = nil
+            $0.pendingInteraction = nil
+            $0.sessionID = nil
+            $0.updatedAt = Date()
+        }
+        pendingIDs.append(runID)
+        recordEvent(runID: runID, kind: .recovered, phase: "Queued for recovery")
+        refreshQueuePositions()
+        drain()
+        return true
+    }
+
+    func sync(
+        sessionID: UUID?, phase: AgentPhase, finish: AgentFinish?, output: String,
+        trace: [BotToolTrace] = []
+    ) {
+        guard let sessionID,
+              let run = runs.first(where: { $0.sessionID == sessionID }) else { return }
+        sync(runID: run.id, phase: phase, finish: finish, output: output, trace: trace)
+    }
+
+    /// `trace` is the finished run's tool record; evidence comes from it, not from the answer.
+    func sync(
+        runID: UUID, phase: AgentPhase, finish: AgentFinish?, output: String,
+        trace: [BotToolTrace] = []
+    ) {
+        // A late event from a runtime that was stopped or ran out of budget must not rewrite
+        // the outcome already recorded (a budget failure used to flip to "stopped").
+        guard let run = record(runID), !run.state.isTerminal else { return }
+        // The controller clears its stream before publishing `finish`; the answer rides on
+        // `.completed`. Using `output` alone left every completed run with no output.
+        var text = output
+        if case .completed(let answer) = finish, !answer.isEmpty { text = answer }
+        update(run.id) { record in
+            record.phase = phase.rawValue.capitalized
+            if !text.isEmpty { record.latestOutput = String(text.suffix(2_000)) }
+            record.updatedAt = Date()
+            if let finish {
+                record.queuePosition = nil
+                record.pendingInteraction = nil
+                switch finish {
+                case .completed:
+                    record.state = .completed
+                    if var evidence = record.evidence {
+                        for kind in BotRunEvidence.observed(from: trace, phase: evidence.phase)
+                        where !evidence.observed.contains(kind) {
+                            evidence.observed.append(kind)
+                        }
+                        record.evidence = evidence
+                    }
+                    record.acceptanceCriteria = record.acceptanceCriteria.map {
+                        BotAcceptanceCriterion.applyReport(text, to: $0)
+                    }
+                    record.settleEvidence()
+                    let summary = String(text.trimmingCharacters(in: .whitespacesAndNewlines).suffix(8_000))
+                    if !summary.isEmpty {
+                        record.artifacts = (record.artifacts ?? []) + [BotRunArtifact(
+                            id: UUID(), kind: .summary, title: "Final output",
+                            value: summary, createdAt: Date())]
+                    }
+                case .cancelled, .declined:
+                    record.state = .stopped
+                    record.evidence?.confidence = .cancelled
+                case .maxTurnsReached:
+                    record.state = .failed
+                    record.evidence?.confidence = .failed
+                case .engineError(let message):
+                    record.state = .failed
+                    record.evidence?.confidence = .failed
+                    record.errorMessage = message
+                }
+            } else {
+                switch phase {
+                case .awaitingApproval, .awaitingPlanApproval:
+                    record.state = .needsApproval
+                    record.evidence?.confidence = .blocked
+                    record.pendingInteraction = "Approval required"
+                case .awaitingQuestion:
+                    record.state = .needsInput
+                    record.evidence?.confidence = .blocked
+                    record.pendingInteraction = "Answer required"
+                default:
+                    record.state = .running
+                    record.evidence?.confidence = .running
+                    record.pendingInteraction = nil
+                }
+            }
+        }
+        // A passing independent review is the verification a build step cannot give itself.
+        if case .completed = finish, run.evidence?.phase == .review, BotRunEvidence.reportsPass(text) {
+            for id in run.dependencyRunIDs ?? [] {
+                update(id) {
+                    guard $0.evidence?.required.contains(.verification) == true,
+                          $0.evidence?.observed.contains(.verification) == false else { return }
+                    $0.evidence?.observed.append(.verification)
+                    $0.settleEvidence()
+                }
+            }
+        }
+        if finish != nil, activeRunIDs.contains(run.id) {
+            let shouldRetry: Bool
+            if case .engineError = finish,
+               let current = record(run.id) {
+                shouldRetry = (current.retryCount ?? 0) < (current.budget?.maximumRetries ?? 0)
+            } else {
+                shouldRetry = false
+            }
+            // Requeue before finishScheduling drains, so dependents see a pending run rather
+            // than a failed one and do not fail a workflow the retry may still complete.
+            if shouldRetry { scheduleRetry(runID: run.id) }
+            finishScheduling(run.id)
+        }
+    }
+
+    /// Records a run's private project copy once its computer has prepared it.
+    func attachWorkspace(runID: UUID, path: String, baseTree: String?) {
+        update(runID) {
+            $0.workPath = path
+            $0.baseTree = baseTree
+        }
+    }
+
+    private func restore() async {
+        let isTestHost = AppState.isTestHost
+        let restored = await store.loadAll(recoverInterrupted: !isTestHost)
+        let restoredEvents = await store.loadEvents()
+        // Startup restoration is asynchronous. Preserve runs accepted while the
+        // store was loading instead of replacing them with the older snapshot.
+        let liveIDs = Set(runs.map(\.id))
+        runs = (runs + restored.filter { !liveIDs.contains($0.id) })
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let restoredByRun = Dictionary(grouping: restoredEvents, by: \.runID)
+        for (runID, events) in restoredByRun {
+            let liveEventIDs = Set((eventsByRun[runID] ?? []).map(\.id))
+            eventsByRun[runID] = (eventsByRun[runID] ?? [])
+                + events.filter { !liveEventIDs.contains($0.id) }
+            eventsByRun[runID]?.sort { $0.sequence < $1.sequence }
+        }
+        pruneHistory()
+        persist()
+    }
+
+    /// Keeps every live run, whatever a live run still depends on, and the newest finished
+    /// runs; drops the rest along with their events, commands, and private folders.
+    private func pruneHistory() {
+        let needed = Set(activeRuns.flatMap { $0.dependencyRunIDs ?? [] })
+        let dropped = Set(runs.filter { $0.state.isTerminal && !needed.contains($0.id) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .dropFirst(Self.retainedFinishedRuns).map(\.id))
+        guard !dropped.isEmpty else { return }
+        runs.removeAll { dropped.contains($0.id) }
+        for id in dropped { eventsByRun[id] = nil }
+        let kept = Set(runs.map(\.id))
+        Task { [store] in try? await store.prune(keeping: kept) }
+        pruneHandler?(Array(dropped))
+    }
+
+    /// Remote API and Codex specialists own independent runtimes and can run
+    /// concurrently. Local models share one Metal generation gate and are
+    /// admitted one at a time; their durable queue remains visible.
+    private func drain() {
+        guard persistenceError == nil, let startHandler else { return }
+        var dispatch: [UUID] = []
+        for id in pendingIDs {
+            guard var run = record(id) else { continue }
+            let dependencies = (run.dependencyRunIDs ?? []).compactMap(record)
+            if dependencies.contains(where: { $0.state.isTerminal && $0.state != .completed }) {
+                update(id) {
+                    $0.state = .failed
+                    $0.phase = "Dependency failed"
+                    $0.evidence?.confidence = .blocked
+                    $0.errorMessage = "A required workflow step did not complete."
+                    $0.queuePosition = nil
+                    $0.updatedAt = Date()
+                }
+                continue
+            }
+            guard dependencies.allSatisfy({ $0.state == .completed }) else { continue }
+            if !dependencies.isEmpty, run.dependencyContextAttached != true {
+                let context = dependencies.map { dependency in
+                    let output = dependency.artifacts?.last?.value ?? dependency.latestOutput
+                    let evidence = dependency.evidence?.label ?? "Outcome · unclassified"
+                    let criteria = (dependency.acceptanceCriteria ?? []).map {
+                        "- [\($0.satisfied ? "x" : " ")] \($0.summary)"
+                    }.joined(separator: "\n")
+                    return "### \(dependency.profileName) handoff\nEvidence: \(evidence)\n"
+                        + (criteria.isEmpty ? "" : "Criteria:\n\(criteria)\n")
+                        + "Output:\n\(output)"
+                }.joined(separator: "\n\n")
+                update(id) {
+                    $0.prompt += "\n\nCompleted dependency outputs:\n\(context)"
+                    $0.dependencyContextAttached = true
+                    $0.updatedAt = Date()
+                }
+                guard let refreshed = record(id) else { continue }
+                run = refreshed
+            }
+            if run.modelID.hasPrefix("local|") {
+                guard activeLocalRunID == nil,
+                      !dispatch.contains(where: { record($0)?.modelID.hasPrefix("local|") == true })
+                else { continue }
+            }
+            dispatch.append(id)
+        }
+        pendingIDs.removeAll { id in
+            record(id)?.state.isTerminal == true
+        }
+        guard !dispatch.isEmpty else { refreshQueuePositions(); return }
+        pendingIDs.removeAll { dispatch.contains($0) }
+        for id in dispatch {
+            guard let run = record(id) else { continue }
+            activeRunIDs.insert(id)
+            if run.modelID.hasPrefix("local|") { activeLocalRunID = id }
+            update(id) {
+                $0.state = .running
+                $0.phase = "Starting"
+                $0.evidence?.confidence = .running
+                $0.queuePosition = nil
+                $0.updatedAt = Date()
+            }
+            scheduleBudget(for: run)
+            Task {
+                await persistTask?.value
+                guard persistenceError == nil else {
+                    activeRunIDs.remove(id)
+                    if activeLocalRunID == id { activeLocalRunID = nil }
+                    if !pendingIDs.contains(id) { pendingIDs.append(id) }
+                    if let index = runs.firstIndex(where: { $0.id == id }) {
+                        runs[index].state = .queued
+                        runs[index].phase = "Waiting for durable storage"
+                    }
+                    return
+                }
+                guard record(id)?.state == .running else { return }
+                let outcome = await startHandler(run)
+                // Stopped or out of budget while starting: don't resurrect it as running.
+                if record(id)?.state.isTerminal != false {
+                    if case .accepted = outcome { _ = stopHandler?(id) }
+                    return
+                }
+                switch outcome {
+                case .accepted(let sessionID):
+                    update(id) {
+                        $0.sessionID = sessionID
+                        $0.state = .running
+                        $0.phase = "Working"
+                        $0.evidence?.confidence = .running
+                        $0.updatedAt = Date()
+                    }
+                case .rejected(let message):
+                    update(id) {
+                        $0.state = .failed
+                        $0.phase = "Failed"
+                        $0.evidence?.confidence = .failed
+                        $0.errorMessage = message
+                        $0.updatedAt = Date()
+                    }
+                    activeRunIDs.remove(id)
+                    if activeLocalRunID == id { activeLocalRunID = nil }
+                    drain()
+                }
+            }
+        }
+        refreshQueuePositions()
+    }
+
+    private func record(_ id: UUID) -> BotRunRecord? { runs.first { $0.id == id } }
+
+    private func update(_ id: UUID, mutation: (inout BotRunRecord) -> Void) {
+        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
+        let previous = runs[index]
+        mutation(&runs[index])
+        if previous.phase != runs[index].phase || previous.state != runs[index].state {
+            runs[index].checkpoint = BotRunCheckpoint(
+                phase: runs[index].phase,
+                latestOutput: String(runs[index].latestOutput.suffix(2_000)),
+                sequence: (previous.checkpoint?.sequence ?? 0) + 1,
+                createdAt: Date())
+            let current = runs[index]
+            recordEvent(
+                runID: id, kind: eventKind(for: current), phase: current.phase,
+                detail: current.pendingInteraction ?? current.errorMessage)
+        }
+        runs.sort { $0.updatedAt > $1.updatedAt }
+        persist()
+    }
+
+    private func eventKind(for run: BotRunRecord) -> BotRunEvent.Kind {
+        switch run.state {
+        case .queued: .queued
+        case .running: run.phase == "Starting" ? .started : .phaseChanged
+        case .needsApproval, .needsInput: .interactionRequested
+        case .completed: .completed
+        case .failed: .failed
+        case .stopped: .cancelled
+        case .interrupted: .interrupted
+        case .recoverable: .recovered
+        }
+    }
+
+    private func recordEvent(
+        runID: UUID, kind: BotRunEvent.Kind, phase: String, detail: String? = nil
+    ) {
+        Task {
+            guard let event = try? await store.appendEvent(
+                runID: runID, kind: kind, phase: phase, detail: detail) else { return }
+            await MainActor.run {
+                var events = eventsByRun[runID] ?? []
+                events.append(event)
+                eventsByRun[runID] = events.sorted { $0.sequence < $1.sequence }
+            }
+        }
+    }
+
+    private func scheduleBudget(for run: BotRunRecord) {
+        budgetTasks[run.id]?.cancel()
+        let seconds = run.budget?.maximumDurationSeconds
+            ?? BotRunBudget.standard.maximumDurationSeconds
+        budgetTasks[run.id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.expireBudget(runID: run.id) }
+        }
+    }
+
+    /// End a run that has used up its time budget.
+    ///
+    /// This deliberately does not go through `stop()`. `stop()` leaves the run untouched when
+    /// the runtime declines the cancel — right for a user pressing Stop, wrong for a deadline:
+    /// the timer has already fired and nothing will fire again, so a declining runtime kept the
+    /// run `.running` past its budget indefinitely and held its queue slot with it.
+    private func expireBudget(runID: UUID) {
+        guard let run = record(runID), !run.state.isTerminal else { return }
+        _ = stopHandler?(runID)
+        pendingIDs.removeAll { $0 == runID }
+        update(runID) {
+            $0.state = .failed
+            $0.phase = "Budget exceeded"
+            $0.evidence?.confidence = .failed
+            $0.errorMessage = "Run exceeded its time budget."
+            $0.queuePosition = nil
+            $0.pendingInteraction = nil
+            $0.updatedAt = Date()
+        }
+        recordEvent(runID: runID, kind: .failed, phase: "Budget exceeded", detail: run.profileName)
+        finishScheduling(runID)
+    }
+
+    private func finishScheduling(_ runID: UUID) {
+        pruneHistory()
+        budgetTasks[runID]?.cancel()
+        budgetTasks[runID] = nil
+        activeRunIDs.remove(runID)
+        if activeLocalRunID == runID { activeLocalRunID = nil }
+        refreshQueuePositions()
+        drain()
+    }
+
+    private func scheduleRetry(runID: UUID) {
+        update(runID) {
+            $0.retryCount = ($0.retryCount ?? 0) + 1
+            $0.state = .queued
+            $0.phase = "Retrying"
+            $0.errorMessage = nil
+            $0.sessionID = nil
+            $0.updatedAt = Date()
+        }
+        recordEvent(runID: runID, kind: .retrying, phase: "Retrying")
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await MainActor.run {
+                // Stopped during the backoff: stays stopped.
+                guard let self, self.record(runID)?.state == .queued else { return }
+                self.pendingIDs.append(runID)
+                self.refreshQueuePositions()
+                self.drain()
+            }
+        }
+    }
+
+    private func refreshQueuePositions() {
+        for index in runs.indices {
+            runs[index].queuePosition = pendingIDs.firstIndex(of: runs[index].id).map { $0 + 1 }
+        }
+        persist()
+    }
+
+    /// Persist the current snapshot, preserving call order.
+    ///
+    /// `BotRunStore` is an actor, so each save is atomic — but independent Tasks enter an actor
+    /// in no guaranteed order, and `update()` and `refreshQueuePositions()` between them fire a
+    /// save on every mutation. A single `drain()` therefore raced a dozen overlapping writes,
+    /// any of which could land after a newer one and walk run state backwards on disk. Chaining
+    /// each write behind the previous one costs nothing and makes the last writer the newest.
+    private func persist() {
+        let snapshot = runs
+        let previous = persistTask
+        persistTask = Task { [store] in
+            await previous?.value
+            do {
+                try await store.save(snapshot)
+                persistenceError = nil
+            } catch {
+                persistenceError = "Bot recovery could not be saved. New runs are paused. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private static func evidenceContract(for profileID: String) -> BotRunEvidence {
+        switch profileID {
+        case "researcher":
+            BotRunEvidence(phase: .research, confidence: .notRun, required: [.sources], observed: [])
+        case "navigator":
+            BotRunEvidence(phase: .navigation, confidence: .notRun, required: [.execution], observed: [])
+        case "reviewer":
+            BotRunEvidence(phase: .review, confidence: .notRun, required: [.review], observed: [])
+        default:
+            BotRunEvidence(
+                phase: .code, confidence: .notRun,
+                required: [.execution, .verification], observed: [])
+        }
+    }
+}

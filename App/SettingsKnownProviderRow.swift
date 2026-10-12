@@ -1,0 +1,251 @@
+import AppKit
+import SwiftUI
+
+struct KnownProviderRow: View {
+    let provider: KnownRemoteProvider
+    var showsIdentity: Bool = true
+    @ObservedObject private var keyStore = APIKeyStore.shared
+    @State private var keyDraft = ""
+    @State private var modelDraft = ""
+    @State private var reasoningEffort: String?
+    @State private var liveProfiles: [RemoteModelProfile] = []
+    @State private var state: ProviderRowState = .idle
+
+    private enum ProviderRowState: Equatable {
+        case idle
+        case running(String)
+        case success(String)
+        case failure(String)
+    }
+
+    private var configured: Bool { keyStore.hasKey(forProviderID: provider.id) }
+
+    private var resolvedKey: String {
+        let draft = CredentialNormalizer.normalize(keyDraft)
+        return draft.isEmpty ? (keyStore.key(forProviderID: provider.id) ?? "") : draft
+    }
+
+    private var selectedModel: String {
+        let value = modelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? provider.defaultModel : value
+    }
+
+    private var modelChoices: [String] {
+        var seen = Set<String>()
+        return (liveProfiles.map(\.model) + provider.availableModels)
+            .filter { !seen.insert($0).inserted ? false : true }
+    }
+
+    private var selectedProfile: RemoteModelProfile {
+        let cached = liveProfiles.first(where: { $0.model == selectedModel })
+            ?? AppPreferencesStore.shared.current.remoteModelProfiles.values.first(where: {
+                $0.providerKey == provider.id && $0.model == selectedModel
+            })
+        let base = cached ?? RemoteModelProfile(
+            provider: .custom,
+            model: selectedModel,
+            supportsTools: true,
+            providerKey: provider.id,
+            providerDisplayName: provider.displayName,
+            apiProtocol: provider.apiProtocol,
+            baseURL: provider.baseURL.absoluteString)
+        return base.applying(
+            AppPreferencesStore.shared.remoteModelOverride(endpoint: base.endpoint()))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+            if showsIdentity {
+                HStack(spacing: Spacing.sm) {
+                    Image(systemName: "shippingbox.fill")
+                        .foregroundStyle(Theme.accentText)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(provider.displayName)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("OpenAI-compatible · \(provider.id)")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                    Spacer()
+                    if configured {
+                        Label("Configured", systemImage: "checkmark.seal.fill")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(Theme.positive)
+                    }
+                }
+            }
+
+            Text(provider.baseURL.absoluteString)
+                .font(.caption2.monospaced())
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            HStack(spacing: Spacing.sm) {
+                SecureField(configured ? "API key (replace)" : "API key", text: $keyDraft)
+                    .vampField()
+                    .autocorrectionDisabled()
+                Button(configured ? "Update key" : "Connect") { save() }
+                    .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+                    .tint(Theme.accent)
+                    .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Test") { test() }
+                    .buttonStyle(LFCapsuleButtonStyle())
+                    .disabled(resolvedKey.isEmpty || isRunning)
+                Button("Refresh") { refreshModels() }
+                    .buttonStyle(LFCapsuleButtonStyle())
+                    .disabled(resolvedKey.isEmpty || isRunning)
+            }
+
+            HStack(spacing: Spacing.sm) {
+                TextField("Model id", text: $modelDraft)
+                    .vampField()
+                    .font(.callout.monospaced())
+                    .onSubmit { persistModel() }
+                if !modelChoices.isEmpty {
+                    InstrumentMenu(menuWidth: 280) {
+                        Label("Models", systemImage: "list.bullet")
+                            .font(.appUI(size: 12.5, weight: .medium))
+                            .foregroundStyle(Instrument.ink)
+                            .padding(.horizontal, Chrome.buttonHPadding)
+                            .frame(minHeight: Chrome.buttonHeight)
+                            .background(
+                                LinearGradient(colors: [Instrument.silverTop, Instrument.silverLow],
+                                               startPoint: .top, endPoint: .bottom),
+                                in: RoundedRectangle(cornerRadius: Chrome.buttonRadius, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: Chrome.buttonRadius, style: .continuous)
+                                .strokeBorder(Instrument.seam, lineWidth: 0.75))
+                    } options: {
+                        ForEach(modelChoices, id: \.self) { model in
+                            InstrumentMenuRow(title: model, isSelected: modelDraft == model) {
+                                modelDraft = model
+                                persistModel()
+                            }
+                        }
+                    }
+                }
+            }
+
+            ReasoningEffortPicker(profile: selectedProfile, selection: $reasoningEffort)
+                .id(selectedProfile.id)
+                .onChange(of: reasoningEffort) { _, _ in persistReasoningEffort() }
+
+            switch state {
+            case .idle: EmptyView()
+            case .running(let message):
+                Label(message, systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            case .success(let message):
+                Label(message, systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Theme.positive)
+            case .failure(let message):
+                Label(message, systemImage: "xmark.octagon.fill")
+                    .font(.caption)
+                    .foregroundStyle(Theme.negative)
+            }
+        }
+        .padding(.vertical, Spacing.sm)
+        .task {
+            restoreModel()
+            loadReasoningEffort()
+        }
+        .onChange(of: modelDraft) { _, _ in loadReasoningEffort() }
+    }
+
+    private var isRunning: Bool {
+        if case .running = state { return true }
+        return false
+    }
+
+    private func restoreModel() {
+        if let saved = AppPreferencesStore.shared.current.remoteModelProfiles.values.first(where: {
+            $0.providerKey == provider.id
+        }) {
+            modelDraft = saved.model
+            liveProfiles = [saved]
+        } else {
+            modelDraft = provider.defaultModel
+        }
+    }
+
+    private func save() {
+        let key = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, keyStore.save(key: key, forProviderID: provider.id) else {
+            state = .failure("Could not save this key to the Keychain.")
+            return
+        }
+        keyDraft = ""
+        persistModel()
+        state = .success("Key saved securely.")
+        refreshModels(apiKey: key)
+    }
+
+    private func persistModel() {
+        let model = selectedModel
+        guard !model.isEmpty else { return }
+        let profile = RemoteModelProfile(
+            provider: .custom,
+            model: model,
+            supportsTools: true,
+            providerKey: provider.id,
+            providerDisplayName: provider.displayName,
+            apiProtocol: provider.apiProtocol,
+            baseURL: provider.baseURL.absoluteString)
+        AppPreferencesStore.shared.saveRemoteModelProfiles([profile])
+    }
+
+    private func persistReasoningEffort() {
+        var override = AppPreferencesStore.shared
+            .remoteModelOverride(endpoint: selectedProfile.endpoint()) ?? RemoteModelOverride()
+        override.reasoningEffort = reasoningEffort
+        AppPreferencesStore.shared.saveRemoteModelOverride(
+            override, endpoint: selectedProfile.endpoint())
+    }
+
+    private func loadReasoningEffort() {
+        reasoningEffort = AppPreferencesStore.shared
+            .remoteModelOverride(endpoint: selectedProfile.endpoint())?.reasoningEffort
+    }
+
+    private func test() {
+        let key = resolvedKey
+        guard !key.isEmpty else { return }
+        state = .running("Testing \(selectedModel)…")
+        Task {
+            do {
+                let answer = try await RemoteLLMClient.testConnection(
+                    endpoint: provider.endpoint(model: selectedModel), apiKey: key)
+                state = .success("Connected — \(answer)")
+                persistModel()
+            } catch {
+                state = .failure((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+        }
+    }
+
+    private func refreshModels(apiKey: String? = nil) {
+        let key = apiKey ?? resolvedKey
+        guard !key.isEmpty else { return }
+        state = .running("Loading model list…")
+        Task {
+            do {
+                let profiles = try await RemoteLLMClient.fetchModelProfiles(
+                    endpoint: provider.endpoint(model: selectedModel), apiKey: key)
+                liveProfiles = profiles
+                AppPreferencesStore.shared.saveRemoteModelProfiles(profiles)
+                if let first = profiles.first, modelDraft.isEmpty || !profiles.contains(where: { $0.model == selectedModel }) {
+                    modelDraft = profiles.contains(where: { $0.model == provider.defaultModel })
+                        ? provider.defaultModel
+                        : first.model
+                    persistModel()
+                }
+                state = .success("Loaded \(profiles.count) models.")
+            } catch {
+                state = .failure((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+        }
+    }
+}

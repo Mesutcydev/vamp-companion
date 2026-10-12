@@ -1,0 +1,74 @@
+import Foundation
+
+/// Process-wide registry of child processes the app spawns (today:
+/// llama-server instances backing GGUF models).
+///
+/// Why: quitting the app while a GGUF model is loaded used to orphan
+/// llama-server — a multi-GB process serving weights nobody can reach.
+/// `applicationWillTerminate` can't await the engines' async unload path,
+/// so every spawn registers here and the app delegate SIGTERMs whatever is
+/// still alive, synchronously, on the way out.
+///
+/// (A hard crash still leaks the child — willTerminate doesn't fire on
+/// SIGABRT. The next launch is unaffected: each server gets a fresh port.)
+enum ChildProcessRegistry {
+
+    private static let lock = NSLock()
+    // All access under `lock` — `nonisolated(unsafe)` is how this codebase
+    // marks lock-guarded statics (same pattern as VisionProvider's seams).
+    nonisolated(unsafe) private static var processes: [pid_t: Process] = [:]
+    nonisolated(unsafe) private static var pids: Set<pid_t> = []
+
+    static func register(_ process: Process) {
+        lock.withLock { processes[process.processIdentifier] = process }
+    }
+
+    static func register(pid: pid_t) {
+        lock.withLock { _ = pids.insert(pid) }
+    }
+
+    static func unregister(_ process: Process) {
+        lock.withLock { processes[process.processIdentifier] = nil }
+    }
+
+    static func unregister(pid: pid_t) {
+        lock.withLock { _ = pids.remove(pid) }
+    }
+
+    /// Best-effort SIGTERM to every registered child still running.
+    /// Synchronous and signal-safe enough for applicationWillTerminate.
+    /// Waits until each Process has actually exited so NSTask dealloc does
+    /// not abort during quit.
+    static func terminateAll() {
+        let running = lock.withLock { Array(processes.values) }
+        for process in running where process.isRunning {
+            process.terminate()
+        }
+        let extra = lock.withLock { Array(pids) }
+        for pid in extra {
+            kill(-pid, SIGTERM)
+        }
+        let deadline = Date().addingTimeInterval(0.4)
+        for process in running {
+            while process.isRunning && Date() < deadline {
+                usleep(20_000)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+        }
+    }
+
+    /// Test hook: how many children are currently tracked.
+    static var trackedCount: Int {
+        lock.withLock { processes.count }
+    }
+}
+
+extension Process {
+    /// `terminationStatus` raises if the task is still running. Nil while alive.
+    var finishedTerminationStatus: Int32? {
+        isRunning ? nil : terminationStatus
+    }
+}
