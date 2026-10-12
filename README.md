@@ -5,12 +5,14 @@ Run local models on your Mac, connect API providers, and control assistant
 sessions from iOS. The Mac window contains only **Models, Devices, and Settings**.
 
 [Download Vamp Companion](https://github.com/Mesutcydev/vamp-companion/releases/latest) ·
-[Companion site](https://mesutcydev.github.io/vamp-companion/) ·
-[Existing iOS app](https://github.com/Mesutcydev/vamp-assistant/releases)
+[Companion site](https://thevamp.app/companion/) ·
+[Existing iOS source](https://github.com/Mesutcydev/vamp-assistant)
 
 ## Install and pair
 
-Requires an Apple Silicon Mac with macOS 15 or later.
+Requires an Apple Silicon Mac with macOS 15 or later. The public iOS download
+is not available yet; an existing sideloaded Vamp Assistant iOS build can pair
+with the companion.
 
 1. Download the notarized ZIP, unzip it, and move **Vamp Companion.app** to Applications.
 2. In Models, download or import a supported model. For API-backed models, open

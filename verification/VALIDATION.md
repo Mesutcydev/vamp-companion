@@ -92,3 +92,22 @@ from iOS, full concurrent account/session workflows in both Mac apps, and
 physical sleep/wake behavior need separate live verification. Fixture tests do
 not certify those hardware and account-dependent scenarios. No original app
 data is used as a test fixture.
+
+## Installed app and main website
+
+- The notarized 0.1.0 build 1 is installed in `/Applications/Vamp Companion.app`.
+  Its executable hash matches the verified release, code-signature verification
+  passes, and Gatekeeper accepts it as Notarized Developer ID. The installed app
+  reopened its existing model library and preferences and restored hosting on
+  port 9675 alongside the original app.
+- A native Check for Updates from the installed app verified the appcast EdDSA
+  signature and displayed “You’re up to date!” for 0.1.0. Automatic checks are
+  enabled; installation remains user-confirmed. No runtime binary change was
+  necessary after publishing the signed feed and installing the release.
+- [The main Companion page](https://thevamp.app/companion/) is published through
+  the independent website repository, with home and Assistant page links. Its
+  desktop/mobile layouts, English/Turkish language switch, dark/light themes,
+  navigation, and Mac download/checksum links were checked. All 15 release
+  selector tests and static site link checks passed.
+- The iOS download is deliberately empty at the user's request; current
+  sideloaded builds can pair. No iOS source or distribution asset was changed.
