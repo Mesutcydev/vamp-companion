@@ -265,6 +265,19 @@ final class RemoteSessionHost {
         return "http://\(host):\(port)/"
     }
 
+    // Present a physical LAN address without changing the host's preferred
+    // Tailscale route or its peer authorization policy.
+    var localNetworkURL: String? {
+        guard allowLANPeers, let port = actualPort,
+              let endpoint = RemoteNetworkEndpointDiscovery.localNetworkEndpoint() else { return nil }
+        return "http://\(endpoint.host):\(port)/"
+    }
+
+    var localNetworkPairingURL: String? {
+        guard let address = localNetworkURL else { return nil }
+        return "\(address)?pair=\(pairingCode)"
+    }
+
     var pairedClientCount: Int {
         pruneExpiredTokens()
         return tokens.count
@@ -2695,6 +2708,15 @@ enum RemoteNetworkEndpointDiscovery {
             tailscaleStatus: tailscaleCLIStatus())
     }
 
+    static func localNetworkEndpoint() -> Endpoint? {
+        selectLocalNetworkEndpoint(addresses: interfaceIPv4Addresses(physicalOnly: true))
+    }
+
+    static func selectLocalNetworkEndpoint(addresses: [String]) -> Endpoint? {
+        guard let host = addresses.first(where: isPrivateIPv4) else { return nil }
+        return Endpoint(host: host, kind: .localNetwork)
+    }
+
     static func selectEndpoint(
         addresses: [String],
         allowLAN: Bool,
@@ -2756,13 +2778,19 @@ enum RemoteNetworkEndpointDiscovery {
         return .running(host)
     }
 
-    private static func interfaceIPv4Addresses() -> [String] {
+    private static func interfaceIPv4Addresses(physicalOnly: Bool = false) -> [String] {
         var values: [String] = []
         var interfacePointer: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&interfacePointer) == 0, let first = interfacePointer else { return [] }
         defer { freeifaddrs(interfacePointer) }
 
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            if physicalOnly {
+                let name = String(cString: pointer.pointee.ifa_name)
+                guard name.hasPrefix("en"),
+                      pointer.pointee.ifa_flags & UInt32(IFF_UP) != 0,
+                      pointer.pointee.ifa_flags & UInt32(IFF_LOOPBACK) == 0 else { continue }
+            }
             guard let address = pointer.pointee.ifa_addr,
                   address.pointee.sa_family == UInt8(AF_INET) else { continue }
             var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))

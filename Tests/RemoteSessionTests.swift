@@ -158,6 +158,22 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertEqual(lanFallback, .init(host: "192.168.1.20", kind: .localNetwork))
     }
 
+    func testLocalPairingAddressRemainsAvailableBesideTailscale() {
+        let addresses = ["100.70.1.2", "192.168.1.20"]
+        XCTAssertEqual(RemoteNetworkEndpointDiscovery.selectLocalNetworkEndpoint(addresses: addresses),
+                       .init(host: "192.168.1.20", kind: .localNetwork))
+        XCTAssertEqual(RemoteNetworkEndpointDiscovery.selectEndpoint(
+            addresses: addresses, allowLAN: true, tailscaleStatus: .running("100.90.4.3")),
+                       .init(host: "100.90.4.3", kind: .tailscale))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "192.168.1.44", advertisedKind: .tailscale, allowLAN: false))
+    }
+
+    func testLocalPairingAddressRejectsTailscalePublicAndInvalidAddresses() {
+        XCTAssertNil(RemoteNetworkEndpointDiscovery.selectLocalNetworkEndpoint(
+            addresses: ["100.70.1.2", "8.8.8.8", "127.0.0.1", "192.168.1.999"]))
+    }
+
     func testTailscaleStatusJSONRequiresRunningOnlineIPv4() {
         let running = #"{"BackendState":"Running","TailscaleIPs":["100.101.2.3","fd7a:115c:a1e0::1"],"Self":{"Online":true}}"#
         XCTAssertEqual(

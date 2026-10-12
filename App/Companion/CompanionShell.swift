@@ -120,6 +120,15 @@ struct CompanionDevicesView: View {
     @State private var setupAllowLAN = true
     @State private var copied = false
     @State private var confirmsRevocation = false
+    @State private var pairsOverWiFi = true
+
+    private var usesWiFi: Bool {
+        pairsOverWiFi && appState.remoteLocalPairingURL != nil
+    }
+
+    private var displayedPairingURL: String? {
+        usesWiFi ? appState.remoteLocalPairingURL : appState.remotePairingURL
+    }
 
     var body: some View {
         ScrollView {
@@ -138,20 +147,33 @@ struct CompanionDevicesView: View {
                     Toggle("iPhone access", isOn: $settings.remoteSessionEnabled).toggleStyle(.switch)
                     Toggle("Allow trusted local Wi-Fi", isOn: $settings.remoteSessionAllowLAN)
                     if appState.remoteSessionRunning {
+                        if appState.remoteNetworkKind == .tailscale,
+                           appState.remoteLocalPairingURL != nil {
+                            Picker("Pair over", selection: $pairsOverWiFi) {
+                                Text("Local Wi-Fi").tag(true)
+                                Text("Tailscale").tag(false)
+                            }
+                            .pickerStyle(.segmented)
+                            .accessibilityIdentifier("companion-pairing-network")
+                            .onChange(of: pairsOverWiFi) { _, _ in copied = false }
+                        }
+                        Text("For App Stream from TestFlight, choose Local Wi-Fi and keep your iPhone and Mac on the same Wi-Fi or Ethernet network.")
+                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                         CompanionPairingCard(
-                            url: appState.remotePairingURL,
+                            url: displayedPairingURL,
                             code: appState.remotePairingCode,
-                            address: appState.remoteSessionURL,
+                            address: usesWiFi ? appState.remoteLocalSessionURL : appState.remoteSessionURL,
                             expires: appState.remotePairingExpiresAt,
-                            networkKind: appState.remoteNetworkKind)
+                            networkKind: usesWiFi ? .localNetwork : appState.remoteNetworkKind)
                         HStack {
                             Button(copied ? "Copied" : "Copy pairing link", systemImage: "link") {
-                                guard let url = appState.remotePairingURL else { return }
+                                guard let url = displayedPairingURL else { return }
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(url, forType: .string)
                                 copied = true
                             }
-                            .disabled(appState.remotePairingURL == nil)
+                            .disabled(displayedPairingURL == nil)
                             Button("New code", systemImage: "arrow.clockwise") {
                                 copied = false
                                 appState.rotateRemotePairingCode()

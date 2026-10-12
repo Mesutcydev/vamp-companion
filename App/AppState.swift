@@ -93,6 +93,8 @@ final class AppState: ObservableObject {
     @Published var remotePairingCode = ""
     @Published var remotePairingURL: String?
     @Published var remoteSessionURL: String?
+    @Published var remoteLocalPairingURL: String?
+    @Published var remoteLocalSessionURL: String?
     @Published var remotePairingExpiresAt: Date?
     @Published var remotePairedClientCount = 0
     @Published var remoteNetworkKind: RemoteNetworkKind?
@@ -1711,12 +1713,16 @@ final class AppState: ObservableObject {
         let pairingCode = remoteSessionHost.pairingCode
         let pairingURL = remoteSessionHost.pairingURL
         let browserURL = remoteSessionHost.browserURL
+        let localPairingURL = remoteSessionHost.localNetworkPairingURL
+        let localBrowserURL = remoteSessionHost.localNetworkURL
         let pairingExpiresAt = remoteSessionHost.pairingExpiresAt
         let pairedClientCount = remoteSessionHost.pairedClientCount
         let networkKind = remoteSessionHost.networkKind
         if remotePairingCode != pairingCode { remotePairingCode = pairingCode }
         if remotePairingURL != pairingURL { remotePairingURL = pairingURL }
         if remoteSessionURL != browserURL { remoteSessionURL = browserURL }
+        if remoteLocalPairingURL != localPairingURL { remoteLocalPairingURL = localPairingURL }
+        if remoteLocalSessionURL != localBrowserURL { remoteLocalSessionURL = localBrowserURL }
         if remotePairingExpiresAt != pairingExpiresAt { remotePairingExpiresAt = pairingExpiresAt }
         if remotePairedClientCount != pairedClientCount { remotePairedClientCount = pairedClientCount }
         if remoteNetworkKind != networkKind { remoteNetworkKind = networkKind }
