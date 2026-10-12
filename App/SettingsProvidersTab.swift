@@ -27,7 +27,9 @@ struct ProvidersTab: View {
                     .toggleStyle(.checkbox)
                     .fixedSize()
             }
-            Text("Connect once, then choose a model in any chat.")
+            Text(includesSafetyOptions
+                 ? "Connect once, then choose a model in any chat."
+                 : "Connect a provider, then choose its model in the paired iOS app.")
                 .font(.callout)
                 .foregroundStyle(Theme.textSecondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {

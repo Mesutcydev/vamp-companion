@@ -43,6 +43,7 @@ jobs:
           xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion
           -destination 'platform=macOS' -jobs 2 -derivedDataPath "$RUNNER_TEMP/Derived"
           -resultBundlePath "$RUNNER_TEMP/Tests.xcresult"
+          -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation
           CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=-
           DEVELOPMENT_TEAM="" ENABLE_HARDENED_RUNTIME=NO ONLY_ACTIVE_ARCH=YES
           test
@@ -52,18 +53,21 @@ jobs:
           xcodebuild -project BeetCode.xcodeproj -scheme BeetCodeRemoteIOS
           -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
           -derivedDataPath "$RUNNER_TEMP/Derived" -resultBundlePath "$RUNNER_TEMP/Tests.xcresult"
-          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO test
+          -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation
+          CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM="" test
       - name: macOS Release build
         if: matrix.platform == 'macOS'
         run: >-
           xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion -configuration Release
           -destination 'generic/platform=macOS' ARCHS=arm64 EXCLUDED_ARCHS=x86_64 -derivedDataPath "$RUNNER_TEMP/Derived"
+          -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: iOS device Release build
         if: matrix.platform == 'iOS'
         run: >-
           xcodebuild -project BeetCode.xcodeproj -scheme BeetCodeRemoteIOS -configuration Release
           -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/Derived"
+          -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: Save test results
         if: always()

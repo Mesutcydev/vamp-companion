@@ -56,6 +56,7 @@ PLIST
 
 xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath "$ROOT/.derived" -clonedSourcePackagesDirPath "$ROOT/.spm" -disableAutomaticPackageResolution -skipPackageUpdates -jobs 1 \
+  -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation \
   -archivePath "$WORK/Vamp Companion.xcarchive" \
   ARCHS=arm64 EXCLUDED_ARCHS=x86_64 CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$IDENTITY" DEVELOPMENT_TEAM="$TEAM" \
