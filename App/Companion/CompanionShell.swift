@@ -125,7 +125,7 @@ struct CompanionDevicesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Pair your iPhone or iPad").font(.title3.weight(.semibold))
-                Text("Open Vamp Assistant or Vamp Stream on iPhone or iPad and scan this Mac’s pairing code. Vamp Stream 0.1.24 or later supports Companion QR codes. Your assistant runs here, even when this window is closed.")
+                Text("Open Vamp Assistant or Vamp Stream on iPhone or iPad and scan this Mac’s pairing code. The updated Vamp Stream 1.0 build 8 supports Companion QR codes. Your assistant runs here, even when this window is closed.")
                     .font(.callout).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !settings.remoteSessionEnabled {

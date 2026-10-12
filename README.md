@@ -20,7 +20,7 @@ with the companion.
 3. In Devices, enable iPhone access. Allow local Wi-Fi only on a trusted private
    network, or connect both devices to Tailscale.
 4. In the existing Vamp Assistant iOS app, scan the pairing code or enter the
-   address and code shown by the companion. Vamp Stream 0.1.24 or later also
+   address and code shown by the companion. Vamp Stream 1.0 build 8 also
    accepts Companion QR codes for app streaming; older Stream builds need
    the full private address including `:9675` entered manually.
 
