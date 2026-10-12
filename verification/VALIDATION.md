@@ -111,3 +111,10 @@ data is used as a test fixture.
   selector tests and static site link checks passed.
 - The iOS download is deliberately empty at the user's request; current
   sideloaded builds can pair. No iOS source or distribution asset was changed.
+
+## Companion 0.1.1 and current App Stream compatibility
+
+- Release source: `8ce0def7a71dee6b985047008224763204834bba`. [Validation](https://github.com/Mesutcydev/vamp-companion/actions/runs/38309291470) passed: 1,132 Mac backend tests (51 optional skips), two Companion UI checks, 48 unchanged Assistant iOS unit tests, 12 iOS UI checks (five optional skips), and both device Release builds. All 93 frozen iOS files and release targets remain unchanged.
+- The corrected Mac package is Developer ID signed, notarized, and stapled. Its independently downloaded [public ZIP](https://github.com/Mesutcydev/vamp-companion/releases/download/v0.1.1/Vamp-Companion-0.1.1-build-2-public.zip) exactly matches the verified local archive: 15,242,735 bytes, SHA-256 `4437242c2e269febc9b2ca6a7cc3f3079e59f69009f2f575e3f1d5363f575c1a`. Gatekeeper and Sparkle archive/feed signature checks passed before the feed was published.
+- The pairing fix is also applied to the current **App Stream** source snapshot from the publisher’s newer working project. Its App Store build is **1.0 (9)** with the unchanged bundle identity and `app-store` channel. Its current artwork, splash, launch screen, and LAN policy are preserved. 667 backend tests and 25 Linux checks passed. Apple processed the signed IPA as VALID, and the existing Internal Testers group has the replacement build. The older website-edition build 8 was removed from that group.
+- App Stream’s App Store edition requires the user’s own Mac on the same physical LAN. The existing Assistant iOS app and website Stream edition retain their existing private-network behavior. Physical phone and account-dependent verification remains separate from fixture coverage.
