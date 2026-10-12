@@ -34,7 +34,7 @@ final class TaskCapsuleStore: @unchecked Sendable {
     private var directory: URL {
         if let overrideDirectory { return overrideDirectory }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("BeetCode/AgentTasks", isDirectory: true)
+        return support.appendingPathComponent("VampCompanion/AgentTasks", isDirectory: true)
     }
 
     func save(_ capsule: AgentTaskCapsule) {

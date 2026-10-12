@@ -10,7 +10,7 @@ enum RemoteWorkspaceCatalog {
     }
 
     static func defaultCreateParent(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appendingPathComponent("Documents/BeetCode", isDirectory: true)
+        home.appendingPathComponent("Documents/VampCompanion", isDirectory: true)
     }
 
     static func list(
@@ -198,14 +198,14 @@ enum RemoteWorkspaceCatalog {
     private static func isBeetCodeSupport(_ url: URL, home: URL) -> Bool {
         isSameOrInside(
             url,
-            parent: home.appendingPathComponent("Library/Application Support/BeetCode", isDirectory: true))
+            parent: home.appendingPathComponent("Library/Application Support/VampCompanion", isDirectory: true))
     }
 
     private static func isBotComputerWorkspace(_ url: URL, home: URL) -> Bool {
         isSameOrInside(
             url,
             parent: home.appendingPathComponent(
-                "Library/Application Support/BeetCode/BotComputers",
+                "Library/Application Support/VampCompanion/BotComputers",
                 isDirectory: true))
     }
 

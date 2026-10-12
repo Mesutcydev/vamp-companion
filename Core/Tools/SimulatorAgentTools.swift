@@ -182,7 +182,7 @@ struct SimScreenshotTool: AgentTool {
         guard let udid = call.string("udid") else { throw ToolError.missingArgument("udid") }
         // Save into a workspace-visible folder so the user (and future
         // vision tools) can inspect it.
-        let dir = context.workspace.root.appendingPathComponent(".beetcode/screenshots", isDirectory: true)
+        let dir = context.workspace.root.appendingPathComponent(".vamp-companion/screenshots", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let shot = dir.appendingPathComponent("sim-\(Int(Date().timeIntervalSince1970)).png")
         let output = try ArgentBridge.run(

@@ -242,11 +242,11 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertFalse(remoteConfig.exposeStandardRoutes)
         XCTAssertEqual(remoteConfig.maxBodyBytes, RemoteSessionHost.maxRemoteBodyBytes)
         XCTAssertFalse(remoteConfig.allowCORS)
-        XCTAssertEqual(RemoteSessionHost.defaultPort, 9575)
-        XCTAssertEqual(RemoteSessionPorts.resolved(9475), 9575)
-        XCTAssertEqual(RemoteSessionPorts.resolved(9471), 9575)
-        XCTAssertEqual(RemoteSessionPorts.candidates(preferred: 9475).first, 9575)
-        XCTAssertFalse(RemoteSessionPorts.candidates(preferred: 9575).contains(where: RemoteSessionPorts.reservedForeignPorts.contains))
+        XCTAssertEqual(RemoteSessionHost.defaultPort, 9675)
+        XCTAssertEqual(RemoteSessionPorts.resolved(9475), 9675)
+        XCTAssertEqual(RemoteSessionPorts.resolved(9471), 9675)
+        XCTAssertEqual(RemoteSessionPorts.candidates(preferred: 9475).first, 9675)
+        XCTAssertFalse(RemoteSessionPorts.candidates(preferred: 9675).contains(where: RemoteSessionPorts.reservedForeignPorts.contains))
         XCTAssertEqual(RemoteSessionHost.tokenLifetime, 30 * 24 * 60 * 60)
         XCTAssertEqual(RemoteSessionHost.maxRemoteFileBytes, 20 * 1024 * 1024)
     }
@@ -570,9 +570,9 @@ final class RemoteSessionTests: XCTestCase {
     }
 
     func testRemotePairingIsOneTimeAndResumesTheSavedBeetCodeSession() async throws {
+        let endpoint = RemoteNetworkEndpointDiscovery.preferredEndpoint(allowLAN: true)
         try XCTSkipUnless(
-            RemoteNetworkEndpointDiscovery.preferredEndpoint(allowLAN: false) != nil,
-            "Tailscale is not connected in this environment")
+            endpoint != nil, "No trusted private-network interface is available")
 
         let workspace = TempWorkspace()
         let sessionDirectory = TempWorkspace()
@@ -668,8 +668,8 @@ final class RemoteSessionTests: XCTestCase {
         addTeardownBlock {
             await host.stop()
         }
-        try await host.start(port: 0, allowLAN: false)
-        XCTAssertEqual(host.networkKind, .tailscale)
+        try await host.start(port: 0, allowLAN: true)
+        XCTAssertEqual(host.networkKind, endpoint?.kind)
 
         let port = try XCTUnwrap(host.actualPort)
         let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)"))
@@ -742,7 +742,7 @@ final class RemoteSessionTests: XCTestCase {
 
         let status = try await request(baseURL, path: "/api/status", token: token)
         XCTAssertEqual(status.status, 200)
-        XCTAssertEqual(status.json.objectValue?["networkKind"]?.stringValue, "tailscale")
+        XCTAssertEqual(status.json.objectValue?["networkKind"]?.stringValue, endpoint?.kind.rawValue)
         XCTAssertNotNil(status.json.objectValue?["tokenExpiresAt"]?.numberValue)
         XCTAssertNotNil(status.json.objectValue?["phase"]?.stringValue)
 

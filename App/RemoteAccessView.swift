@@ -494,7 +494,7 @@ struct RemoteAccessConsentView: View {
     }
 }
 
-private struct RemoteQRCodeView: View {
+struct RemoteQRCodeView: View {
     let value: String
     @State private var image: NSImage?
 

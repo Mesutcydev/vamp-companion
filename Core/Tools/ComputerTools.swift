@@ -72,9 +72,9 @@ enum ComputerUseError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessibilityNotGranted:
-            return "Accessibility permission is not granted — ask for computer access or enable Vamp Assistant in System Settings → Privacy & Security → Accessibility, then retry."
+            return "Accessibility permission is not granted — ask for computer access or enable Vamp Companion in System Settings → Privacy & Security → Accessibility, then retry."
         case .screenRecordingNotGranted:
-            return "Screen Recording permission is not granted — ask for computer access or enable Vamp Assistant in System Settings → Privacy & Security → Screen Recording, then retry."
+            return "Screen Recording permission is not granted — ask for computer access or enable Vamp Companion in System Settings → Privacy & Security → Screen Recording, then retry."
         case .noFocusedApp:
             return "No focused application to inspect."
         case .unknownKey(let name):
@@ -525,7 +525,7 @@ struct ComputerRequestAccessTool: AgentTool {
             : ComputerPermission.accessibilityGranted
         return granted
             ? "\(capability) access is enabled. Continue with the requested computer tool."
-            : "Vamp Assistant opened the macOS privacy prompt for \(capability). Wait for the user to grant it, then call computer_status before continuing."
+            : "Vamp Companion opened the macOS privacy prompt for \(capability). Wait for the user to grant it, then call computer_status before continuing."
     }
 }
 
@@ -616,7 +616,7 @@ struct ComputerScreenshotTool: AgentTool {
         }
         let fullScreen = call.bool("fullScreen") ?? false
         let image = try await Self.capture(fullScreen: fullScreen)
-        let dir = context.workspace.root.appendingPathComponent(".beetcode/screenshots", isDirectory: true)
+        let dir = context.workspace.root.appendingPathComponent(".vamp-companion/screenshots", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("screen-\(Int(Date().timeIntervalSince1970)).png")
         guard let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {

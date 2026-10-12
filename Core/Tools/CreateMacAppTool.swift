@@ -479,7 +479,7 @@ struct CreateIOSAppTool: AgentTool {
         xcodegen generate
         xcodebuild -project \(product).xcodeproj -scheme \(product) \\
           -destination 'platform=iOS Simulator,name=iPhone 16' \\
-          -derivedDataPath .beetcode/DerivedData build
+          -derivedDataPath .vamp-companion/DerivedData build
         ```
 
         In Beet Code, prefer `sim_build_run` after edits. After adding or

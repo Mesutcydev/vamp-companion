@@ -168,7 +168,7 @@ struct SaveDocumentTool: AgentTool {
         saveHandler = { suggestedName, data in
             let panel = NSSavePanel()
             panel.title = "Save Generated Document"
-            panel.message = "Choose where Vamp Assistant should save this document."
+            panel.message = "Choose where Vamp Companion should save this document."
             panel.prompt = "Save"
             panel.canCreateDirectories = true
             panel.nameFieldStringValue = suggestedName

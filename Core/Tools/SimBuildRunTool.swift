@@ -44,7 +44,7 @@ struct SimBuildRunTool: AgentTool {
         let udid = try await Self.resolveSimulator(preferred: call.string("udid"))
 
         // 4. Build into a workspace-local DerivedData.
-        let derivedData = workspace.root.appendingPathComponent(".beetcode/DerivedData", isDirectory: true)
+        let derivedData = workspace.root.appendingPathComponent(".vamp-companion/DerivedData", isDirectory: true)
         try? FileManager.default.createDirectory(at: derivedData, withIntermediateDirectories: true)
         let buildArgs = Self.buildArguments(
             projectFile: projectFile,
@@ -81,7 +81,7 @@ struct SimBuildRunTool: AgentTool {
         }
 
         // 7. Screenshot.
-        let shotsDir = workspace.root.appendingPathComponent(".beetcode/screenshots", isDirectory: true)
+        let shotsDir = workspace.root.appendingPathComponent(".vamp-companion/screenshots", isDirectory: true)
         try? FileManager.default.createDirectory(at: shotsDir, withIntermediateDirectories: true)
         let shotURL = shotsDir.appendingPathComponent("sim-\(Int(Date().timeIntervalSince1970)).png")
         _ = await SimctlRunner.run(["io", udid, "screenshot", shotURL.path])

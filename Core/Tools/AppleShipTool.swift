@@ -66,7 +66,7 @@ struct AppleShipTool: AgentTool {
         let platform = call.string("platform") ?? "auto"
         let signing = call.bool("allowSigning") == true ? ", signing enabled" : ", unsigned"
         let install = call.string("installDevice")?.nilIfEmpty == nil ? "" : ", then install"
-        return .command("verify + archive \(project) (\(platform)\(signing)\(install)) → .beetcode/releases")
+        return .command("verify + archive \(project) (\(platform)\(signing)\(install)) → .vamp-companion/releases")
     }
 
     func execute(_ call: ParsedToolCall, in context: ToolContext) async throws -> String {
@@ -422,7 +422,7 @@ extension AppleShipTool {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let name = "\(formatter.string(from: Date()))-\(fileSafe(scheme))-\(UUID().uuidString.prefix(6))"
         let directory = workspace
-            .appendingPathComponent(".beetcode/releases", isDirectory: true)
+            .appendingPathComponent(".vamp-companion/releases", isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory

@@ -77,7 +77,7 @@ enum CodexAppServerError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .executableNotFound:
-            return "Codex CLI was not found. Install Codex, then reopen Vamp Assistant."
+            return "Codex CLI was not found. Install Codex, then reopen Vamp Companion."
         case .spawnFailed(let detail):
             return "Could not start Codex app-server: \(detail)"
         case .processExited(let status):
@@ -104,6 +104,7 @@ actor CodexAppServerClient {
 
     private let requestedExecutableURL: URL?
     private let clientVersion: String
+    private let runtimeDirectory: URL
 
     private var process: Process?
     private var stdin: FileHandle?
@@ -115,9 +116,25 @@ actor CodexAppServerClient {
     private var readerTask: Task<Void, Never>?
     private var inputBuffer = Data()
 
-    init(executableURL: URL? = nil, clientVersion: String = "0.9.0") {
+    init(executableURL: URL? = nil, clientVersion: String = "0.1.0", runtimeDirectory: URL? = nil) {
         self.requestedExecutableURL = executableURL
         self.clientVersion = clientVersion
+        self.runtimeDirectory = runtimeDirectory ?? Self.defaultRuntimeDirectory
+    }
+
+    nonisolated static var defaultRuntimeDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("VampCompanion/Codex", isDirectory: true)
+    }
+
+    nonisolated static func childEnvironment(
+        runtimeDirectory: URL, inheriting environment: [String: String]
+    ) -> [String: String] {
+        var childEnvironment = environment
+        // Scope only the spawned CLI process; never change the parent app's
+        // environment or discover/copy the user's existing CLI authentication.
+        childEnvironment["CODEX_HOME"] = runtimeDirectory.path
+        return childEnvironment
     }
 
     /// Searches the same locations a GUI-launched macOS app can reasonably
@@ -183,9 +200,15 @@ actor CodexAppServerClient {
 
         let child = Process()
         child.executableURL = executableURL
-        child.arguments = ["app-server", "--listen", "stdio://"]
-        child.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        child.environment = ProcessInfo.processInfo.environment
+        child.arguments = ["app-server", "-c", #"cli_auth_credentials_store="file""#,
+                           "--listen", "stdio://"]
+        try FileManager.default.createDirectory(
+            at: runtimeDirectory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: runtimeDirectory.path)
+        child.currentDirectoryURL = runtimeDirectory
+        child.environment = Self.childEnvironment(
+            runtimeDirectory: runtimeDirectory, inheriting: ProcessInfo.processInfo.environment)
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()
@@ -234,8 +257,8 @@ actor CodexAppServerClient {
 
         let initializeParams = LFJSONValue.object([
             "clientInfo": .object([
-                "name": .string("beetcode"),
-                "title": .string("Vamp Assistant"),
+                "name": .string("vamp_companion"),
+                "title": .string("Vamp Companion"),
                 "version": .string(clientVersion)
             ]),
             "capabilities": .object([

@@ -34,6 +34,7 @@ final class AppUpdater {
     func start() {
         // App-hosted tests must never prompt for updates or contact the feed.
         guard !started,
+              ProcessInfo.processInfo.environment["VAMP_COMPANION_UI_TESTING"] != "1",
               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
               NSClassFromString("XCTestCase") == nil else { return }
         started = true
@@ -70,7 +71,7 @@ struct AppUpdateSettings: View {
 
     var body: some View {
         SettingsCard(title: "Updates", icon: "arrow.down.circle",
-                     footer: "Vamp Assistant checks for updates daily when enabled. You choose when to install an update.") {
+                     footer: "Vamp Companion checks for updates daily when enabled. You choose when to install an update.") {
             SettingRow(label: "Version", value: version) {
                 CheckForUpdatesButton()
                     .buttonStyle(LFCapsuleButtonStyle())

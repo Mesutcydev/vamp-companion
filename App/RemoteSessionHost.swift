@@ -163,7 +163,7 @@ final class RemoteSessionHost {
             case .noReachableAddress:
                 return "No reachable network address was found for remote sessions."
             case .portUnavailable:
-                return "Remote Sessions could not bind a free port. Vamp Host uses 9475; Vamp Assistant uses \(RemoteSessionPorts.defaultPort)."
+                return "Remote Sessions could not bind a free port. Vamp Host uses 9475; Vamp Companion uses \(RemoteSessionPorts.defaultPort)."
             }
         }
     }

@@ -87,7 +87,7 @@ actor BotComputerService {
         self.root = root ?? fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0].appendingPathComponent("BeetCode/BotComputers", isDirectory: true)
+        )[0].appendingPathComponent("VampCompanion/BotComputers", isDirectory: true)
     }
 
     static let specialists: [(id: String, name: String)] = [
@@ -146,7 +146,7 @@ actor BotComputerService {
             workspacePath: workspace.path,
             browserProfilePath: browser.path,
             containerName: backend == .appleContainer
-                ? "beet-\(slug)-\(id.uuidString.lowercased().prefix(8))"
+                ? "vamp-companion-\(slug)-\(id.uuidString.lowercased().prefix(8))"
                 : nil,
             createdAt: now,
             updatedAt: now)
@@ -261,7 +261,7 @@ actor BotComputerService {
                     "--memory", resources.memory,
                     "--volume", "\(record.workspacePath):/workspace",
                     "--workdir", "/workspace",
-                    "--label", "com.beetcode.bot=\(record.profileID)",
+                    "--label", "com.beetcode.companion.bot=\(record.profileID)",
                     Self.guestImage, "sleep", "infinity",
                 ],
                 workingDirectory: root,

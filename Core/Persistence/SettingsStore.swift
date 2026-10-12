@@ -141,7 +141,7 @@ final class SettingsStore: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         persistentDomainName: String? = Bundle.main.bundleIdentifier,
-        apiTokenService: String = "com.beetcode.local-api"
+        apiTokenService: String = "com.beetcode.companion.local-api"
     ) {
         self.defaults = defaults
         self.apiTokenService = apiTokenService

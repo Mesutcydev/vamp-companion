@@ -83,7 +83,7 @@ final class QwenStreamOptimizationTests: XCTestCase {
 
     private func load(_ options: QwenStreamOptimizations) async throws -> QwenStreamingEngine {
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models/\(QwenStreamArtifact.modelID)")
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models/\(QwenStreamArtifact.modelID)")
         let engine = QwenStreamingEngine(gate: GenerationGate(), optimizations: options)
         try await engine.load(directory: directory, modelID: QwenStreamArtifact.modelID,
             diskBytes: QwenStreamArtifact.downloadBytes, contextSize: 4096)

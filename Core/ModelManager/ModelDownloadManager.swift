@@ -99,7 +99,7 @@ final class ModelDownloadManager: ObservableObject {
 
     private var manifestsDirectory: URL {
         let dir = manifestDirectoryOverride ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode/Downloads", isDirectory: true)
+            .appendingPathComponent("VampCompanion/Downloads", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }

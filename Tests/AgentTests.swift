@@ -670,7 +670,7 @@ final class GitCheckpointerTests: XCTestCase {
 
         let checkpoint = try checkpointer.snapshot(summary: "before")
         let refName = try XCTUnwrap(checkpoint.refName)
-        XCTAssertTrue(refName.hasPrefix("refs/beetcode/checkpoints/"))
+        XCTAssertTrue(refName.hasPrefix("refs/vamp-companion/checkpoints/"))
         XCTAssertEqual(checkpointer.pinnedCheckpointRefs()[refName], checkpoint.treeSHA)
     }
 

@@ -34,7 +34,7 @@ struct MacBuildRunTool: AgentTool {
         let projectFile = try Self.detectProject(in: projectDir)
         let scheme = call.string("scheme") ?? Self.detectScheme(projectFile)
 
-        let derivedData = workspace.root.appendingPathComponent(".beetcode/DerivedData", isDirectory: true)
+        let derivedData = workspace.root.appendingPathComponent(".vamp-companion/DerivedData", isDirectory: true)
         try? FileManager.default.createDirectory(at: derivedData, withIntermediateDirectories: true)
         let build = try ShellRunner.runProcess(
             executable: "/usr/bin/xcodebuild",

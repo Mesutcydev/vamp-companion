@@ -563,7 +563,7 @@ enum ModelCatalog {
 
     private static var userCatalogURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode", isDirectory: true)
+            .appendingPathComponent("VampCompanion", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("UserModels.json")
     }

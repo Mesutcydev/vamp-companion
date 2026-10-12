@@ -50,7 +50,7 @@ struct AgentWorktree: Sendable {
         let id = UUID().uuidString.lowercased()
         let parentKey = String(ContentDigest.sha256Hex(canonicalParent.path).prefix(12))
         let worktreeRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("beetcode-agent-worktrees", isDirectory: true)
+            .appendingPathComponent("vamp-companion-agent-worktrees", isDirectory: true)
             .appendingPathComponent(parentKey, isDirectory: true)
         try FileManager.default.createDirectory(at: worktreeRoot, withIntermediateDirectories: true)
         let destination = worktreeRoot.appendingPathComponent(id, isDirectory: true)
@@ -85,7 +85,7 @@ struct AgentWorktree: Sendable {
         guard patch.exitCode == 0 else { throw WorktreeError.gitFailed(patch.output) }
 
         let patchURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("beetcode-worktree-\(id).patch")
+            .appendingPathComponent("vamp-companion-worktree-\(id).patch")
         defer { try? FileManager.default.removeItem(at: patchURL) }
         try patch.output.write(to: patchURL, atomically: true, encoding: .utf8)
 

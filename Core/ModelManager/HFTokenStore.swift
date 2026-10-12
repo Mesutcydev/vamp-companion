@@ -51,7 +51,7 @@ final class HFTokenStore: ObservableObject {
             return cached
         }
         tokenCacheLock.unlock()
-        let value = Keychain.read(service: "com.beetcode.huggingface", account: "default-token")
+        let value = Keychain.read(service: "com.beetcode.companion.huggingface", account: "default-token")
         tokenCacheLock.lock()
         cachedToken = value
         tokenWasRead = true
@@ -71,7 +71,7 @@ final class HFTokenStore: ObservableObject {
     @Published private(set) var validated: Bool?
     @Published private(set) var username: String?
 
-    private let service = "com.beetcode.huggingface"
+    private let service = "com.beetcode.companion.huggingface"
     private let account = "default-token"
 
     var hasToken: Bool { Self.currentToken() != nil }
@@ -158,6 +158,7 @@ enum Keychain {
     // OR XCTest.framework loaded (standalone `xcrun xctest`).
     static var runningUnderXCTest: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["VAMP_COMPANION_UI_TESTING"] == "1"
             || NSClassFromString("XCTestCase") != nil
     }
 

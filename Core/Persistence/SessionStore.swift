@@ -9,7 +9,7 @@ struct SessionCheckpoint: Codable, Identifiable, Sendable, Equatable {
     var treeSHA: String
     var createdAt: Date
     var summary: String
-    /// Local ref (`refs/beetcode/checkpoints/…`) pinning `treeSHA` so `git gc`
+    /// Local ref (`refs/vamp-companion/checkpoints/…`) pinning `treeSHA` so `git gc`
     /// cannot collect the snapshot. Optional because records written before
     /// refs were persisted decode without it; those refs are matched by tree
     /// SHA during the one-time orphan sweep.
@@ -200,7 +200,7 @@ struct SessionRecord: Codable, Identifiable, Sendable, Equatable {
 enum SessionCrypto {
 
     private static let magic = Data([0x4C, 0x46, 0x53, 0x31])  // "LFS1"
-    private static let keychainService = "com.beetcode.session-key"
+    private static let keychainService = "com.beetcode.companion.session-key"
     private static let keychainAccount = "local"
 
     // The Keychain key is read ONCE and cached in memory: at launch the
@@ -394,7 +394,7 @@ enum SessionCrypto {
 
     private static func hasExistingSessionFiles() -> Bool {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode/Sessions", isDirectory: true)
+            .appendingPathComponent("VampCompanion/Sessions", isDirectory: true)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.contains { $0.hasSuffix(".session") }
     }
@@ -458,7 +458,7 @@ final class SessionStore: @unchecked Sendable {
             return override
         }
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode/Sessions", isDirectory: true)
+            .appendingPathComponent("VampCompanion/Sessions", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o700], ofItemAtPath: dir.path)

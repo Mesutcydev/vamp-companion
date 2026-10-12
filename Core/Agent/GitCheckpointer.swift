@@ -95,7 +95,7 @@ struct GitCheckpointer {
 
         // Pin the tree under a local ref so garbage collection keeps it alive
         // for the lifetime of the checkpoint.
-        let refName = "refs/beetcode/checkpoints/\(UUID().uuidString)"
+        let refName = "refs/vamp-companion/checkpoints/\(UUID().uuidString)"
         if let pinResult = git(["update-ref", refName, treeSHA]), pinResult.exitCode != 0 {
             throw CheckpointError.gitFailed(pinResult.trimmedOutput)
         }
@@ -109,7 +109,7 @@ struct GitCheckpointer {
     }
 
     /// Deletes one checkpoint pin ref. Refuses anything outside the
-    /// `refs/beetcode/checkpoints/` namespace so a crafted session record can
+    /// `refs/vamp-companion/checkpoints/` namespace so a crafted session record can
     /// never delete user branches or tags. Returns false when the ref could
     /// not be removed (missing repo, moved workspace, git unavailable) —
     /// pruning is best-effort and never throws.
@@ -124,7 +124,7 @@ struct GitCheckpointer {
         return true
     }
 
-    /// Pin refs under `refs/beetcode/checkpoints/`, keyed by ref name with the
+    /// Pin refs under `refs/vamp-companion/checkpoints/`, keyed by ref name with the
     /// tree SHA each points at.
     func pinnedCheckpointRefs() -> [String: String] {
         operationLock.lock()
@@ -132,7 +132,7 @@ struct GitCheckpointer {
         guard hasRepository(),
               let result = git([
                 "for-each-ref", "--format=%(refname) %(objectname)",
-                "refs/beetcode/checkpoints/",
+                "refs/vamp-companion/checkpoints/",
               ]),
               result.exitCode == 0
         else { return [:] }
@@ -181,7 +181,7 @@ struct GitCheckpointer {
     }
 
     private static func isCheckpointRefName(_ name: String) -> Bool {
-        name.hasPrefix("refs/beetcode/checkpoints/")
+        name.hasPrefix("refs/vamp-companion/checkpoints/")
     }
 
     /// Restores the working tree to a checkpoint state. Refuses foreign trees,

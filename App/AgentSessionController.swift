@@ -2922,7 +2922,7 @@ final class AgentSessionController: ObservableObject {
     private static func chatRuntimeDirectory() throws -> URL {
         let directory = overrideChatRuntimeDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("BeetCode/ChatRuntime", isDirectory: true)
+                .appendingPathComponent("VampCompanion/ChatRuntime", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }

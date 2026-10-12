@@ -31,10 +31,7 @@ from typing import Any
 
 
 ARTIFACT_REVISION = "1e20fd8d42056f870933bf98ca6211024744f7ec"
-DEFAULT_MODEL = Path(
-    "/Users/m/Library/Application Support/BeetCode/Models/"
-    "qwen3.5-35b-a3b-streaming-4bit"
-)
+DEFAULT_MODEL = Path.home() / "Library/Application Support/VampCompanion/Models/qwen3.5-35b-a3b-streaming-4bit"
 DEFAULT_PROMPT_IDS = [
     7734, 220, 18, 15, 47193, 14542, 10104, 364, 17845, 3061,
     14246, 24350, 13, 8618, 11220, 1902, 6435, 6681, 1330, 4434,

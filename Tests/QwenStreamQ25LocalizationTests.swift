@@ -1240,7 +1240,7 @@ final class QwenStreamQ25LocalizationTests: XCTestCase {
 
     private func modelDirectory() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
     }
 }

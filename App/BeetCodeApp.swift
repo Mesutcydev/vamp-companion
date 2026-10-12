@@ -141,122 +141,6 @@ extension AppAppearance {
     }
 }
 
-@main
-struct BeetCodeApp: App {
-    // Termination hook: SIGTERM any registered child processes (llama-server
-    // backing a resident GGUF model) so they never outlive the app.
-    @NSApplicationDelegateAdaptor(BeetCodeAppDelegate.self) private var appDelegate
-    // AppState is an ObservableObject the app OWNS: StateObject guarantees
-    // exactly one instance across view updates.
-    @StateObject private var appState = AppState()
-    // Observing the settings store re-applies the color scheme live when the
-    // user changes Appearance in Settings.
-    @ObservedObject private var settings = SettingsStore.shared
-
-    init() {}
-
-    var body: some Scene {
-        WindowGroup {
-            MainWindowView()
-                // Un-migrated text defaults to engineered system sans; prose
-                // call sites opt into the user's Typeface via `.appProse`.
-                .tint(Theme.accent)
-                .environmentObject(appState)
-                .environmentObject(appState.sessions)
-                // A real working minimum: sidebar + chat + docked panel need room.
-                .frame(minWidth: 520, minHeight: 640)
-                .preferredColorScheme(AppAppearance.resolved(saved: settings.appearance,
-                    override: DesignPreview.appearanceOverride).colorScheme)
-                // Keep AppKit's appearance in sync so Theme's dynamic NSColors
-                // resolve to the forced scheme, not just the OS one.
-                .onChange(of: AppAppearance.resolved(saved: settings.appearance,
-                                                    override: DesignPreview.appearanceOverride),
-                          initial: true) { _, appearance in
-                    Theme.applyAppearance(appearance)
-                }
-                // Palette / typeface / text size live in Theme globals that
-                // SwiftUI cannot observe, so mirroring them from a `.task`
-                // would land a frame late and never force a redraw.
-                .modifier(ThemeSync(palette: settings.accentPalette,
-                                    typeface: settings.typeface,
-                                    textSize: settings.textSize))
-                .task {
-                    DiagnosticsCenter.shared.record(
-                        .system, "App launched",
-                        detail: "appearance: \(settings.appearance.rawValue) · palette: \(settings.accentPalette.rawValue)")
-                    await QwenQ217RelaunchValidation.runIfRequested(appState: appState)
-                }
-        }
-        .defaultSize(width: 1240, height: 840)
-        .windowResizability(.contentMinSize)
-        .windowToolbarStyle(.unified)
-        // A separated conversation: dragging a tab out of the main strip
-        // opens that chat in its own window with its own session controller.
-        WindowGroup("Chat", id: "chat", for: UUID.self) { $sessionID in
-            if let sessionID {
-                DetachedChatWindow(sessionID: sessionID)
-                    .environmentObject(appState)
-                    .preferredColorScheme(AppAppearance.resolved(saved: settings.appearance,
-                        override: DesignPreview.appearanceOverride).colorScheme)
-            }
-        }
-        .defaultSize(width: 760, height: 680)
-        .windowResizability(.contentMinSize)
-        .commands {
-            CommandGroup(after: .appInfo) {
-                CheckForUpdatesButton()
-            }
-            CommandGroup(replacing: .appSettings) {
-                Button("Settings…") {
-                    NotificationCenter.default.post(name: .openAppSettings, object: nil)
-                }
-                .keyboardShortcut(",", modifiers: [.command])
-            }
-            // ⌘M is macOS's standard Minimize shortcut; Model Manager gets
-            // ⇧⌘M so neither command fights the system.
-            CommandGroup(after: .newItem) {
-                Button("New Chat") {
-                    NotificationCenter.default.post(name: .newChat, object: nil)
-                }
-                .keyboardShortcut("n", modifiers: [.command])
-                Button("Stop Agent") {
-                    NotificationCenter.default.post(name: .stopAgent, object: nil)
-                }
-                .keyboardShortcut(
-                    ShortcutBinding(rawValue: settings.stopShortcut).keyEquivalent,
-                    modifiers: ShortcutBinding(rawValue: settings.stopShortcut).eventModifiers)
-                Button("Send") {
-                    NotificationCenter.default.post(name: .sendMessage, object: nil)
-                }
-                .keyboardShortcut(
-                    ShortcutBinding(rawValue: settings.sendShortcut).keyEquivalent,
-                    modifiers: ShortcutBinding(rawValue: settings.sendShortcut).eventModifiers)
-                Button("Toggle Plan Mode") {
-                    settings.planMode.toggle()
-                }
-                .keyboardShortcut(
-                    ShortcutBinding(rawValue: settings.planShortcut).keyEquivalent,
-                    modifiers: ShortcutBinding(rawValue: settings.planShortcut).eventModifiers)
-                Button("Model Manager…") {
-                    NotificationCenter.default.post(name: .openModelManager, object: nil)
-                }
-                .keyboardShortcut("M", modifiers: [.command, .shift])
-                Divider()
-                Button("Search Chats") {
-                    NotificationCenter.default.post(name: .focusChatSearch, object: nil)
-                }
-                .keyboardShortcut("f", modifiers: [.command])
-            }
-            CommandGroup(after: .help) {
-                Button("System Readiness…") {
-                    NotificationCenter.default.post(name: .openSystemReadiness, object: nil)
-                }
-            }
-        }
-
-    }
-}
-
 /// Developer-only fresh-process validation for Q2.17. The normal app never
 /// sets this environment variable, so launch and chat behavior are unchanged.
 @MainActor
@@ -432,7 +316,7 @@ extension Notification.Name {
 /// redraw comes from the surfaces that already observe `SettingsStore` —
 /// `MainWindowView` and `SettingsView` both do — which re-create their
 /// children with the new values.
-private struct ThemeSync: ViewModifier {
+struct ThemeSync: ViewModifier {
     let palette: AccentPalette
     let typeface: AppTypeface
     let textSize: AppTextSize

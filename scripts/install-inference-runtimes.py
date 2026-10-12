@@ -14,7 +14,7 @@ import shutil
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-DEST = Path.home() / 'Library/Application Support/BeetCode/Runtimes'
+DEST = Path.home() / 'Library/Application Support/VampCompanion/Runtimes'
 BUILD = Path.home() / 'Library/Caches/VampRuntimeBuilds'
 PINS = {
     'omlx': ('https://github.com/jundot/omlx.git', 'f0d8428acd3220c364177d1ea9593e4e15f94107', 'omlx-f0d8428'),

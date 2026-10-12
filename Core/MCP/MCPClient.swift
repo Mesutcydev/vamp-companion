@@ -74,7 +74,7 @@ enum MCPConfig {
 
     static var userConfigURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".beetcode/mcp.json")
+            .appendingPathComponent(".vamp-companion/mcp.json")
     }
 
     static func workspaceConfigURL(root: URL) -> URL {
@@ -281,7 +281,7 @@ actor MCPConnection: MCPTransport {
             "protocolVersion": .string("2024-11-05"),
             "capabilities": .object([:]),
             "clientInfo": .object([
-                "name": .string("BeetCode"),
+                "name": .string("VampCompanion"),
                 "version": .string("0.5.0"),
             ]),
         ])

@@ -321,7 +321,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         XCTAssertEqual(fixture.history.cacheBoundary.generatedTokensConsumedBeforePosition, 7)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -456,7 +456,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         XCTAssertEqual(fixtureSHA, expectedFixtureSHA256)
         let fixture = try JSONDecoder().decode(Fixture.self, from: fixtureData)
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -523,7 +523,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         XCTAssertEqual(cache.state.count, 2)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -571,7 +571,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
             Fixture.self,
             from: Data(contentsOf: URL(fileURLWithPath: path)))
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -620,7 +620,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
             Fixture.self,
             from: Data(contentsOf: URL(fileURLWithPath: path)))
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -669,7 +669,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         let prefixTokens = Array(fixture.history.promptTokenIDs.prefix(28))
         XCTAssertEqual(prefixTokens.count, 28)
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -1126,7 +1126,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         XCTAssertEqual(sourceCacheValues.shape, [1, 2, 28, 256])
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -1359,7 +1359,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         mark("start")
 
         let fixturePath = ProcessInfo.processInfo.environment["BEETCODE_QWEN35_Q213_REFERENCE"]
-            ?? "/Users/m/Downloads/beetcode/BeetCode/Tests/Fixtures/Qwen35-K8-Q2.13-authoritative-explicit-reference.json"
+            ?? "/Users/m/Downloads/beetcode/VampCompanion/Tests/Fixtures/Qwen35-K8-Q2.13-authoritative-explicit-reference.json"
         let fixtureURL = URL(fileURLWithPath: fixturePath)
         let fixtureData = try Data(contentsOf: fixtureURL)
         let fixtureSHA = SHA256.hash(data: fixtureData)
@@ -1406,7 +1406,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         XCTAssertEqual(promptHash, fixture.promptPrefixSHA256)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")
@@ -1508,7 +1508,7 @@ final class QwenStreamQ29LocalizationTests: XCTestCase {
         XCTAssertEqual(tokenIDs.count, 28)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed.")

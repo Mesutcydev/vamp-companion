@@ -187,7 +187,7 @@ final class WorkspaceSnapshotStore: @unchecked Sendable {
             base = overrideDirectory
         } else {
             base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("BeetCode/WorkspaceIntelligence", isDirectory: true)
+                .appendingPathComponent("VampCompanion/WorkspaceIntelligence", isDirectory: true)
         }
         return base
             .appendingPathComponent(workspaceID, isDirectory: true)

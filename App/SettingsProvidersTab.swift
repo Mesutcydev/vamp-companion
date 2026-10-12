@@ -4,6 +4,7 @@ import SwiftUI
 // MARK: - Providers tab
 
 struct ProvidersTab: View {
+    var includesSafetyOptions = true
     @EnvironmentObject private var appState: AppState
     @ObservedObject private var keyStore = APIKeyStore.shared
     /// Keys that survived the LocalForge rename inside the OLD Keychain
@@ -63,7 +64,7 @@ struct ProvidersTab: View {
                 .foregroundStyle(Theme.textTertiary)
             // Not a provider tile: TypeSafe decides, it never answers the
             // conversation. See `TypeSafeSettingsCard`.
-            TypeSafeSettingsCard()
+            if includesSafetyOptions { TypeSafeSettingsCard() }
         }
         .sheet(isPresented: Binding(get: { selectedID != nil }, set: { if !$0 { selectedID = nil } })) {
             VStack(alignment: .leading, spacing: 16) {

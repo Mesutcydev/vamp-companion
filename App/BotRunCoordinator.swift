@@ -12,7 +12,7 @@ final class BotDraftStore: ObservableObject {
     init(url: URL? = nil) {
         self.url = url ?? (AppState.isTestHost || ProcessInfo.processInfo.arguments.contains("--design-preview")
             ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("BeetCode/BotDrafts/drafts.json"))
+                .appendingPathComponent("VampCompanion/BotDrafts/drafts.json"))
         if let file = self.url, let data = try? Data(contentsOf: file) {
             values = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
         }

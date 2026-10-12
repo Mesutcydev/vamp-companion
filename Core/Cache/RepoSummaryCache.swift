@@ -21,7 +21,7 @@ final class RepoSummaryCache: @unchecked Sendable {
         if let overrideDirectory { return overrideDirectory }
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return caches
-            .appendingPathComponent("BeetCode/EPOCH/ProjectIndexes", isDirectory: true)
+            .appendingPathComponent("VampCompanion/EPOCH/ProjectIndexes", isDirectory: true)
     }
 
     private func diskURL(for key: String) -> URL {

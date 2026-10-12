@@ -50,7 +50,7 @@ enum TinyFishSearchError: Error, LocalizedError, Equatable, Sendable {
 /// launch. TINYFISH_API_KEY is a useful CLI/CI fallback, but is never written
 /// to preferences or included in tool output.
 enum TinyFishSearchCredentialStore {
-    static let keychainService = "com.beetcode.provider.tinyfish"
+    static let keychainService = "com.beetcode.companion.provider.tinyfish"
     static let keychainAccount = "search-api-key"
 
     private static let cacheLock = NSLock()

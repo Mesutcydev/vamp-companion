@@ -3,6 +3,54 @@ import XCTest
 
 final class CodexAppServerTests: XCTestCase {
 
+    func testCompanionAccountStorageDoesNotInheritTheOriginalCLIHome() {
+        let directory = URL(fileURLWithPath: "/tmp/companion-account-fixture")
+        let original = ["CODEX_HOME": "/tmp/original-account-fixture", "PATH": "/usr/bin"]
+        let environment = CodexAppServerClient.childEnvironment(
+            runtimeDirectory: directory, inheriting: original)
+        XCTAssertEqual(environment["CODEX_HOME"], directory.path)
+        XCTAssertEqual(environment["PATH"], original["PATH"])
+        XCTAssertEqual(original["CODEX_HOME"], "/tmp/original-account-fixture")
+        XCTAssertEqual(CodexAppServerClient.defaultRuntimeDirectory.lastPathComponent, "Codex")
+        XCTAssertEqual(CodexAppServerClient.defaultRuntimeDirectory.deletingLastPathComponent().lastPathComponent,
+                       "VampCompanion")
+    }
+
+    func testAccountLogoutOnlyRemovesCompanionAuthentication() async throws {
+        let temporary = TempWorkspace()
+        let runtime = temporary.makeDirectory("companion-codex")
+        temporary.write("original fixture credentials", to: "original-codex/auth.json")
+        temporary.write("companion fixture credentials", to: "companion-codex/auth.json")
+        temporary.write(#"""
+            #!/usr/bin/python3
+            import json, os, pathlib, sys
+            runtime = pathlib.Path(os.environ['CODEX_HOME'])
+            (runtime / 'observed.json').write_text(json.dumps({'home': str(runtime), 'args': sys.argv[1:]}))
+            for line in sys.stdin:
+                message = json.loads(line)
+                if 'id' not in message:
+                    continue
+                if message.get('method') == 'account/logout':
+                    (runtime / 'auth.json').unlink(missing_ok=True)
+                print(json.dumps({'id': message['id'], 'result': {}}), flush=True)
+            """#, to: "fixture-codex")
+        let executable = temporary.url(for: "fixture-codex")
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let client = CodexAppServerClient(executableURL: executable, runtimeDirectory: runtime)
+        addTeardownBlock { await client.stop() }
+        try await client.start()
+        try await client.logout()
+        await client.stop()
+        XCTAssertTrue(temporary.exists("original-codex/auth.json"))
+        XCTAssertFalse(temporary.exists("companion-codex/auth.json"))
+        let observed = try JSONSerialization.jsonObject(with: Data(contentsOf: runtime.appendingPathComponent("observed.json")))
+        let object = try XCTUnwrap(observed as? [String: Any])
+        XCTAssertEqual(object["home"] as? String, runtime.path)
+        XCTAssertTrue((object["args"] as? [String])?.contains(#"cli_auth_credentials_store="file""#) == true)
+        let attributes = try FileManager.default.attributesOfItem(atPath: runtime.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, NSNumber(value: 0o700))
+    }
+
     func testParsesResponseAndServerRequestMessages() throws {
         let responseValue = try LFJSONValue.decode(
             #"{"id":7,"result":{"account":{"type":"chatgpt","planType":"plus"}}}"#)

@@ -66,7 +66,7 @@ final class AppleShipToolTests: XCTestCase {
 
         XCTAssertEqual(
             AppleShipTool().preview(call, in: context),
-            .command("verify + archive . (ios, unsigned) → .beetcode/releases"))
+            .command("verify + archive . (ios, unsigned) → .vamp-companion/releases"))
     }
 
     func testParsesOnlyValidCodeSigningIdentities() {
@@ -148,7 +148,7 @@ final class AppleShipToolTests: XCTestCase {
             in: ToolContext(workspace: Workspace(root: root)))
 
         XCTAssertTrue(output.contains("Ship Center: ready"), output)
-        let releases = root.appendingPathComponent(".beetcode/releases", isDirectory: true)
+        let releases = root.appendingPathComponent(".vamp-companion/releases", isDirectory: true)
         let release = try XCTUnwrap(
             FileManager.default.contentsOfDirectory(
                 at: releases,

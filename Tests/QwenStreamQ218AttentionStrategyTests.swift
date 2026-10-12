@@ -970,7 +970,7 @@ final class QwenStreamQ218AttentionStrategyTests: XCTestCase {
 
     private static func loadEngine() async throws -> QwenStreamingEngine {
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("The pinned Qwen3.5 artifact is not installed on this host.")
@@ -993,7 +993,7 @@ final class QwenStreamQ218AttentionStrategyTests: XCTestCase {
         _ = await engine.resetApplicationExpertPool()
         try Task.checkCancellation()
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         try await engine.load(
             directory: directory,
@@ -1015,7 +1015,7 @@ final class QwenStreamQ218AttentionStrategyTests: XCTestCase {
         await engine.debugSetAttentionStrategy(strategy, counters: counters)
         let prompt = "Write 30 numbered practical tips for improving software engineering productivity. Each tip must contain exactly two sentences and include a concrete example."
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
         let systemPrompt = PromptBuilder.systemPrompt(
             tools: [],
             workspace: Workspace(root: directory),

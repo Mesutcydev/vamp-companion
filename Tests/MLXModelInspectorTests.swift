@@ -169,7 +169,7 @@ final class MLXModelInspectorTests: XCTestCase {
         let directory = try XCTUnwrap(
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
             .appendingPathComponent(
-                "BeetCode/Models/Qwen3.5-9B-abliterated-MLX-4bit",
+                "VampCompanion/Models/Qwen3.5-9B-abliterated-MLX-4bit",
                 isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("config.json").path) else {
             XCTFail("Qwen3.5 test model is not present at \(directory.path)")

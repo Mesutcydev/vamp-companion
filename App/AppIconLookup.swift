@@ -67,7 +67,7 @@ enum AppIconLookup {
 
     private static func bundleIDs(for source: SessionSource) -> [String] {
         switch source {
-        case .app: ["com.beetcode.app"]
+        case .app: ["com.beetcode.companion"]
         case .claude: ["com.anthropic.claudefordesktop", "com.anthropic.claude"]
         case .codex: ["com.openai.codex", "com.openai.chat"]
         case .cursor: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"]

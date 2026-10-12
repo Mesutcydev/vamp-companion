@@ -181,7 +181,7 @@ final class QwenStreamOracleFixtureTests: XCTestCase {
             explicitReference ? [-1, 1, 2, 4, 8, 16, 32] : [-1, 1, 2, 4, 8, 16, 32, 64])
 
         let modelDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: modelDirectory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed on the target host.")
@@ -319,7 +319,7 @@ final class QwenStreamOracleFixtureTests: XCTestCase {
         XCTAssertEqual(fixture.generatedTokenIDs.count, 64)
 
         let modelDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: modelDirectory.path) else {
             throw XCTSkip("Pinned Qwen3.5 artifact is not installed on the target host.")
@@ -425,7 +425,7 @@ final class QwenStreamOracleFixtureTests: XCTestCase {
         }
         let (_, fixture) = try loadExplicitFixture()
         let modelsRoot = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
         let qwenDirectory = modelsRoot.appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         let lightweightID = "Qwen3.5-9B-abliterated-MLX-4bit"
         let lightweightDirectory = modelsRoot.appendingPathComponent(lightweightID, isDirectory: true)

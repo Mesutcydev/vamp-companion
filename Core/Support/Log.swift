@@ -3,7 +3,7 @@ import OSLog
 /// Central logging. One subsystem, categories per subsystem-area so
 /// Console.app filtering stays useful.
 enum Log {
-    private static let subsystem = "com.beetcode.app"
+    private static let subsystem = "com.beetcode.companion"
 
     static let app = Logger(subsystem: subsystem, category: "app")
     static let engine = Logger(subsystem: subsystem, category: "engine")

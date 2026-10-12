@@ -100,7 +100,7 @@ final class QwenStreamLongParityTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reference.generatedTokenIDs.count, 64)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5-35B-A3B artifact is not installed.")
@@ -200,7 +200,7 @@ final class QwenStreamLongParityTests: XCTestCase {
         XCTAssertGreaterThan(reference.generatedTokenIDs.count, 0)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5-35B-A3B artifact is not installed.")
@@ -233,7 +233,7 @@ final class QwenStreamLongParityTests: XCTestCase {
             throw XCTSkip("Set BEETCODE_QWEN35_Q21_LIFECYCLE=1 for the target-Mac lifecycle matrix.")
         }
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5-35B-A3B artifact is not installed.")

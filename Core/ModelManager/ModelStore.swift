@@ -1,7 +1,7 @@
 import Foundation
 
 /// Registry of downloaded models on disk. Layout:
-///   ~/Library/Application Support/BeetCode/Models/<model-id>/…
+///   ~/Library/Application Support/VampCompanion/Models/<model-id>/…
 /// Each installed model records where it came from so updates and deletes
 /// are exact.
 struct InstalledModel: Codable, Identifiable, Sendable, Equatable {
@@ -34,7 +34,7 @@ final class ModelStore: ObservableObject {
     /// Support.
     var overrideModelsDir: URL?
 
-    /// Base directory for all model snapshots (Application Support/BeetCode/Models).
+    /// Base directory for all model snapshots (Application Support/VampCompanion/Models).
     var modelsBaseURL: URL {
         modelsDirectory
     }
@@ -42,25 +42,13 @@ final class ModelStore: ObservableObject {
     private var modelsDirectory: URL {
         if let override = overrideModelsDir { return override }
         let dir = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("VampCompanion/Models", isDirectory: true)
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    /// Extra scan roots: the legacy CLI (`lf download`) stored weights in the
-    /// repo checkout (`beetcode-models/`, `localforge-models/`) instead of
-    /// Application Support. #file resolves this source file's location at
-    /// compile time, so the project-relative folder is found regardless of
-    /// the app's launch working directory. Downloads/imports still target
-    /// the managed Application Support folder only.
-    nonisolated static var extraScanDirectories: [URL] {
-        let sourceDir = URL(fileURLWithPath: #filePath)  // Core/ModelManager
-        let projectRoot = sourceDir.deletingLastPathComponent().deletingLastPathComponent()
-        return [
-            projectRoot.appendingPathComponent("beetcode-models", isDirectory: true),
-            projectRoot.appendingPathComponent("localforge-models", isDirectory: true),
-        ]
-    }
+    /// Original app and legacy CLI model directories are never auto-discovered.
+    nonisolated static var extraScanDirectories: [URL] { [] }
 
     private var registryURL: URL {
         modelsDirectory.appendingPathComponent("InstalledModels.json")
@@ -246,7 +234,12 @@ final class ModelStore: ObservableObject {
         // de-registered but their files stay put — deleting repo-local or
         // user-owned directories would be surprising and destructive.
         if model.basePath == nil && model.directoryBookmark == nil {
-            try? fileManager.removeItem(at: directory(for: model))
+            let base = modelsDirectory.resolvingSymlinksInPath().standardizedFileURL
+            let target = directory(for: model).resolvingSymlinksInPath().standardizedFileURL
+            // Corrupt registrations and symlinks must not delete another app's files.
+            if target.path.hasPrefix(base.path + "/") {
+                try? fileManager.removeItem(at: target)
+            }
         }
         installed.removeAll { $0.id == model.id }
         saveRegistry()

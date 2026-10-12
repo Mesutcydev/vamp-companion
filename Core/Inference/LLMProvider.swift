@@ -261,7 +261,7 @@ enum LLMProvider: String, CaseIterable, Codable, Sendable, Identifiable {
     }
 
     /// Keychain service name for this provider's API key.
-    var keychainService: String { "com.beetcode.provider.\(rawValue)" }
+    var keychainService: String { "com.beetcode.companion.provider.\(rawValue)" }
 
     /// Custom/local servers often run without auth (Ollama, LM Studio).
     var keyOptional: Bool { self == .custom }
@@ -832,7 +832,7 @@ final class APIKeyStore: ObservableObject {
     }
 
     nonisolated static func keychainService(providerID: String) -> String {
-        "com.beetcode.provider.dynamic.\(ContentDigest.sha256Hex(providerID))"
+        "com.beetcode.companion.provider.dynamic.\(ContentDigest.sha256Hex(providerID))"
     }
 
     /// Non-secret launch metadata. The UI can show which providers are

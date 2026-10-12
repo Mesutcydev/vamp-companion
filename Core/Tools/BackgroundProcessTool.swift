@@ -27,7 +27,7 @@ enum BackgroundProcessStore {
             nextID += 1
             return value
         }
-        let logDir = workingDirectory.appendingPathComponent(".beetcode/processes", isDirectory: true)
+        let logDir = workingDirectory.appendingPathComponent(".vamp-companion/processes", isDirectory: true)
         try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         let logURL = logDir.appendingPathComponent("\(id).log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)

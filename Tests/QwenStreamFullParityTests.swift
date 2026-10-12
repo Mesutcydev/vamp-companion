@@ -36,7 +36,7 @@ final class QwenStreamFullParityTests: XCTestCase {
         XCTAssertFalse(fixture.mlx.isEmpty)
 
         let directory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5-35B-A3B artifact is not installed.")

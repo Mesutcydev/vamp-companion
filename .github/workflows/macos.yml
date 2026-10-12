@@ -1,4 +1,4 @@
-name: Apple apps
+name: Companion and iOS compatibility
 
 on:
   push:
@@ -34,16 +34,18 @@ jobs:
       - name: Generate project and check hygiene
         run: |
           xcodegen generate
+          python3 scripts/verify-ios-unchanged.py
           git diff --check
           for script in scripts/*.sh; do bash -n "$script"; done
-      - name: macOS unit tests
+      - name: macOS backend and companion UI tests
         if: matrix.platform == 'macOS'
         run: >-
-          xcodebuild -project BeetCode.xcodeproj -scheme BeetCode
-          -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/Derived"
+          xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion
+          -destination 'platform=macOS' -jobs 2 -derivedDataPath "$RUNNER_TEMP/Derived"
           -resultBundlePath "$RUNNER_TEMP/Tests.xcresult"
-          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ONLY_ACTIVE_ARCH=YES
-          -only-testing:BeetCodeTests test
+          CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=-
+          DEVELOPMENT_TEAM="" ENABLE_HARDENED_RUNTIME=NO ONLY_ACTIVE_ARCH=YES
+          test
       - name: iOS simulator tests
         if: matrix.platform == 'iOS'
         run: >-
@@ -54,7 +56,7 @@ jobs:
       - name: macOS Release build
         if: matrix.platform == 'macOS'
         run: >-
-          xcodebuild -project BeetCode.xcodeproj -scheme BeetCode -configuration Release
+          xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion -configuration Release
           -destination 'generic/platform=macOS' ARCHS=arm64 EXCLUDED_ARCHS=x86_64 -derivedDataPath "$RUNNER_TEMP/Derived"
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
       - name: iOS device Release build

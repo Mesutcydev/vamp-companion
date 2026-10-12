@@ -9,7 +9,7 @@ final class TypeSafeKeyStore: ObservableObject {
 
     static let shared = TypeSafeKeyStore()
 
-    nonisolated private static let service = "com.beetcode.typesafe"
+    nonisolated private static let service = "com.beetcode.companion.typesafe"
     nonisolated private static let account = "api-key"
 
     nonisolated private static let cacheLock = NSLock()

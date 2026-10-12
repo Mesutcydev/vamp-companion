@@ -40,7 +40,7 @@ struct ManagedInferenceRuntime: Codable, Sendable, Equatable {
 
     static var root: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/BeetCode/Runtimes", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Runtimes", isDirectory: true)
     }
 
     func executableURL(root: URL = Self.root) -> URL? {

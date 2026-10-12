@@ -46,7 +46,7 @@ struct HookRunner: Sendable {
 
     static var userConfigURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".beetcode/hooks.json")
+            .appendingPathComponent(".vamp-companion/hooks.json")
     }
 
     static func workspaceConfigURL(root: URL) -> URL {

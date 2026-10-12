@@ -265,7 +265,7 @@ actor BotRunStore {
         let base = root ?? fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0].appendingPathComponent("BeetCode", isDirectory: true)
+        )[0].appendingPathComponent("VampCompanion", isDirectory: true)
         url = base.appendingPathComponent("bot-runs.json")
         eventsURL = base.appendingPathComponent("bot-run-events.jsonl")
         legacyEventsURL = base.appendingPathComponent("bot-run-events.json")

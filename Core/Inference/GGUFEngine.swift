@@ -905,7 +905,7 @@ final class GGUFEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let directory = support
-            .appendingPathComponent("BeetCode/Models/.DFlash", isDirectory: true)
+            .appendingPathComponent("VampCompanion/Models/.DFlash", isDirectory: true)
         let destination = directory.appendingPathComponent(draft.fileName)
         if fileSize(at: destination) == draft.diskBytes {
             return destination.path

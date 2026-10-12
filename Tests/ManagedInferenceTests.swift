@@ -118,7 +118,7 @@ final class LiveManagedInferenceTests: XCTestCase {
         XCTAssertNil(unloaded)
 
         let smol = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-            "Library/Application Support/BeetCode/Models/smolvlm2-500m-mlx")
+            "Library/Application Support/VampCompanion/Models/smolvlm2-500m-mlx")
         try await engine.load(directory: smol, modelID: "smolvlm2-500m-mlx", diskBytes: 1_019_924_387)
         let imagePath = try XCTUnwrap(ProcessInfo.processInfo.environment["BEETCODE_LIVE_VISION_IMAGE"])
         let image = try XCTUnwrap(ChatImage.fromFile(at: URL(fileURLWithPath: imagePath)))
@@ -142,7 +142,7 @@ final class LiveManagedInferenceTests: XCTestCase {
         let runtime = try XCTUnwrap(ManagedInferenceRuntime.installed().first { $0.kind == .llamaMetal })
         let modelID = "Huihui-Qwen3.8-27B-abliterated-Q2_K"
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
-            "Library/Application Support/BeetCode/Models/\(modelID)")
+            "Library/Application Support/VampCompanion/Models/\(modelID)")
         let engine = GGUFEngine(preferredRuntime: runtime)
         try await engine.load(directory: directory, modelID: modelID, diskBytes: 10_864_592_160, contextSize: 4096)
         let imagePath = try XCTUnwrap(ProcessInfo.processInfo.environment["BEETCODE_LIVE_VISION_IMAGE"])

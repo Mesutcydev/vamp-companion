@@ -8,7 +8,7 @@ final class QwenStreamReferenceAuditTests: XCTestCase {
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         let directory = home
-            .appendingPathComponent("Library/Application Support/BeetCode/Models", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/VampCompanion/Models", isDirectory: true)
             .appendingPathComponent(QwenStreamArtifact.modelID, isDirectory: true)
         guard FileManager.default.fileExists(atPath: directory.path) else {
             throw XCTSkip("Pinned Qwen3.5-35B-A3B artifact is not installed.")

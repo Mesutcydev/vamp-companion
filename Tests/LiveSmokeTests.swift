@@ -15,7 +15,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwen3.8-9B-Q5_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwen3.8-9B-Q5_K_M")
         let modelFile = modelDir.appendingPathComponent("Qwen3.8-9B-Q5_K_M.gguf")
         guard FileManager.default.fileExists(atPath: modelFile.path) else {
             throw XCTSkip("Qwen3.8 9B Q5 GGUF model not installed")
@@ -72,7 +72,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwen3.8-9B-Q5_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwen3.8-9B-Q5_K_M")
         let modelFile = modelDir.appendingPathComponent("Qwen3.8-9B-Q5_K_M.gguf")
         guard FileManager.default.fileExists(atPath: modelFile.path) else {
             throw XCTSkip("Qwen3.8 9B Q5 GGUF model not installed")
@@ -146,7 +146,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwen3.8-9B-Q5_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwen3.8-9B-Q5_K_M")
         let modelFile = modelDir.appendingPathComponent("Qwen3.8-9B-Q5_K_M.gguf")
         guard FileManager.default.fileExists(atPath: modelFile.path) else {
             throw XCTSkip("Qwen3.8 9B Q5 GGUF model not installed")
@@ -212,7 +212,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwen3.8-9B-Q5_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwen3.8-9B-Q5_K_M")
         let modelFile = modelDir.appendingPathComponent("Qwen3.8-9B-Q5_K_M.gguf")
         guard FileManager.default.fileExists(atPath: modelFile.path) else {
             throw XCTSkip("Qwen3.8 9B Q5 GGUF model not installed")
@@ -314,7 +314,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwen3.5-9B-abliterated-MLX-4bit")
+                "Library/Application Support/VampCompanion/Models/Qwen3.5-9B-abliterated-MLX-4bit")
         guard FileManager.default.fileExists(
             atPath: modelDir.appendingPathComponent("config.json").path)
         else { throw XCTSkip("Qwen3.5 9B MLX model not installed") }
@@ -418,7 +418,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwen2.5-7B-Instruct-abliterated-Q4_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwen2.5-7B-Instruct-abliterated-Q4_K_M")
         guard FileManager.default.fileExists(atPath: modelDir.path) else {
             throw XCTSkip("Qwen2.5 7B GGUF model not installed")
         }
@@ -454,7 +454,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q5_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q5_K_M")
         guard FileManager.default.fileExists(atPath: modelDir.path) else {
             throw XCTSkip("Qwen3.5 9B GGUF model not installed")
         }
@@ -491,7 +491,7 @@ final class LiveSmokeTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q5_K_M")
+                "Library/Application Support/VampCompanion/Models/Qwythos-9B-Claude-Mythos-5-1M-MTP-Q5_K_M")
         guard FileManager.default.fileExists(atPath: modelDir.path) else {
             throw XCTSkip("Qwythos model not installed")
         }
@@ -621,7 +621,7 @@ final class LiveGGUFVisionTests: XCTestCase {
         }
         let modelDir = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(
-                "Library/Application Support/BeetCode/Models/\(Self.modelID)")
+                "Library/Application Support/VampCompanion/Models/\(Self.modelID)")
         let weightsName = "\(Self.modelID).gguf"
         let weights = modelDir.appendingPathComponent(weightsName)
         guard FileManager.default.fileExists(atPath: weights.path),

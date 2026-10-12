@@ -1,13 +1,12 @@
 import Foundation
 
-/// Remote Sessions listen on a Beet-owned port so the Mac app can run beside
-/// Vamp Host. Vamp claims 9471–9473 and 9475 for signaling and Safari control.
+/// Separate listener range for coexistence with Vamp Host and Vamp Assistant.
 enum RemoteSessionPorts {
-    static let defaultPort = 9575
-    static let reservedForeignPorts: Set<Int> = [9471, 9472, 9473, 9475]
+    static let defaultPort = 9675
+    static let reservedForeignPorts: Set<Int> = Set([9471, 9472, 9473, 9475]).union(9575...9583)
 
     static func resolved(_ requested: Int) -> Int {
-        if requested <= 0 || reservedForeignPorts.contains(requested) {
+        if requested <= 0 || requested > 65_535 || reservedForeignPorts.contains(requested) {
             return defaultPort
         }
         return requested
@@ -26,6 +25,7 @@ enum RemoteSessionPorts {
         var ports = [start]
         for offset in 1...8 {
             let next = start + offset
+            guard next <= 65_535 else { break }
             if !reservedForeignPorts.contains(next) {
                 ports.append(next)
             }

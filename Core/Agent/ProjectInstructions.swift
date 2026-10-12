@@ -26,8 +26,8 @@ enum ProjectInstructions {
             ("workspace .cursor/rules", workspaceRoot.appendingPathComponent(".cursor/rules", isDirectory: true)),
             ("workspace .cursorrules", workspaceRoot.appendingPathComponent(".cursorrules")),
             ("workspace copilot-instructions", workspaceRoot.appendingPathComponent(".github/copilot-instructions.md")),
-            ("user AGENTS.md", home.appendingPathComponent(".beetcode/AGENTS.md")),
-            ("user CLAUDE.md", home.appendingPathComponent(".beetcode/CLAUDE.md")),
+            ("user AGENTS.md", home.appendingPathComponent(".vamp-companion/AGENTS.md")),
+            ("user CLAUDE.md", home.appendingPathComponent(".vamp-companion/CLAUDE.md")),
             ("user CLAUDE.md (Claude)", home.appendingPathComponent(".claude/CLAUDE.md")),
         ]
     }

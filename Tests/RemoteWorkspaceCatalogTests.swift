@@ -161,7 +161,7 @@ final class RemoteWorkspaceCatalogTests: XCTestCase {
         let home = TempWorkspace()
         let project = home.makeDirectory("Documents/App")
         let botWorkspace = home.makeDirectory(
-            "Library/Application Support/BeetCode/BotComputers/\(UUID().uuidString)/workspace")
+            "Library/Application Support/VampCompanion/BotComputers/\(UUID().uuidString)/workspace")
         let items = RemoteWorkspaceCatalog.list(
             currentPath: project.path,
             lastPath: botWorkspace.path,

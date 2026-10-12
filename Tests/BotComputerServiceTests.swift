@@ -87,7 +87,7 @@ final class BotComputerServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.workspacePath))
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.browserProfilePath))
         XCTAssertEqual(first.state, .prepared)
-        XCTAssertTrue(first.containerName?.hasPrefix("beet-builder-") == true)
+        XCTAssertTrue(first.containerName?.hasPrefix("vamp-companion-builder-") == true)
 
         let attributes = try FileManager.default.attributesOfItem(atPath: root.path)
         XCTAssertEqual(attributes[.posixPermissions] as? NSNumber, NSNumber(value: 0o700))

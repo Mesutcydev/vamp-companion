@@ -107,10 +107,8 @@ final class AppState: ObservableObject {
         engine: EngineRouter = EngineRouter(pool: EnginePool()),
         hub hubOverride: (any HubServing)? = nil
     ) {
-        // LocalForge → BeetCode rename migration: copies legacy Keychain
-        // items (session key, BYOK keys, HF token) to the new services and
-        // moves Application Support/LocalForge → BeetCode. Idempotent,
-        // no-op under tests, and must run BEFORE any store is touched.
+        // The companion's compatibility facade is deliberately a no-op:
+        // original app data and credentials are never migrated.
         LegacyMigration.runOnce()
 
         self.engine = engine
@@ -674,7 +672,7 @@ final class AppState: ObservableObject {
     static func botProject(_ url: URL?) -> String? {
         guard let url else { return nil }
         let appOwned = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode", isDirectory: true).standardizedFileURL.path
+            .appendingPathComponent("VampCompanion", isDirectory: true).standardizedFileURL.path
         let path = url.standardizedFileURL.path
         return path == appOwned || path.hasPrefix(appOwned + "/") ? nil : path
     }
@@ -1556,6 +1554,7 @@ final class AppState: ObservableObject {
     /// happens to have them switched on.
     static var isTestHost: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["VAMP_COMPANION_UI_TESTING"] == "1"
             || ProcessInfo.processInfo.arguments.contains("--ui-smoke")
     }
 
@@ -1826,7 +1825,7 @@ final class AppState: ObservableObject {
     // MARK: Download lifecycle (Phase 3.3)
 
     func destination(for model: CatalogModel) -> URL {
-        // ModelStore's base directory (Application Support/BeetCode/Models/<id>)
+        // ModelStore's base directory (Application Support/VampCompanion/Models/<id>)
         modelStore.modelsBaseURL.appendingPathComponent(model.id, isDirectory: true)
     }
 

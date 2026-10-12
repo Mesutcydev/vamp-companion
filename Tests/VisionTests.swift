@@ -164,7 +164,7 @@ final class VisionTests: XCTestCase {
         guard FileManager.default.fileExists(atPath: flag) else { return }
         let model = ModelCatalog.bundled.first { $0.id == "smolvlm2-500m-mlx" }!
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BeetCode/Models/smolvlm2-500m-mlx", isDirectory: true)
+            .appendingPathComponent("VampCompanion/Models/smolvlm2-500m-mlx", isDirectory: true)
         guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("model.safetensors").path) else {
             XCTFail("SmolVLM2-500M not downloaded to \(dir.path)")
             return

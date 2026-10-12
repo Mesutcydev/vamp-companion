@@ -371,7 +371,7 @@ actor MCPOAuthProvider {
             return cached
         }
         tokenCacheLock.unlock()
-        guard let raw = Keychain.read(service: "com.beetcode.mcp-oauth", account: account),
+        guard let raw = Keychain.read(service: "com.beetcode.companion.mcp-oauth", account: account),
               let data = raw.data(using: .utf8)
         else {
             tokenCacheLock.lock()
@@ -392,7 +392,7 @@ actor MCPOAuthProvider {
               let raw = String(data: data, encoding: .utf8)
         else { return }
         let account = tokensAccount(serverName: serverName)
-        guard Keychain.write(raw, service: "com.beetcode.mcp-oauth", account: account) else { return }
+        guard Keychain.write(raw, service: "com.beetcode.companion.mcp-oauth", account: account) else { return }
         tokenCacheLock.lock()
         tokenCache[account] = tokens
         loadedTokenAccounts.insert(account)

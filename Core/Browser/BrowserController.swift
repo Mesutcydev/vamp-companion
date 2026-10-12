@@ -117,7 +117,9 @@ final class BrowserController: ObservableObject {
         if let session {
             config.websiteDataStore = WKWebsiteDataStore(forIdentifier: session.id)
         }
-        let view = WKWebView(frame: .zero, configuration: config)
+        // The companion has no browser panel to size this view. Keep a real
+        // viewport for DOM geometry and screenshots while its window is closed.
+        let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 1280, height: 800), configuration: config)
         view.customUserAgent = AppIdentity.browserUserAgent
         let relay = NavigationRelay(owner: self)
         view.navigationDelegate = relay
@@ -219,7 +221,7 @@ final class BrowserController: ObservableObject {
             relativePath = URL(fileURLWithPath: relativeDirectory)
                 .appendingPathComponent(suggested, isDirectory: false).path
         } else {
-            relativePath = ".beetcode/downloads/\(suggested)"
+            relativePath = ".vamp-companion/downloads/\(suggested)"
         }
         let requestedDestination = try workspace.resolve(relativePath, access: .write).url
         let destination = Self.uniqueDestination(for: requestedDestination)

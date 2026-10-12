@@ -141,7 +141,7 @@ actor MCPHTTPConnection: MCPTransport {
             "protocolVersion": .string("2025-03-26"),
             "capabilities": .object([:]),
             "clientInfo": .object([
-                "name": .string("BeetCode"),
+                "name": .string("VampCompanion"),
                 "version": .string("0.6.0"),
             ]),
         ])

@@ -511,7 +511,7 @@ final class ComposerStore {
             dir = base.appendingPathComponent("ComposerDrafts", isDirectory: true)
         } else {
             dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("BeetCode/ComposerDrafts", isDirectory: true)
+                .appendingPathComponent("VampCompanion/ComposerDrafts", isDirectory: true)
         }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Stable filename from the workspace path.

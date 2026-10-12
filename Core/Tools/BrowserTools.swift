@@ -106,7 +106,7 @@ enum BrowserTools {
                     return "The browser has no page open. Use browser_navigate first."
                 }
                 let dir = context.workspace.root
-                    .appendingPathComponent(".beetcode/screenshots", isDirectory: true)
+                    .appendingPathComponent(".vamp-companion/screenshots", isDirectory: true)
                 let path = dir.appendingPathComponent("browser-\(Int(Date().timeIntervalSince1970)).png")
                 let saved = try await controller.snapshot(to: path)
                 return "screenshot saved to \(saved.path)"
@@ -129,7 +129,7 @@ enum BrowserTools {
             {"type":"object","properties":{
               "url":{"type":"string","description":"Direct http/https resource URL, usually from browser_read links"},
               "filename":{"type":"string","description":"Optional safe filename; defaults to the server or URL filename"},
-              "directory":{"type":"string","description":"Optional workspace-relative destination directory; defaults to .beetcode/downloads"}
+              "directory":{"type":"string","description":"Optional workspace-relative destination directory; defaults to .vamp-companion/downloads"}
             },"required":["url"]}
             """
 

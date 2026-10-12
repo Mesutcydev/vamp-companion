@@ -96,7 +96,7 @@ final class TaskQueueStore: @unchecked Sendable {
             return overrideDirectory
         }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let directory = support.appendingPathComponent("BeetCode/TaskQueue", isDirectory: true)
+        let directory = support.appendingPathComponent("VampCompanion/TaskQueue", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         return directory
