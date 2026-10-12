@@ -1,0 +1,23 @@
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Vamp Companion</title>
+        <item>
+            <title>0.1.0</title>
+            <pubDate>Mon, 12 Oct 2026 21:51:58 +0300</pubDate>
+            <link>https://mesutcydev.github.io/vamp-companion/</link>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/Mesutcydev/vamp-companion/releases/download/v0.1.0/Vamp-Companion-0.1.0-build-1-public.zip" length="15242748" type="application/octet-stream" sparkle:edSignature="nZJMm7jY4XTH4ftb5HJRl4h5Lc9/ey+yRDvKmNRGJ/qgsbNyImtF70MO8BXKnel2GEjC8SxHkwcEiZ0NMs13Dg=="/>
+        </item>
+    </channel>
+</rss>
+<!-- sparkle-signatures:
+edSignature: GHZCp40xglFkRg2/Sw0hlmNNVhETcTLuk4RBf1oPAcF1ibu/gG9pKDt4Ijagy7eYFvYB1WzIIcGaYfbzlewtCw==
+length: 1218
+-->

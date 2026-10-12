@@ -32,9 +32,36 @@ ditto -x -k "$ZIP" "$STAGE"
 bash "$ROOT/scripts/validate-macos-distribution.sh" "$STAGE/Vamp Companion.app"
 # Resume feed signing after a Keychain prompt without replacing the archive.
 # Existing bytes are reusable only when the entire app matches this export.
-diff -rq "$APP" "$STAGE/Vamp Companion.app" >/dev/null || {
-  echo "Existing ZIP contains a different app; choose a new build number." >&2; exit 1;
-}
+# Framework aliases may point to the same version more than once. Compare
+# link targets, file contents, and permissions without traversing those links.
+python3 - "$APP" "$STAGE/Vamp Companion.app" <<'PY'
+import hashlib, os, pathlib, stat, sys
+
+def manifest(root):
+    result = {}
+    def visit(path):
+        info = path.lstat()
+        relative = str(path.relative_to(root))
+        mode = stat.S_IMODE(info.st_mode)
+        if path.is_symlink():
+            result[relative] = ('link', os.readlink(path))
+        elif path.is_dir():
+            result[relative] = ('directory', mode)
+            for child in path.iterdir():
+                visit(child)
+        else:
+            with path.open('rb') as content:
+                hasher = hashlib.sha256()
+                for chunk in iter(lambda: content.read(4 * 1024 * 1024), b''):
+                    hasher.update(chunk)
+                digest = hasher.hexdigest()
+            result[relative] = ('file', mode, info.st_size, digest)
+    visit(root)
+    return result
+
+if manifest(pathlib.Path(sys.argv[1])) != manifest(pathlib.Path(sys.argv[2])):
+    raise SystemExit('Existing ZIP contains a different app; choose a new build number.')
+PY
 shasum -a 256 "$ZIP" | awk '{print $1}' > "$ZIP.sha256"
 ditto "$ZIP" "$WORK/$(basename "$ZIP")"
 ditto "$ZIP.sha256" "$WORK/$(basename "$ZIP").sha256"

@@ -25,8 +25,9 @@ repository. Concurrent changes in the original checkout were left intact.
   and Tailscale policy tests remain in the backend suite.
 - Download finalization, activation, pause/resume persistence, imports, agent
   execution, streaming, stop, and provider routing passed their backend checks.
-- GitHub validation with Xcode 26.6 also passed the entire backend suite
-  (1,132 tests, 51 skipped), and the Mac window-close/reopen UI test passed.
+- [GitHub validation with Xcode 26.6](https://github.com/Mesutcydev/vamp-companion/actions/runs/38286473235)
+  passed the entire backend suite (1,132 tests, 51 skipped), both companion
+  UI tests, and both Mac and iOS device Release builds.
 - The unchanged iOS regression suite passed on GitHub: 48 unit tests and
   12 UI tests (five optional UI scenarios skipped), with zero failures. The
   unchanged iOS device Release configuration also built successfully.
@@ -35,24 +36,42 @@ repository. Concurrent changes in the original checkout were left intact.
   continued listening on its separate 9471/9473/9475 ports. The companion's
   host remained running after the close command; an unauthenticated status
   request correctly returned HTTP 401.
+- The empty Models message is centered and the provider sheet keeps its
+  header visible while its cards scroll. The rebuilt native UI was inspected
+  in screenshots, and the updated navigation smoke test passed.
+- The actual inherited parallel downloader fetched the public Qwen3 0.6B
+  weights in isolated Debug and Release diagnostics. Its full SHA-256 check
+  passed: `392e8d466d56100ada00eb82031fb854297fc9e389b7d303eba3af114e87bce2`.
+  Native pause/resume controls were exercised. Initial live Debug attempts
+  encountered transport failures; the isolated full-file reruns succeeded
+  without changing backend behavior.
+- The complete public model fixture imported through the native file panel.
+  Its 351.4 MB snapshot was copied into companion-managed storage, retained
+  the original fixture, matched its weights checksum, and loaded successfully.
+- The Developer ID archive and Apple notarization submission succeeded.
+  The exported app is stapled and Gatekeeper reports `Notarized Developer ID`.
+  The public ZIP extraction, release entitlements, and Sparkle archive/feed
+  signatures passed their distribution checks.
 - All 93 frozen iOS source, test, asset, and distribution files match the
   inherited snapshot. All inherited iOS targets and release scheme settings
   match as well. The dependency lockfile matches the original revisions.
 
-## Pending gates
+## Distribution
 
-- Companion navigation UI check: GitHub exposed an off-screen provider-sheet
-  Done button because provider cards were not in a scroll view. The corrected
-  layout and centered model empty state are awaiting rerun and visual checks.
-- Developer ID Release signing, notarization, stapling, and Gatekeeper checks.
-- ZIP/checksum publication and public-download verification before publishing
-  the signed companion appcast.
+- [Vamp Companion 0.1.0](https://github.com/Mesutcydev/vamp-companion/releases/tag/v0.1.0)
+  publishes the notarized ZIP and its SHA-256 checksum. The public archive was
+  downloaded independently and matched both the verified local ZIP and its
+  Sparkle signature: 15,242,748 bytes, SHA-256
+  `5559a9efec1204dae96bbf1e96c7d859dcb5dcab76975c7983fa1cd038280c5f`.
+- The signed companion appcast was staged only after public archive verification.
+  GitHub Pages is configured to publish this repository's `site/` directory;
+  the live feed and page are the remaining publication checks.
 
 The user authorized validation and release outside the sandbox after its
 automatic approval review timed out. Initial local UI runners were stopped
 before bootstrap, and the dedicated local iOS simulator timed out during boot;
-the GitHub iOS run supplies the completed regression evidence. No public release
-or signed appcast has been published yet.
+the GitHub iOS run supplies the completed regression evidence. The release
+assets have passed local and public archive verification.
 
 Live provider-account access, physical iPhone workflows, real model inference
 from iOS, simultaneous running Mac apps, and physical sleep/wake behavior need
