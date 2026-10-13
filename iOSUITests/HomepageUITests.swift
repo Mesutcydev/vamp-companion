@@ -14,7 +14,7 @@ final class HomepageUITests: XCTestCase {
             XCTAssertTrue(app.buttons["Models"].exists)
             capture(app, name: "homepage-\(appearance)")
             app.buttons["Plan & organize"].tap()
-            let editor = app.textFields["remote.start.prompt"]
+            let editor = app.descendants(matching: .any).matching(identifier: "remote.start.prompt").firstMatch
             XCTAssertTrue(editor.waitForExistence(timeout: 10))
             XCTAssertTrue((editor.value as? String)?.contains("to-do list") == true,
                           "Quick starts must carry their reviewed prompt into the form: \(String(describing: editor.value))")
@@ -56,6 +56,22 @@ final class HomepageUITests: XCTestCase {
         let opened = app.staticTexts["remote.home.fixture-opened"]
         XCTAssertTrue(opened.waitForExistence(timeout: 5))
         XCTAssertTrue(opened.label.contains("44444444-4444-4444-4444-444444444444"))
+    }
+
+    func testModelsShortcutOpensTheMacHubAndReviewedSessionForm() {
+        let app = launch(appearance: "dark", state: "ready")
+        XCTAssertTrue(app.staticTexts["Qwen3.5 9B"].waitForExistence(timeout: 15))
+        let shortcut = app.buttons["Models"]
+        XCTAssertGreaterThanOrEqual(shortcut.frame.height, 44)
+        shortcut.tap()
+        let model = app.buttons["remote.mac.model.local|fixture"]
+        XCTAssertTrue(model.waitForExistence(timeout: 10))
+        model.tap()
+        let prompt = app.descendants(matching: .any).matching(identifier: "remote.start.prompt").firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        XCTAssertEqual(prompt.value as? String, "")
+        XCTAssertTrue(app.staticTexts["Qwen3.5 9B"].exists)
+        XCTAssertFalse(app.staticTexts["remote.home.fixture-opened"].exists)
     }
 
     private func launch(appearance: String, state: String) -> XCUIApplication {

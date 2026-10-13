@@ -9,6 +9,8 @@ struct MessageTranscript: View {
     /// Nil while the agent is running — the Mac refuses an undo mid-run, so the
     /// button should not be offered rather than offered and rejected.
     var onRevertCheckpoint: (() -> Void)? = nil
+    var onReuseUserMessage: ((String) -> Void)? = nil
+    var isReachable = true
     @Environment(\.remoteAppearance) private var appearance
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Whether the transcript should keep the newest response in view. This is
@@ -22,6 +24,8 @@ struct MessageTranscript: View {
     @State private var scrollWorkScheduled = false
     @State private var scrollNeedsFollowUp = false
     @State private var scrollAnimationRequested = false
+    @State private var seenMessageIDs: Set<String> = []
+    @State private var firstPresentation = true
 
     private struct ScrollMetrics: Equatable {
         let offsetY: CGFloat
@@ -37,9 +41,13 @@ struct MessageTranscript: View {
                     ForEach(detail.messages) { message in
                         MessageBubble(
                             message: message,
-                            onRevert: message.checkpointID == nil ? nil : onRevertCheckpoint)
+                            onRevert: message.checkpointID == nil ? nil : onRevertCheckpoint,
+                            onReuse: onReuseUserMessage)
+                            .modifier(RemoteChatEntry(animate: !firstPresentation && !seenMessageIDs.contains(message.id)) {
+                                seenMessageIDs.insert(message.id)
+                            })
                     }
-                    if detail.isRunning { StreamingBubble(text: detail.streamingText, phase: detail.phase) }
+                    if detail.isRunning { StreamingBubble(text: detail.streamingText, phase: detail.phase, active: isReachable) }
                     if let error = detail.error, error.message != dismissedErrorMessage {
                         RemoteChatErrorCard(error: error, onDismiss: onDismissError)
                     }
@@ -90,7 +98,11 @@ struct MessageTranscript: View {
                     break
                 }
             }
-            .onAppear { requestScroll(proxy) }
+            .onAppear {
+                seenMessageIDs.formUnion(detail.messages.map(\.id))
+                firstPresentation = false
+                requestScroll(proxy)
+            }
             // Unanimated: a spring restarted per token was also the jitter.
             .onChange(of: detail.streamingText) { _, _ in
                 guard followsLatest else { return }
@@ -98,11 +110,11 @@ struct MessageTranscript: View {
             }
             .onChange(of: detail.messages.count) { _, _ in
                 guard followsLatest else { return }
-                requestScroll(proxy, animated: true)
+                requestScroll(proxy)
             }
             .onChange(of: detail.isRunning) { _, _ in
                 guard followsLatest else { return }
-                requestScroll(proxy, animated: true)
+                requestScroll(proxy)
             }
             .onChange(of: detail.id) { _, _ in
                 // A reused navigation cell can keep @State from the previous
@@ -114,10 +126,14 @@ struct MessageTranscript: View {
                 scrollAnimationRequested = false
                 followsLatest = true
                 userIsInteracting = false
+                seenMessageIDs = Set(detail.messages.map(\.id))
                 requestScroll(proxy)
             }
             .overlay(alignment: .bottom) {
-                if !followsLatest { jumpToLatest(proxy) }
+                ZStack {
+                    if !followsLatest { jumpToLatest(proxy) }
+                }
+                .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: followsLatest)
             }
             .onDisappear {
                 scrollRequestGeneration &+= 1
@@ -210,12 +226,14 @@ struct MessageBubble: View {
     /// Only supplied where a revert is actually possible (an open session that
     /// is not running); nil elsewhere, and the checkpoint row hides the button.
     var onRevert: (() -> Void)? = nil
+    var onReuse: ((String) -> Void)? = nil
     @Environment(\.remoteAppearance) private var appearance
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
+      Group {
         if message.role == "user" {
-            RemoteTranscriptTurn(speaker: "You", text: message.content)
+            RemoteUserTurn(text: message.content)
         }
         else if message.role == "toolCall" || message.role == "toolResult" { ToolMessageCard(message: message) }
         // Reasoning is the model's working, not its answer. It used to fall
@@ -256,6 +274,15 @@ struct MessageBubble: View {
         else {
             RemoteTranscriptTurn(speaker: "Vamp", text: message.content)
         }
+      }
+      .contextMenu {
+          if ["user", "assistant"].contains(message.role), !message.content.isEmpty {
+              Button("Copy message", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.content }
+              if message.role == "user", let onReuse {
+                  Button("Use in composer", systemImage: "pencil") { onReuse(message.content) }
+              }
+          }
+      }
     }
 }
 
@@ -264,6 +291,8 @@ struct RemoteTranscriptTurn: View {
     let speaker: String
     let text: String
     var phase: String? = nil
+    var active = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -271,11 +300,14 @@ struct RemoteTranscriptTurn: View {
                 Text(speaker).font(.caption.weight(.semibold))
                     .foregroundStyle(speaker == "Vamp" ? BeetTheme.accentBright : RemoteInstrument.secondaryInk)
                 if let phase {
-                    ProgressView().controlSize(.mini)
+                    RemoteChatWorkingDots(active: active)
                     Text(phase.capitalized).font(.caption)
+                        .contentTransition(.opacity)
                 }
             }
             .foregroundStyle(RemoteInstrument.secondaryInk)
+            .frame(minHeight: 20, alignment: .leading)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: phase)
             if text.isEmpty, phase != nil {
                 Text("Vamp is working…").font(.body).foregroundStyle(RemoteInstrument.secondaryInk)
             } else { MarkdownText(text) }
@@ -418,6 +450,7 @@ struct MarkdownText: View {
         var text: String
         var heading = 0
         var isCode = false
+        var language: String?
     }
 
     // Parse only presentation boundaries; preserve incomplete streamed code fences.
@@ -425,9 +458,10 @@ struct MarkdownText: View {
         var result: [Block] = []
         var lines: [String] = []
         var code = false
+        var language: String?
         func flush() {
             if !lines.isEmpty {
-                result.append(Block(text: lines.joined(separator: "\n"), isCode: code))
+                result.append(Block(text: lines.joined(separator: "\n"), isCode: code, language: language))
                 lines.removeAll(keepingCapacity: true)
             }
         }
@@ -435,6 +469,7 @@ struct MarkdownText: View {
             if line.hasPrefix("```") {
                 flush()
                 code.toggle()
+                language = code ? String(line.dropFirst(3).split(whereSeparator: \.isWhitespace).first ?? "").prefix(32).description : nil
             } else if code {
                 lines.append(line)
             } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -457,11 +492,7 @@ struct MarkdownText: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 if block.isCode {
-                    ScrollView(.horizontal) {
-                        Text(block.text).font(.callout.monospaced())
-                            .textSelection(.enabled).padding(12)
-                    }
-                    .remoteRecess()
+                    RemoteChatCodeBlock(text: block.text, language: block.language)
                 } else {
                     Text((try? AttributedString(markdown: block.text,
                         options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block.text))
@@ -481,6 +512,7 @@ struct ToolMessageCard: View {
     let message: RemoteMessage
     @Environment(\.remoteAppearance) private var appearance
     @State private var expanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
             if !displayContent.isEmpty {
@@ -491,12 +523,22 @@ struct ToolMessageCard: View {
                     .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 8))
             }
         } label: {
-            Label(displayName, systemImage: symbol)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(message.didFail ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
-                .frame(minHeight: 44)
+            HStack(spacing: 10) {
+                Image(systemName: symbol).font(.subheadline)
+                    .foregroundStyle(message.didFail ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
+                    .frame(width: 22).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(displayName).font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
+                    Text(message.role == "toolCall" ? "Tool request" : message.didFail ? "Failed" : "Tool result")
+                        .font(.caption).foregroundStyle(message.didFail ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
+                }.frame(minHeight: 44)
+            }
         }
         .tint(RemoteInstrument.secondaryInk)
+        .padding(.horizontal, 12).padding(.vertical, 4)
+        .background(RemoteInstrument.reading, in: RoundedRectangle(cornerRadius: 12))
+        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(RemoteInstrument.seam.opacity(0.35), lineWidth: 0.75) }
+        .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: expanded)
     }
 
     /// A failed tool used to render with the same checkmark as a successful
@@ -525,8 +567,9 @@ struct ToolMessageCard: View {
 
 struct StreamingBubble: View {
     let text: String, phase: String
+    var active = true
     var body: some View {
-        RemoteTranscriptTurn(speaker: "Vamp", text: text, phase: phase)
+        RemoteTranscriptTurn(speaker: "Vamp", text: text, phase: phase, active: active)
     }
 }
 

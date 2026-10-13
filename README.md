@@ -52,7 +52,9 @@ This is an independent copy of the current working Vamp Assistant source.
 The original Mac and iOS checkouts remain untouched. This isolated copy also
 contains the user-authorized iOS Companion hub and a compact live homepage.
 The homepage shows host and model state, active work, quick starts, and recent
-conversations. The composer and shared controls preserve their current design.
+conversations. The chat adds clear user turns, compact tool activity, code copy,
+and restrained motion based on the user-provided SiteAgent reference. The
+composer and shared controls preserve their current design.
 The client retains its bundle identity, current assets, model identifiers, and protocol. The companion uses
 `com.beetcode.companion`, Application Support/VampCompanion, separate Keychain
 services and preferences, separate ChatGPT account storage, remote port 9675

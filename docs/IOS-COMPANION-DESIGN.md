@@ -24,6 +24,27 @@ Offline state retains cached conversations and disables new work. Decorative
 thumbnails have been removed from chat list rows and transcript speaker headers.
 The composer file, shared palette, and composer button materials are preserved.
 
+## Conversation polish
+
+The user supplied the Desktop/SiteAgent project as a read-only reference.
+Its ChatView, MotionKit, DesignKit, and native screenshot informed this pass.
+No SiteAgent source, branding, configuration, or data was changed or imported.
+
+User turns now have a trailing, softly elevated surface. Assistant replies
+remain open, readable text with no header thumbnails. The navigation title
+includes the actual Mac name. Tool requests/results use compact disclosure rows;
+reasoning, failures, checkpoints, approvals, and their existing actions remain.
+Code blocks have a language label and a 44-point Copy control with brief feedback.
+Long-press Copy message and Use in composer are available for user turns.
+Reuse preserves an existing draft and never sends it automatically.
+
+New turns enter once with a short fade and eight-point movement. History renders
+immediately. Streaming text does not restart entry or scroll animations on every
+token; scroll-back intent and Jump to latest are preserved. Phase labels fade
+briefly, and working dots stop while offline, inactive, or Reduce Motion is on.
+The composer file, layout, model control, attachment routes, queue/steer/stop,
+keyboard behavior, and shared button materials are preserved.
+
 ## Mac cooperation
 
 The Models shortcut opens Your Mac with connection and host activity, local
@@ -44,14 +65,14 @@ read-only on 2026-10-13 before this pass, including its current branding, icon,
 privacy manifest, and client fixes. The initial baseline remains in
 `verification/ios-source-sha256.json`; the current baseline is in
 `ios-current-source-sha256.json` and `ios-current-project-sha256.json`.
-Five inherited UI files have authorized exceptions. New homepage and Mac-hub
-files are isolated additions. The guard verifies the other 89 inherited files,
+Six inherited UI files have authorized exceptions. New homepage and Mac-hub
+files are isolated additions. The guard verifies the other 88 inherited files,
 iOS target identity and scheme, shared palette, and composer button surfaces.
 
 The current display name and App Store Connect record are **Vamp Companion**
 (ID 6822249541). This is the existing Assistant client, bundle
 `com.beetcode.remote.ios`, distinct from App Stream's
-`com.mesutcy.remotedesktop.stream`. The final archive uses 0.10.55, build 136.
+`com.mesutcy.remotedesktop.stream`. The combined homepage/chat archive uses 0.10.55, build 137.
 The user authorized distribution to the existing internal TestFlight group
 **mes**. No other tester invitations or App Store submission are included.
 
@@ -65,3 +86,6 @@ both appearances. DEBUG fixtures use temporary in-memory credentials and
 stubbed loopback API calls; they do not restore a real paired Mac or submit
 work. Physical iPhone, Tailscale streaming, and sleep/wake tests still require
 live hardware and must not be inferred from simulator results.
+
+Chat-specific UI coverage checks both appearances and code copy, draft-safe reuse,
+incoming-message/composer behavior, and tool/reasoning disclosures.

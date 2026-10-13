@@ -72,7 +72,15 @@ struct ConversationView: View {
                         onDismissError: { dismissedErrorMessage = detail.error?.message },
                         onRevertCheckpoint: detail.isRunning
                             ? nil
-                            : { Task { await store.undoCheckpoint() } })
+                            : { Task { await store.undoCheckpoint() } },
+                        onReuseUserMessage: { text in
+                            let existing = store[draftFor: sessionID]
+                            if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                store[draftFor: sessionID] = text
+                            } else if existing != text {
+                                store[draftFor: sessionID] = existing + "\n\n" + text
+                            }
+                        }, isReachable: store.isConnected)
                     if let pending = detail.pending {
                         PendingInteractionView(
                             pending: pending,
@@ -100,10 +108,7 @@ struct ConversationView: View {
             .toolbarBackground(BeetTheme.background(appearance).opacity(0.92), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text(displayTitle)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    RemoteConversationTitle(title: displayTitle, subtitle: store.activeComputerName)
                         .padding(.horizontal, 4)
                 }
                 ToolbarItem(placement: .topBarTrailing) {

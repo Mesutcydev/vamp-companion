@@ -21,6 +21,8 @@ struct RemoteRootView: View {
             RemoteBotsView(store: store) { _ in }
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "homepage" {
             RemoteHomepageFixture()
+        } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "chat-polish" {
+            RemoteChatFixture()
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "mac-hub" {
             RemoteMacHubFixture()
         } else if store.hasSavedConnection { SessionNavigationView(store: store) }

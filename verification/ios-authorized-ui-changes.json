@@ -1,10 +1,11 @@
 {
-  "authorization": "User selected the Assistant iOS client, requested Companion cooperation, then explicitly requested a modern, compact, detailed homepage with motion and depth, better buttons, and removal of chat-header thumbnails. Preserve the composer and shared style.",
+  "authorization": "User selected the Assistant iOS client, requested Companion cooperation, then explicitly requested a modern, compact, detailed homepage with motion and depth, better buttons, and removal of chat-header thumbnails. Preserve the composer and shared style. User then requested overall chat UI and motion improvements using Desktop/SiteAgent as a read-only reference.",
   "files": [
     "iOSApp/RemoteViews.swift",
     "iOSApp/RemoteSessionViews.swift",
     "iOSApp/RemoteSettingsView.swift",
     "iOSApp/RemoteStartSessionView.swift",
-    "iOSApp/RemoteTranscriptViews.swift"
+    "iOSApp/RemoteTranscriptViews.swift",
+    "iOSApp/RemoteConversationView.swift"
   ]
 }

@@ -216,8 +216,10 @@ private struct RemoteHomeShortcut: View {
             }
             .foregroundStyle(RemoteInstrument.ink)
             .frame(maxWidth: .infinity, minHeight: typeSize.isAccessibilitySize ? 88 : 56)
+            .contentShape(Rectangle())
         }
         .buttonStyle(RemoteHomeShortcutStyle())
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(title)
     }
 }
@@ -316,6 +318,7 @@ private struct RemoteHomeStarter: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(13).frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(RemoteHomeTileStyle()).disabled(!connected)
         .accessibilityLabel(title)

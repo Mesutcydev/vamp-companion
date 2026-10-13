@@ -237,3 +237,34 @@ data is used as a test fixture.
   now contains 48 unit and 19 UI cases, with five optional UI skips.
   Build 135 was successfully processed by Apple but is superseded by the final
   0.10.55 (136) archive with this correction.
+
+
+## SiteAgent reference and chat polish
+
+- Desktop/SiteAgent was inspected read-only at the user's request: ChatView,
+  MotionKit, DesignKit, and its native chat screenshot. No reference source,
+  assets, or data were changed. The isolated iOS app adapts its clear role
+  hierarchy, compact tool disclosures, short entry motion, and code-copy UX.
+- User turns use an elevated trailing surface. Replies remain open text.
+  Code blocks include their language and a 44-point copy control. User-message
+  context menus can copy or reuse text; reuse preserves an existing draft and
+  never submits automatically. Header thumbnails remain removed.
+- New messages enter once without changing layout; token growth does not
+  restart springs. Scroll-back, Jump to latest, reasoning, tool failures,
+  checkpoints, approvals, image routes, and composer actions are retained.
+  Working dots stop offline, in the background, and under Reduce Motion.
+- The combined local run passed 48 unit tests and 23 UI cases (five optional
+  skips). Four chat cases passed: both appearances/code copy, draft preservation,
+  incoming message/composer behavior, and tool/reasoning disclosures.
+  The final additional homepage case covers Models → Mac hub → reviewed form.
+- The shared palette, composer button regions, original composer source, and
+  88 other inherited files pass the source guard. Native composer regions still
+  match the current original source exactly in light and dark after chat edits.
+- Clean Mac CI at revision 6ecf79a passed 1,134 backend cases (51 optional skips),
+  three Companion UI checks, and the Mac Release build. An iOS 26.5 homepage
+  interaction failure was inspected through its exported UI hierarchy; the
+  whole shortcut surface now explicitly participates in hit testing.
+  Final iOS compatibility CI must pass before claiming cross-version completion.
+- Build 136 was exported but not uploaded; the user's subsequent chat-reference
+  request is included in the combined 0.10.55 (137) package. Build 135 is our own
+  uploaded intermediate and will be superseded after the combined build verifies.
