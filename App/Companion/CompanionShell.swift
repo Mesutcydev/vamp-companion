@@ -9,7 +9,7 @@ struct CompanionShell: View {
         VStack(spacing: 0) {
             CompanionHeader(selection: $navigation.destination,
                             hostRunning: appState.remoteSessionRunning)
-            Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
+            Rectangle().fill(CompanionBrand.ink).frame(height: 2)
             Group {
                 switch navigation.destination {
                 case .models:
@@ -67,10 +67,11 @@ private struct CompanionHeader: View {
             HStack(spacing: 13) {
                 CompanionBrandBadge()
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("VAMP").font(.system(size: 27, weight: .heavy, design: .rounded))
-                        .tracking(1.5).foregroundStyle(CompanionBrand.ink)
-                    Text("Companion").font(.system(size: 11, weight: .medium))
-                        .tracking(1.5).foregroundStyle(CompanionBrand.secondary)
+                    Text("VAMP").font(CompanionBrand.wordmark(40))
+                        .tracking(2).foregroundStyle(CompanionBrand.ink)
+                        .shadow(color: CompanionBrand.stroke, radius: 0, x: 2, y: 2)
+                    Text("COMPANION").font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .tracking(2).foregroundStyle(CompanionBrand.secondary)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Vamp Companion")
@@ -83,7 +84,7 @@ private struct CompanionHeader: View {
                     Button {
                         selection = destination
                     } label: {
-                        Label { Text(destination.title) } icon: { Image(systemName: destination.symbol) }
+                        Label { Text(destination.title).textCase(.uppercase) } icon: { Image(systemName: destination.symbol) }
                             .frame(minWidth: 72)
                     }
                     .buttonStyle(CompanionNavigationButtonStyle(isSelected: selection == destination))
@@ -201,7 +202,7 @@ struct CompanionDevicesView: View {
                             .font(.caption).foregroundStyle(Theme.textSecondary)
                     } else if let error = appState.remoteSessionError {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        Button("Retry") { appState.retryRemoteSessionHost() }.buttonStyle(.bordered)
+                            Button("Retry") { appState.retryRemoteSessionHost() }.buttonStyle(CompanionArcadeButtonStyle())
                     } else {
                         ProgressView("Starting iPhone access…")
                     }
@@ -239,7 +240,7 @@ private struct CompanionAccessSetup: View {
                  : "Tailscale must be connected on both devices. A one-time pairing code is still required.")
                 .font(.callout).foregroundStyle(Theme.textSecondary)
             Button("Enable iPhone access", systemImage: "qrcode", action: enable)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
                 .accessibilityIdentifier("companion-enable-access")
         }
         .padding(20)

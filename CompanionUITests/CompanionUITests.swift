@@ -38,18 +38,23 @@ final class CompanionUITests: XCTestCase {
     }
 
     func testEmptyLibraryOpensDiscoverAndBothAppearancesKeepNavigation() {
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vamp-companion-ui-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: fixture) }
         for appearance in ["light", "dark"] {
             let app = XCUIApplication()
             app.launchEnvironment["VAMP_COMPANION_UI_TESTING"] = "1"
             app.launchEnvironment["VAMP_COMPANION_TEST_APPEARANCE"] = appearance
+            app.launchEnvironment["VAMP_COMPANION_UI_MODEL_ROOT"] = fixture.path
             app.launch()
+            app.buttons["companion-tab-models"].click()
             let discover = app.buttons["companion-discover-models"]
             XCTAssertTrue(discover.waitForExistence(timeout: 30))
             saveScreenshot(app, name: "\(appearance)-models")
             discover.click()
             XCTAssertTrue(app.staticTexts["Recommended for this Mac"].firstMatch.waitForExistence(timeout: 15))
             app.buttons["companion-tab-devices"].click()
-            XCTAssertTrue(app.buttons["companion-enable-access"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.descendants(matching: .any)["companion-devices"].firstMatch.waitForExistence(timeout: 10))
             saveScreenshot(app, name: "\(appearance)-devices")
             app.buttons["companion-tab-settings"].click()
             XCTAssertTrue(app.buttons["companion-manage-providers"].waitForExistence(timeout: 10))

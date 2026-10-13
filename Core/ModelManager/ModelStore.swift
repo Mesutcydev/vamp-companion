@@ -55,6 +55,18 @@ final class ModelStore: ObservableObject {
     }
 
     init() {
+        // UI fixtures have their own empty model library. Never read or prune
+        // the user's registry just to capture an empty state in a UI test.
+        let environment = ProcessInfo.processInfo.environment
+        if environment["VAMP_COMPANION_UI_TESTING"] == "1",
+           let path = environment["VAMP_COMPANION_UI_MODEL_ROOT"] {
+            let candidate = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath()
+            let temporary = fileManager.temporaryDirectory.resolvingSymlinksInPath()
+            if candidate.path.hasPrefix(temporary.path + "/") {
+                overrideModelsDir = candidate
+                try? fileManager.createDirectory(at: candidate, withIntermediateDirectories: true)
+            }
+        }
         loadRegistry()
         // Repair: drop registry entries whose directories vanished (moved or
         // deleted outside the app).

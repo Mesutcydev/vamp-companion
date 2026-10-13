@@ -38,6 +38,7 @@ extension Notification.Name {
 @MainActor
 final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        CompanionBrand.registerFonts()
         AppUpdater.shared.start()
     }
 
@@ -69,6 +70,8 @@ struct VampCompanionApp: App {
     @StateObject private var appState = AppState()
     @ObservedObject private var settings = SettingsStore.shared
     @State private var navigation = CompanionNavigation.shared
+
+    init() { CompanionBrand.registerFonts() }
 
     private var displayAppearance: AppAppearance {
         // CI screenshots exercise both appearances without modifying anyone's

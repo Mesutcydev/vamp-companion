@@ -16,11 +16,11 @@ struct SettingsCard<Content: View>: View {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(CompanionBrand.accentInk)
+                        .foregroundStyle(CompanionBrand.ink)
                         .frame(width: 27, height: 27)
-                        .background(CompanionBrand.accentWash, in: RoundedRectangle(cornerRadius: 8))
+                        .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
                     Text(title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .textCase(.uppercase).font(CompanionBrand.display(20))
                         .foregroundStyle(CompanionBrand.ink)
                     Spacer(minLength: 0)
                 }

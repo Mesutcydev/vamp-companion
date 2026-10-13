@@ -43,7 +43,7 @@ off by default. Quit stops the companion and its registered child processes.
 ## Independent from Vamp Assistant
 
 Companion's Mac interface uses the Vamp screen-and-fangs mark, a distinct app
-icon, graphite and warm white surfaces, and restrained red accents. The reusable
+icon, dark arcade panels, condensed display type, and a restrained red signal. The reusable
 [brand kit](brandkit/index.html) includes vector assets and design tokens. The
 Mac icon is generated only into the separate Companion asset catalog; inherited
 iOS and Assistant assets are unchanged.

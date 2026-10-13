@@ -131,7 +131,7 @@ struct ModelManagerView: View {
                                 .help("Importing model…")
                         } else {
                             Button("Import…", systemImage: "square.and.arrow.down", action: onImport)
-                                .buttonStyle(.bordered)
+                                .buttonStyle(CompanionArcadeButtonStyle())
                                 .controlSize(.large)
                                 .help("Import a local MLX, GGUF, or Apple Core AI model pack")
                         }
@@ -542,11 +542,12 @@ private struct CompanionModelEmptyState: View {
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(CompanionBrand.accentInk)
                 .frame(width: 62, height: 62)
-                .background(CompanionBrand.accentWash, in: RoundedRectangle(cornerRadius: 18))
+                .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
                 .accessibilityHidden(true)
             VStack(spacing: 6) {
                 Text(isDownloaded ? "No downloaded models" : "No matching models")
-                    .font(.system(size: 17, weight: .semibold))
+                    .textCase(.uppercase).font(CompanionBrand.display(24))
                 Text(isDownloaded
                      ? "Your local library starts here. Discover a model or import one you already have."
                      : "Try another name or model family.")
@@ -555,14 +556,14 @@ private struct CompanionModelEmptyState: View {
             }
             HStack(spacing: 10) {
                 if isDownloaded, let onDiscover {
-                    Button("Discover models", action: onDiscover).buttonStyle(.borderedProminent)
+                    Button("Discover models", action: onDiscover).buttonStyle(CompanionArcadeButtonStyle(primary: true))
                         .accessibilityIdentifier("companion-discover-models")
                 }
                 if isDownloaded, let onImport {
-                    Button("Import…", action: onImport).buttonStyle(.bordered).disabled(importing)
+                    Button("Import…", action: onImport).buttonStyle(CompanionArcadeButtonStyle()).disabled(importing)
                 }
                 if let onClearSearch {
-                    Button("Clear search", action: onClearSearch).buttonStyle(.bordered)
+                    Button("Clear search", action: onClearSearch).buttonStyle(CompanionArcadeButtonStyle())
                 }
             }
         }
@@ -696,6 +697,11 @@ private struct ModelCard: View {
             RoundedRectangle(cornerRadius: CompanionBrand.radius, style: .continuous)
                 .strokeBorder(isActive ? Theme.positive : CompanionBrand.stroke,
                               lineWidth: isActive ? 1.5 : 1))
+        .overlay(alignment: .top) {
+            Rectangle().fill(isActive ? Theme.positive : CompanionBrand.ink)
+                .frame(height: 2).padding(.horizontal, 1)
+        }
+        .shadow(color: CompanionBrand.inset, radius: 0, x: 3, y: 3)
     }
 
     /// Parameters, precision and size as scannable chips rather than one run-on
@@ -870,12 +876,12 @@ private struct ModelActions: View {
                 Button("Unload") {
                     Task { await appState.deactivate() }
                 }
-                .buttonStyle(LFCapsuleButtonStyle())
+                .buttonStyle(CompanionArcadeButtonStyle())
             } else {
                 Button("Load") {
                     Task { await appState.activate(model: model) }
                 }
-                .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
                 .disabled(budget.verdict.fitsLoad == false)
             }
         } else {
@@ -884,17 +890,17 @@ private struct ModelActions: View {
                 Button("Pause") {
                     appState.pauseDownload(of: model)
                 }
-                .buttonStyle(LFCapsuleButtonStyle())
+                .buttonStyle(CompanionArcadeButtonStyle())
             case .paused:
                 Button("Resume") {
                     appState.startDownload(of: model)
                 }
-                .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
             case .failed:
                 Button("Retry") {
                     appState.startDownload(of: model)
                 }
-                .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
             case .completed:
                 ProgressView().controlSize(.small)
             case .idle:
@@ -903,7 +909,7 @@ private struct ModelActions: View {
                 Button("Download") {
                     appState.startDownload(of: model)
                 }
-                .buttonStyle(LFCapsuleButtonStyle(tone: .primary))
+                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
                 .help("Resumable download with integrity checks")
             }
         }

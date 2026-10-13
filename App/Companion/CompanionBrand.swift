@@ -1,19 +1,30 @@
+import CoreText
 import SwiftUI
 
 /// Companion's brand is independent of the inherited Assistant preferences.
 /// The same screen-and-fangs geometry is used by the app icon and thevamp.app.
 enum CompanionBrand {
-    static let canvas = Color.dynamic(light: 0xF4F3F1, dark: 0x131416, oled: 0x08090A)
-    static let surface = Color.dynamic(light: 0xFFFFFF, dark: 0x1D1F22, oled: 0x131517)
-    static let inset = Color.dynamic(light: 0xEEEDEA, dark: 0x16181B, oled: 0x0D0F11)
-    static let stroke = Color.dynamic(light: 0xDDDCDA, dark: 0x35383D, oled: 0x2A2D31)
+    static var canvas: Color { .dynamic(light: 0xF4F4F4, dark: 0x111111, oled: 0x000000) }
+    static var surface: Color { .dynamic(light: 0xFAFAFA, dark: 0x1C1C1C, oled: 0x131313) }
+    static var inset: Color { .dynamic(light: 0xE8E8E8, dark: 0x080808, oled: 0x050505) }
+    static var stroke: Color { .dynamic(light: 0xA4A4A4, dark: 0x777777, oled: 0x777777) }
     static let ink = Color.dynamic(light: 0x202124, dark: 0xF4F4F2, oled: 0xF4F4F2)
     static let secondary = Color.dynamic(light: 0x606166, dark: 0xB2B5BD, oled: 0xB2B5BD)
     static let accent = Color.fixed(0xBD2939)
     static let accentInk = Color.dynamic(light: 0xAD2030, dark: 0xFF7B88, oled: 0xFF7B88)
     static let accentWash = Color.dynamic(light: 0xFCE9E9, dark: 0x382126, oled: 0x301B21)
-    static let radius: CGFloat = 16
+    static let radius: CGFloat = 4
     static let pageInset: CGFloat = 24
+
+    static func display(_ size: CGFloat) -> Font { .custom("BarlowCondensed-Bold", size: size) }
+    static func wordmark(_ size: CGFloat) -> Font { .custom("BarlowCondensed-Black", size: size) }
+
+    @MainActor static func registerFonts() {
+        for name in ["BarlowCondensed-Black", "BarlowCondensed-Bold"] {
+            guard let url = Bundle.main.url(forResource: name, withExtension: "ttf") else { continue }
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+    }
 }
 
 struct CompanionVampMark: Shape {
@@ -52,7 +63,8 @@ struct CompanionBrandBadge: View {
             .fill(CompanionBrand.ink, style: FillStyle(eoFill: true))
             .padding(size * 0.1)
             .frame(width: size, height: size)
-            .background(CompanionBrand.surface, in: RoundedRectangle(cornerRadius: size * 0.24))
+            .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
             .overlay(alignment: .bottomTrailing) {
                 Circle().fill(CompanionBrand.accent)
                     .frame(width: size * 0.17, height: size * 0.17)
@@ -72,9 +84,10 @@ struct CompanionPageHeading: View {
         VStack(alignment: .leading, spacing: 7) {
             Text(eyebrow).textCase(.uppercase)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .tracking(1.8).foregroundStyle(CompanionBrand.accentInk)
-            Text(title).font(.system(size: 25, weight: .semibold))
-                .tracking(-0.7).foregroundStyle(CompanionBrand.ink)
+                .tracking(1.8).foregroundStyle(CompanionBrand.secondary)
+            Text(title).textCase(.uppercase).font(CompanionBrand.display(34))
+                .tracking(0.3).foregroundStyle(CompanionBrand.ink)
+                .shadow(color: CompanionBrand.stroke.opacity(0.6), radius: 0, x: 1, y: 1)
             Text(subtitle).font(.system(size: 13))
                 .foregroundStyle(CompanionBrand.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -95,8 +108,8 @@ struct CompanionStatusPill: View {
         }
         .foregroundStyle(CompanionBrand.ink)
         .padding(.horizontal, 11).padding(.vertical, 7)
-        .background(CompanionBrand.surface, in: Capsule())
-        .overlay(Capsule().strokeBorder(CompanionBrand.stroke, lineWidth: 1))
+        .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
+        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
         .accessibilityElement(children: .combine)
     }
 }
@@ -110,6 +123,11 @@ struct CompanionCardModifier: ViewModifier {
             .overlay(RoundedRectangle(cornerRadius: CompanionBrand.radius)
                 .strokeBorder(contrast == .increased ? CompanionBrand.secondary : CompanionBrand.stroke,
                               lineWidth: 1))
+            .overlay(alignment: .top) {
+                Rectangle().fill(CompanionBrand.ink).frame(height: 2)
+                    .padding(.horizontal, 1)
+            }
+            .shadow(color: CompanionBrand.inset, radius: 0, x: 3, y: 3)
     }
 }
 
@@ -123,19 +141,40 @@ struct CompanionNavigationButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-            .foregroundStyle(isSelected ? CompanionBrand.ink : CompanionBrand.secondary)
+            .font(CompanionBrand.display(17))
+            .foregroundStyle(isSelected ? CompanionBrand.canvas : CompanionBrand.secondary)
             .padding(.horizontal, 18).frame(height: 36)
-            .background(isSelected ? CompanionBrand.surface : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(isSelected ? CompanionBrand.stroke : .clear, lineWidth: 1))
+            .background(isSelected ? CompanionBrand.ink : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 3))
+            .overlay(RoundedRectangle(cornerRadius: 3)
+                .strokeBorder(isSelected ? CompanionBrand.ink : CompanionBrand.stroke, lineWidth: 1))
             .overlay(alignment: .bottom) {
-                Capsule().fill(isSelected ? CompanionBrand.accent : .clear)
-                    .frame(width: 22, height: 2).padding(.bottom, 4)
+                Rectangle().fill(isSelected ? CompanionBrand.accent : .clear)
+                    .frame(height: 2)
             }
             .opacity(configuration.isPressed ? 0.7 : 1)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+struct CompanionArcadeButtonStyle: ButtonStyle {
+    var primary = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .textCase(.uppercase).font(CompanionBrand.display(17))
+            .foregroundStyle(primary ? CompanionBrand.canvas : CompanionBrand.ink)
+            .padding(.horizontal, 14).frame(minHeight: 34)
+            .background(primary ? CompanionBrand.ink : CompanionBrand.surface,
+                        in: RoundedRectangle(cornerRadius: 3))
+            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(CompanionBrand.ink, lineWidth: 1))
+            .shadow(color: CompanionBrand.stroke, radius: 0,
+                    x: configuration.isPressed ? 0 : 2, y: configuration.isPressed ? 0 : 2)
+            .offset(x: configuration.isPressed && !reduceMotion ? 1 : 0,
+                    y: configuration.isPressed && !reduceMotion ? 1 : 0)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
     }
 }
