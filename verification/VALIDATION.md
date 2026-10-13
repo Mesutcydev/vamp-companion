@@ -1,5 +1,22 @@
 # Vamp Companion 0.1.0 validation
 
+## App Stream home scanner compatibility — 2026-10-13
+
+- App Stream 1.0 build 10 fixes the home scanner's Sync-only QR routing.
+  Companion and Assistant HTTP pairing links open their existing code-pairing
+  form with the scanned address and code. Sync links retain fingerprint approval.
+- All 88 current iOS unit tests passed, including the home scanner checks for
+  both host port ranges, Sync links, and invalid or unrelated QR payloads.
+- The installed Companion's actual Local Wi-Fi QR was decoded and accepted by
+  the production App Stream parser and home scanner router. Port 9675 and the
+  six-digit code were retained. The simulator's scanner entry and pairing screen
+  were inspected; camera scanning requires a physical iPhone.
+- The signed Store archive and exported IPA identify App Stream 1.0 build 10
+  with the existing bundle ID, current icon and splash, and App Store LAN policy.
+- Companion 0.1.2 build 3 remains the Mac release. Its installed signature,
+  notarization staple, Gatekeeper assessment, and unchanged live signed Sparkle
+  feed were verified again. This client fix does not change the Mac binary.
+
 The independent source snapshot is commit `f1ba57e`. The original checkout was
 read to create the snapshot; implementation changes were made only in this
 repository. Concurrent changes in the original checkout were left intact.

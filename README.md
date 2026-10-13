@@ -20,9 +20,11 @@ with the companion.
 3. In Devices, enable iPhone access. Allow local Wi-Fi only on a trusted private
    network, or connect both devices to Tailscale.
 4. In the existing Vamp Assistant iOS app, scan the pairing code or enter the
-   address and code shown by the companion. App Stream 1.0 build 9 also
-   accepts Companion QR codes. In Devices, choose **Local Wi-Fi** for its App
-   Store edition. Companion can show separate Local Wi-Fi and Tailscale QR links
+   address and code shown by the companion. App Stream 1.0 build 10 also
+   accepts Companion QR codes through **Scan Mac QR Code** on its home screen.
+   Confirm the filled address and code, then tap **Pair Mac**. In Devices, choose
+   **Local Wi-Fi** for its App Store edition. Companion can show separate
+   Local Wi-Fi and Tailscale QR links
    when both are available; switching the displayed link keeps existing sessions
    and network permissions intact. App streaming uses the same Wi-Fi or Ethernet
    network in its App Store edition; older Stream builds need
