@@ -69,7 +69,6 @@ private struct CompanionHeader: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("VAMP").font(CompanionBrand.wordmark(40))
                         .tracking(2).foregroundStyle(CompanionBrand.ink)
-                        .shadow(color: CompanionBrand.stroke, radius: 0, x: 2, y: 2)
                     Text("COMPANION").font(.system(size: 9, weight: .semibold, design: .monospaced))
                         .tracking(2).foregroundStyle(CompanionBrand.secondary)
                 }
@@ -84,7 +83,7 @@ private struct CompanionHeader: View {
                     Button {
                         selection = destination
                     } label: {
-                        Label { Text(destination.title).textCase(.uppercase) } icon: { Image(systemName: destination.symbol) }
+                        Label { Text(destination.title) } icon: { Image(systemName: destination.symbol) }
                             .frame(minWidth: 72)
                     }
                     .buttonStyle(CompanionNavigationButtonStyle(isSelected: selection == destination))
@@ -121,7 +120,7 @@ private struct CompanionRuntimeStatus: View {
                 }
             }
         }
-        .font(.system(size: 11)).foregroundStyle(CompanionBrand.secondary)
+        .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
         .padding(.horizontal, CompanionBrand.pageInset).padding(.vertical, 12)
         .background(CompanionBrand.canvas)
     }
@@ -173,7 +172,7 @@ struct CompanionDevicesView: View {
                         Text(usesWiFi
                              ? "Keep both devices on the same trusted Wi-Fi network."
                              : "Connect both devices to the same private Tailscale network. App Stream build 12 or later supports this connection.")
-                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                            .font(.system(size: 13)).foregroundStyle(CompanionBrand.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         CompanionPairingCard(
                             url: displayedPairingURL,
@@ -199,7 +198,7 @@ struct CompanionDevicesView: View {
                         }
                         .buttonStyle(.bordered)
                         Label("\(appState.remotePairedClientCount) paired devices", systemImage: "checkmark.shield")
-                            .font(.caption).foregroundStyle(Theme.textSecondary)
+                            .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     } else if let error = appState.remoteSessionError {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                             Button("Retry") { appState.retryRemoteSessionHost() }.buttonStyle(CompanionArcadeButtonStyle())
@@ -210,7 +209,7 @@ struct CompanionDevicesView: View {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "lock.shield").foregroundStyle(CompanionBrand.accentInk)
                     Text("Your assistant keeps running when this window is closed. Choose clipboard, file sharing, and Mac control access in Settings.")
-                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 13)).foregroundStyle(CompanionBrand.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(16).companionCard()
@@ -238,7 +237,7 @@ private struct CompanionAccessSetup: View {
             Text(allowLAN
                  ? "Use a private Wi-Fi network you trust. A one-time pairing code is required before a device can connect."
                  : "Tailscale must be connected on both devices. A one-time pairing code is still required.")
-                .font(.callout).foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 14)).foregroundStyle(CompanionBrand.secondary)
             Button("Enable iPhone access", systemImage: "qrcode", action: enable)
                 .buttonStyle(CompanionArcadeButtonStyle(primary: true))
                 .accessibilityIdentifier("companion-enable-access")
@@ -270,7 +269,7 @@ private struct CompanionPairingCard: View {
                 Text(code).font(.system(size: 34, weight: .medium, design: .monospaced))
                     .tracking(3).foregroundStyle(CompanionBrand.ink)
                     .textSelection(.enabled)
-                if let expires { Text("Expires \(expires, style: .relative)").font(.caption) }
+                if let expires { Text("Expires \(expires, style: .relative)").font(.system(size: 13)) }
                 if let address {
                     Text(address).font(.caption.monospaced()).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)

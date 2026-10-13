@@ -20,7 +20,7 @@ struct SettingsCard<Content: View>: View {
                         .frame(width: 27, height: 27)
                         .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
                     Text(title)
-                        .textCase(.uppercase).font(CompanionBrand.display(20))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(CompanionBrand.ink)
                     Spacer(minLength: 0)
                 }
@@ -34,8 +34,8 @@ struct SettingsCard<Content: View>: View {
 
             if let footer {
                 Text(footer)
-                    .font(.app(size: 11.5 ))
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(CompanionBrand.secondary)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 2)

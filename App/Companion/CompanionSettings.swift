@@ -37,7 +37,7 @@ struct CompanionSettingsView: View {
                 CompanionGeneralSettings()
                 SettingsCard(title: "Connections", icon: "key") {
                     Text("Set up API providers here or from Settings in the paired iOS app.")
-                        .font(.callout).foregroundStyle(Theme.textSecondary)
+                        .font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
                     Button("Manage API providers and accounts…") { navigation.showsProviders = true }
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("companion-manage-providers")
@@ -70,7 +70,7 @@ private struct CompanionGeneralSettings: View {
                 Button("Allow in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
             }
             if let error = loginItem.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.orange)
+                Text(error).font(.system(size: 13)).foregroundStyle(.orange)
             }
             SettingToggle(label: "Resume interrupted downloads", isOn: Binding(
                 get: { AppPreferencesStore.shared.current.autoResumeDownloads },
@@ -80,7 +80,7 @@ private struct CompanionGeneralSettings: View {
                     AppPreferencesStore.shared.save(preferences)
                 }))
             Text("Closing the window keeps the companion running. Use Quit to stop it.")
-                .font(.caption).foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
         }
         .onAppear { loginItem.refresh() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -119,7 +119,7 @@ struct CompanionPermissionsSettings: View {
             if settings.remoteMacControlEnabled {
                 SettingToggle(label: "Remote unlock over Tailscale", isOn: $settings.remoteMacUnlockEnabled)
                 Text("Remote unlock requires Tailscale. Submitted passwords are never stored.")
-                    .font(.caption).foregroundStyle(Theme.textSecondary)
+                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
             }
         }
         .onAppear(perform: refreshPermissions)
@@ -147,7 +147,7 @@ private struct CompanionPermissionRow: View {
             if granted { Text("Granted").foregroundStyle(Theme.textSecondary) }
             else if needsRelaunch { Text("Quit and reopen to finish").foregroundStyle(.orange) }
             else { Button("Grant…", action: grant).buttonStyle(.bordered) }
-        }.font(.callout)
+        }.font(.system(size: 14))
     }
 }
 

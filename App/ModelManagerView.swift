@@ -1,8 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The Models workspace. One scrolling column of cards: local catalog models
-/// first, then remote (BYOK) providers. Each card surfaces the model's
+/// The Models workspace. One scrolling list of informative rows: local catalog models
+/// first, then remote (BYOK) providers. Each row surfaces the model's
 /// identity, fit verdict and specs at a glance, with exactly one prominent
 /// action and everything destructive tucked into an overflow menu.
 struct ModelManagerView: View {
@@ -144,8 +144,8 @@ struct ModelManagerView: View {
                     Label("\(ByteFormatter.bytes(freeBytes)) available", systemImage: "memorychip")
                         .foregroundStyle(Theme.positive)
                 }
-                .font(.caption)
-                .foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 12))
+                .foregroundStyle(CompanionBrand.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -517,11 +517,15 @@ private struct LocalModelsSection: View {
                 ForEach(sections) { section in
                     LazyVStack(alignment: .leading, spacing: 10) {
                         SectionHeader(title: section.title, systemImage: section.systemImage)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14)], spacing: 14) {
+                        LazyVStack(spacing: 0) {
                             ForEach(section.models) { model in
-                                ModelCard(model: model, isRecommended: recommended.contains(model.id))
+                                CompanionModelRow(model: model, isRecommended: recommended.contains(model.id))
                             }
                         }
+                        .background(CompanionBrand.surface)
+                        .overlay(alignment: .top) { Rectangle().fill(CompanionBrand.ink).frame(height: 2) }
+                        .overlay(alignment: .bottom) { Rectangle().fill(CompanionBrand.stroke).frame(height: 1) }
+                        .accessibilityIdentifier("companion-model-list")
                     }
                 }
             }
@@ -547,12 +551,12 @@ private struct CompanionModelEmptyState: View {
                 .accessibilityHidden(true)
             VStack(spacing: 6) {
                 Text(isDownloaded ? "No downloaded models" : "No matching models")
-                    .textCase(.uppercase).font(CompanionBrand.display(24))
+                    .font(.system(size: 20, weight: .semibold))
                 Text(isDownloaded
                      ? "Download your first model or import one you already have."
                      : "Try another name or model family.")
-                    .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
-                    .frame(maxWidth: 350)
+                    .font(.system(size: 14)).foregroundStyle(CompanionBrand.secondary)
+                    .frame(maxWidth: 390)
             }
             HStack(spacing: 10) {
                 if isDownloaded, let onDiscover {
@@ -618,9 +622,9 @@ private struct SectionHeader: View {
     }
 }
 
-// MARK: - Model card
+// MARK: - Model row
 
-private struct ModelCard: View {
+private struct CompanionModelRow: View {
     @EnvironmentObject private var appState: AppState
     let model: CatalogModel
     var isRecommended: Bool = false
@@ -646,62 +650,76 @@ private struct ModelCard: View {
         return model.kind == .coding ? "Coding" : "General chat"
     }
 
+    private var modelSummary: String {
+        guard model.notes.hasPrefix("Imported from ") else { return model.notes }
+        let installed = appState.modelStore.installedModel(id: model.id)
+        return installed?.basePath != nil || installed?.directoryBookmark != nil
+            ? "Linked local model. Files stay in their original folder."
+            : "Imported model in your Companion library."
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
                 ModelGlyph(format: model.format, isActive: isActive, tint: capabilityTint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(capabilityLabel)
-                        .font(.app(size: 11, weight: .semibold))
-                        .foregroundStyle(capabilityTint)
-                    if isRecommended {
-                        Text("Recommended for this Mac")
-                            .font(.app(size: 10.5))
-                            .foregroundStyle(Theme.textTertiary)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        Text(model.displayName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(CompanionBrand.ink).lineLimit(2)
+                        if isActive {
+                            Text("Loaded").font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.positive)
+                        }
                     }
+                    HStack(spacing: 9) {
+                        Text(model.format.rawValue.uppercased())
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        Text(capabilityLabel).font(.system(size: 12))
+                    }.foregroundStyle(CompanionBrand.secondary)
+                    sizeChips
+                    Text(modelSummary).font(.system(size: 13))
+                        .foregroundStyle(CompanionBrand.secondary).lineLimit(2).lineSpacing(2)
+                    if isRecommended {
+                        Label("Recommended for this Mac", systemImage: "sparkles")
+                            .font(.system(size: 12)).foregroundStyle(capabilityTint)
+                    }
+                    DownloadStatusView(state: downloadState)
                 }
-                Spacer(minLength: 0)
-                VerdictBadge(verdict: isActive ? .fits : budget.verdict, projectedFootprint: budget.projectedFootprint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 14) {
+                    VerdictBadge(verdict: isActive ? .fits : budget.verdict,
+                                 projectedFootprint: budget.projectedFootprint)
+                    Text("\(ByteFormatter.bytes(budget.projectedFootprint)) peak")
+                        .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
+                        .help("Estimated peak memory needed to run this model")
+                    ModelActions(model: model, isActive: isActive,
+                                 downloadState: downloadState, budget: budget)
+                    Button(showDetails ? "Hide details" : "Details") { showDetails.toggle() }
+                        .buttonStyle(.borderless).font(.system(size: 12))
+                        .foregroundStyle(CompanionBrand.secondary)
+                }
+                .frame(width: 150, alignment: .trailing)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                Text(model.displayName)
-                    .font(.app(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(2)
-                sizeChips
-            }
-            Text(model.notes)
-                .font(.callout)
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(2)
-                .frame(height: 36, alignment: .topLeading)
-            DownloadStatusView(state: downloadState)
             if showDetails {
-                specReadout
+                specReadout.padding(.leading, 46)
                 if !isActive, case .wontFit(let reason) = budget.verdict {
-                    Text(reason).font(.caption).foregroundStyle(Theme.danger)
+                    Text(reason).font(.system(size: 13)).foregroundStyle(Theme.danger)
+                        .padding(.leading, 46)
                 }
             }
-            Divider().overlay(Theme.hairline)
-            HStack {
-                Button(showDetails ? "Less" : "Details") { showDetails.toggle() }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.textSecondary)
-                ModelActions(model: model, isActive: isActive, downloadState: downloadState, budget: budget)
-            }
         }
-        .padding(18)
+        .padding(.horizontal, 16).padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(CompanionBrand.surface, in: RoundedRectangle(cornerRadius: CompanionBrand.radius))
-        .overlay(
-            RoundedRectangle(cornerRadius: CompanionBrand.radius, style: .continuous)
-                .strokeBorder(isActive ? Theme.positive : CompanionBrand.stroke,
-                              lineWidth: isActive ? 1.5 : 1))
-        .overlay(alignment: .top) {
-            Rectangle().fill(isActive ? Theme.positive : CompanionBrand.ink)
-                .frame(height: 2).padding(.horizontal, 1)
+        .background(isActive ? Theme.positive.opacity(0.06) : Color.clear)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(isActive ? Theme.positive : .clear).frame(width: 3)
         }
-        .shadow(color: CompanionBrand.inset, radius: 0, x: 3, y: 3)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(CompanionBrand.stroke.opacity(0.5)).frame(height: 0.75)
+        }
+        .accessibilityIdentifier("companion-model-row-\(model.id)")
     }
 
     /// Parameters, precision and size as scannable chips rather than one run-on
@@ -734,17 +752,17 @@ private struct ModelCard: View {
     private func technicalValue(_ label: String, _ value: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.appUI(size: 9, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .tracking(0.7)
                 .foregroundStyle(Instrument.inkSecondary)
             Text(value)
-                .font(.appMono(size: 10.5, weight: .medium))
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(Instrument.ink)
         }
     }
 }
 
-/// Leading icon tile for a model card.
+/// Leading format glyph for a model row.
 private struct ModelGlyph: View {
     let format: CatalogModel.Format
     let isActive: Bool
@@ -768,7 +786,10 @@ private struct SpecChip: View {
     let text: String
 
     var body: some View {
-        VampTag(text: text, monospaced: true)
+        Text(text).font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(CompanionBrand.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
     }
 }
 
@@ -788,10 +809,10 @@ private struct VerdictBadge: View {
         }()
         return HStack(spacing: 5) {
             Circle().fill(tint).frame(width: 5, height: 5)
-            Text(label.uppercased())
-                .font(.appUI(size: 9.5, weight: .semibold))
+            Text(label)
+                .font(.system(size: 12, weight: .medium))
                 .tracking(0.5)
-                .foregroundStyle(Instrument.inkSecondary)
+                .foregroundStyle(CompanionBrand.secondary)
         }
             .help("Projected peak: \(ByteFormatter.bytes(projectedFootprint))")
     }

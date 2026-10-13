@@ -9,7 +9,7 @@ enum CompanionBrand {
     static var inset: Color { .dynamic(light: 0xE8E8E8, dark: 0x080808, oled: 0x050505) }
     static var stroke: Color { .dynamic(light: 0xA4A4A4, dark: 0x777777, oled: 0x777777) }
     static let ink = Color.dynamic(light: 0x202124, dark: 0xF4F4F2, oled: 0xF4F4F2)
-    static let secondary = Color.dynamic(light: 0x606166, dark: 0xB2B5BD, oled: 0xB2B5BD)
+    static let secondary = Color.dynamic(light: 0x505156, dark: 0xCACBD0, oled: 0xCACBD0)
     static let accent = Color.fixed(0xBD2939)
     static let accentInk = Color.dynamic(light: 0xAD2030, dark: 0xFF7B88, oled: 0xFF7B88)
     static let accentWash = Color.dynamic(light: 0xFCE9E9, dark: 0x382126, oled: 0x301B21)
@@ -83,13 +83,13 @@ struct CompanionPageHeading: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(eyebrow).textCase(.uppercase)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .tracking(1.8).foregroundStyle(CompanionBrand.secondary)
-            Text(title).textCase(.uppercase).font(CompanionBrand.display(34))
-                .tracking(0.3).foregroundStyle(CompanionBrand.ink)
-                .shadow(color: CompanionBrand.stroke.opacity(0.6), radius: 0, x: 1, y: 1)
-            Text(subtitle).font(.system(size: 13))
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .tracking(1.2).foregroundStyle(CompanionBrand.secondary)
+            Text(title).font(.system(size: 25, weight: .semibold))
+                .tracking(-0.4).foregroundStyle(CompanionBrand.ink)
+            Text(subtitle).font(.system(size: 14))
                 .foregroundStyle(CompanionBrand.secondary)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,7 +104,7 @@ struct CompanionStatusPill: View {
         HStack(spacing: 7) {
             Circle().fill(isReady ? Theme.positive : CompanionBrand.secondary)
                 .frame(width: 6, height: 6)
-            Text(title).font(.system(size: 11, weight: .medium))
+            Text(title).font(.system(size: 12, weight: .medium))
         }
         .foregroundStyle(CompanionBrand.ink)
         .padding(.horizontal, 11).padding(.vertical, 7)
@@ -141,7 +141,7 @@ struct CompanionNavigationButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(CompanionBrand.display(17))
+            .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(isSelected ? CompanionBrand.canvas : CompanionBrand.secondary)
             .padding(.horizontal, 18).frame(height: 36)
             .background(isSelected ? CompanionBrand.ink : Color.clear,
@@ -165,9 +165,9 @@ struct CompanionArcadeButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .textCase(.uppercase).font(CompanionBrand.display(17))
+            .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(primary ? CompanionBrand.canvas : CompanionBrand.ink)
-            .padding(.horizontal, 14).frame(minHeight: 34)
+            .padding(.horizontal, 14).frame(minHeight: 36)
             .background(primary ? CompanionBrand.ink : CompanionBrand.surface,
                         in: RoundedRectangle(cornerRadius: 3))
             .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(CompanionBrand.ink, lineWidth: 1))
