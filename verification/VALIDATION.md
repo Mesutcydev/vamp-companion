@@ -1,5 +1,41 @@
 # Vamp Companion 0.1.0 validation
 
+
+## App Stream Store Tailscale support — 2026-10-13
+
+- App Stream 1.0 build 12 supports private Tailscale connections to Sync,
+  Assistant, and Companion, alongside physical LAN connections. Saved peers,
+  reconnects, ordinary requests, and streaming use the same network validation.
+- Tailnet destinations require an active tunnel carrying a Tailscale address.
+  Public destinations, unconnected tunnels, and HTTP redirects remain blocked.
+  Existing pairing, TLS, and host permissions are preserved.
+- DNS answers are validated and pinned to the actual request. Allowed IPv4
+  answers are preferred for Assistant/Companion listener compatibility; IPv6
+  remains a fallback. MagicDNS requires Tailscale DNS enabled on the client.
+- All 676 current Stream backend tests and 89 iOS unit tests passed. Linux host
+  tests (24) and browser tests (1) passed, and all four active app targets built.
+- The production network policy accepted a live remote Tailscale IP through
+  the Mac's active tunnel and rejected a public address. The Mac has Tailscale
+  DNS disabled, so live MagicDNS and physical iPhone streaming were not verified.
+- App Stream's signed Store archive and exported IPA retain its current artwork,
+  splash, identity, and App Store distribution channel. Build 12 is available
+  to the existing Internal Testers group in TestFlight.
+- Companion 0.1.3 build 4 updates Devices guidance and is Developer ID signed,
+  notarized, stapled, and installed. Its previous models, pairing, and hosting
+  choice were restored; the separate Sync process remained on its own port.
+- [Release CI](https://github.com/Mesutcydev/vamp-companion/actions/runs/38364982585)
+  passed 1,134 backend tests (51 optional skips), two companion UI tests,
+  the unchanged iOS suite (48 unit and 12 UI tests, five optional UI skips),
+  and both Mac and iOS Release builds. One initial iOS session-teardown test
+  crashed; the unchanged full iOS job passed on rerun.
+- The public notarized archive was independently downloaded and verified:
+  15,246,383 bytes, SHA-256
+  `1fd7939dfc4958cf2853c89764b57572f8fcaea3022af6970ccdbb54701e16e8`.
+  The signed feed was published only after public archive verification.
+- Apple guideline 4.2.7 still specifies LAN for focused streaming clients.
+  Tailscale is disclosed in review notes; internal TestFlight is not App Store
+  approval. See [Apple's current rule](https://developer.apple.com/app-store/review/guidelines/#minimum-functionality).
+
 ## App Stream home scanner compatibility — 2026-10-13
 
 - App Stream 1.0 build 10 fixes the home scanner's Sync-only QR routing.
