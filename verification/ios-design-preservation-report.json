@@ -7,9 +7,10 @@
   "protectedRegions": "ios-protected-design-sha256.json",
   "localTests": {
     "unit": 48,
-    "ui": 18,
+    "ui": 19,
     "optionalUISkips": 5,
-    "failures": 0
+    "failures": 0,
+    "finalHomepageRerun": 4
   },
   "composerRenders": [
     {
@@ -43,5 +44,6 @@
     "Physical iPhone and Tailscale remote inference",
     "Concurrent live provider accounts",
     "Physical sleep/wake reconnection"
-  ]
+  ],
+  "finalBuild": "0.10.55 (136)"
 }

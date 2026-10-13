@@ -17,7 +17,8 @@ Reduce Motion stops those effects and press scaling. Controls remain at least
 
 Models, Control, Bots, and Share open the existing workflows. Quick starts
 prefill the existing new-session form for review; they never submit work
-without an explicit Start action. Active conversations can be resumed directly.
+without an explicit Start action. Active conversations can be resumed directly. Two are featured; every additional
+active or queued conversation stays reachable in the recent list.
 Search, pull to refresh, rename, delete, Settings, and New remain available.
 Offline state retains cached conversations and disables new work. Decorative
 thumbnails have been removed from chat list rows and transcript speaker headers.
@@ -50,7 +51,7 @@ iOS target identity and scheme, shared palette, and composer button surfaces.
 The current display name and App Store Connect record are **Vamp Companion**
 (ID 6822249541). This is the existing Assistant client, bundle
 `com.beetcode.remote.ios`, distinct from App Stream's
-`com.mesutcy.remotedesktop.stream`. The next archive uses 0.10.55, build 135.
+`com.mesutcy.remotedesktop.stream`. The final archive uses 0.10.55, build 136.
 The user authorized distribution to the existing internal TestFlight group
 **mes**. No other tester invitations or App Store submission are included.
 
@@ -58,7 +59,7 @@ The user authorized distribution to the existing internal TestFlight group
 
 Run the existing iOS unit and UI suites, Companion hub tests, and homepage UI
 checks. The homepage checks cover light/dark model state, reviewed quick-start
-prompts, active-session navigation, and offline history/disabled starters.
+prompts, active-session navigation, offline history/disabled starters, and multiple active/queued conversations.
 Native composer renders are compared against the current original source in
 both appearances. DEBUG fixtures use temporary in-memory credentials and
 stubbed loopback API calls; they do not restore a real paired Mac or submit

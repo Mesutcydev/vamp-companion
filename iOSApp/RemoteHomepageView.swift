@@ -18,11 +18,11 @@ struct RemoteHomeOverview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            RemoteHomeHeading(connected: store.isConnected, running: activity.count)
+            RemoteHomeHeading(connected: store.isConnected, running: store.sessions.filter(\.isRunning).count)
             RemoteHomeConsole(name: store.activeComputerName,
                 subtitle: store.connectionSubtitle, connected: store.isConnected,
                 connecting: store.isConnecting || store.isRefreshing,
-                working: store.isConnected && (store.hostStatus?.isRunning == true || !activity.isEmpty),
+                working: store.isConnected && (store.hostStatus?.isRunning == true || store.sessions.contains(where: \.isRunning)),
                 queued: store.hostStatus?.queuedTasks ?? 0,
                 model: store.isConnected ? store.loadedLocalModel?.name : nil,
                 modelCount: store.startModels.count, onMac: onMac,

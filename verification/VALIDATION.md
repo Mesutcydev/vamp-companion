@@ -214,8 +214,8 @@ data is used as a test fixture.
   starts, and recent conversations. Session and transcript header thumbnails
   were removed. An atomic presentation request carries the selected prompt
   or model into the existing form; cancellation clears it before a fresh New.
-- The final local simulator run passed **48 unit tests and 18 UI cases**
-  (five optional UI skips, zero failures). The three new homepage cases check
+- The complete local simulator run passed **48 unit tests and 18 UI cases**
+  (five optional UI skips, zero failures). The initial three homepage cases check
   both appearances, prompt review and cancellation reset, offline history and
   disabled starters, and active conversation navigation. Six composer UI cases
   and both Companion hub cases passed with the existing suite.
@@ -228,3 +228,12 @@ data is used as a test fixture.
 - Physical phone remote inference, full concurrent live provider-account
   workflows, and physical sleep/wake reconnection remain unverified. No real
   Mac credentials, original app data, or user workspaces were test fixtures.
+
+- Final busy-state review found that the compact featured section could omit
+  conversations beyond its first two entries. Additional active and queued
+  conversations now remain in the recent list. Running status counts only
+  running work. A fourth homepage case opens an additional queued conversation
+  and verifies its exact ID; all four homepage cases passed. The combined suite
+  now contains 48 unit and 19 UI cases, with five optional UI skips.
+  Build 135 was successfully processed by Apple but is superseded by the final
+  0.10.55 (136) archive with this correction.

@@ -45,6 +45,19 @@ final class HomepageUITests: XCTestCase {
         capture(app, name: "homepage-offline-dark")
     }
 
+    func testAdditionalActiveAndQueuedChatsRemainReachable() {
+        let app = launch(appearance: "dark", state: "busy")
+        XCTAssertTrue(app.staticTexts["Qwen3.5 9B"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["remote.home.activity.11111111-1111-1111-1111-111111111111"].exists)
+        app.scrollViews.firstMatch.swipeUp()
+        let queued = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Review queued changes")).firstMatch
+        XCTAssertTrue(queued.waitForExistence(timeout: 5))
+        queued.tap()
+        let opened = app.staticTexts["remote.home.fixture-opened"]
+        XCTAssertTrue(opened.waitForExistence(timeout: 5))
+        XCTAssertTrue(opened.label.contains("44444444-4444-4444-4444-444444444444"))
+    }
+
     private func launch(appearance: String, state: String) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()

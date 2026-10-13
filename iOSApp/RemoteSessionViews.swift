@@ -74,7 +74,9 @@ struct SessionListView: View {
     @State private var deferredSessionID: UUID?
     private var visible: [RemoteSessionSummary] { search.isEmpty ? store.sessions : store.sessions.filter { $0.title.localizedCaseInsensitiveContains(search) || $0.workspace.localizedCaseInsensitiveContains(search) } }
     private var history: [RemoteSessionSummary] {
-        search.isEmpty ? visible.filter { !$0.isRunning && $0.queueState != "queued" } : visible
+        guard search.isEmpty else { return visible }
+        let featured = Set(visible.filter { $0.isRunning || $0.queueState == "queued" }.prefix(2).map(\.id))
+        return visible.filter { !featured.contains($0.id) }
     }
     var body: some View {
         ZStack {
