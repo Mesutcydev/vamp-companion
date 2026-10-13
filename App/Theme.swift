@@ -49,7 +49,7 @@ enum Theme {
     // as one machined object. It now reads as a Mac app: every surface and ink
     // resolves through AppKit's semantic colors, which already answer light,
     // dark, increased contrast, and inactive windows correctly.
-    static var workspaceCanvas: Color { systemSurface(.windowBackgroundColor) }
+    static var workspaceCanvas: Color { CompanionBrand.canvas }
     static var navigationSurface: Color { systemSurface(.controlBackgroundColor) }
     static var headerSurface: Color { systemSurface(.windowBackgroundColor) }
     static var readingSurface: Color { systemSurface(.textBackgroundColor) }
@@ -89,11 +89,11 @@ enum Theme {
 
     // Shared neutral aliases used by reading, settings, and transient surfaces.
     static var bg: Color { workspaceCanvas }
-    static var surface     : Color { Color(nsColor: .controlBackgroundColor) }
+    static var surface     : Color { CompanionBrand.surface }
     /// Code, diff, and log bodies sit on the text surface. (`underPageBackground`
     /// is the desktop's dark "behind the page" texture — as a card fill it
     /// turned every diff into a grey slab.)
-    static var surfaceInset: Color { Color(nsColor: .textBackgroundColor) }
+    static var surfaceInset: Color { CompanionBrand.inset }
     static let hairline = Color(nsColor: .separatorColor)
     static let composerStroke = Color(nsColor: .separatorColor)
     static let sidebarWash = Color.clear
@@ -165,13 +165,13 @@ enum Theme {
     })
 
     // Accent — resolved live from the user's palette choice.
-    static var accent: Color { paletteColor(light: \.accentLight, dark: \.accentDark) }
-    static var accentBright: Color { paletteColor(light: \.brightLight, dark: \.brightDark) }
+    static var accent: Color { CompanionBrand.accent }
+    static var accentBright: Color { CompanionBrand.accentInk }
     /// Accent for FOREGROUND use — text, glyphs, chips. `accent` is a fill
     /// (white text sits on it), which pins its dark value low enough to fail
     /// AA when it is used the other way round. This keeps the light value and
     /// lifts the dark one to the bright step: 5.2–5.9:1 instead of 3.3–3.8:1.
-    static var accentText: Color { paletteColor(light: \.accentLight, dark: \.brightDark) }
+    static var accentText: Color { CompanionBrand.accentInk }
     static var accentSoft: Color { accent.opacity(0.14) }
 
     static let success = positive

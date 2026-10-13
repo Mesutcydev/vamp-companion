@@ -32,6 +32,8 @@ struct CompanionSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                CompanionPageHeading(eyebrow: "Preferences", title: "Make it yours.",
+                                     subtitle: "Connect your providers and choose what paired devices can access.")
                 CompanionGeneralSettings()
                 SettingsCard(title: "Connections", icon: "key") {
                     Text("Set up API providers here or from Settings in the paired iOS app.")
@@ -43,7 +45,7 @@ struct CompanionSettingsView: View {
                 HuggingFaceProviderCard()
                 CompanionPermissionsSettings()
                 AppUpdateSettings()
-            }.padding(24)
+            }.padding(CompanionBrand.pageInset)
         }
         .accessibilityIdentifier("companion-settings")
     }
@@ -155,6 +157,7 @@ struct CompanionProviderSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
+                CompanionBrandBadge(size: 32)
                 Text("API providers & accounts").font(.title3.weight(.semibold))
                 Spacer()
                 Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -166,6 +169,6 @@ struct CompanionProviderSheet: View {
             }
         }
         .frame(width: 660, height: 580)
-        .background(Theme.workspaceCanvas)
+        .background(CompanionBrand.canvas)
     }
 }

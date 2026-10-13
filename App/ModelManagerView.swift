@@ -58,20 +58,26 @@ struct ModelManagerView: View {
 
             // Library section switch. Order follows what you already have;
             // each segment stays individually reachable from UI tests.
-            InstrumentSegmentedControl(
-                selection: $libraryFilter,
-                options: [("Downloaded", "Downloaded"),
-                          ("Connected", "Connected models"),
-                          ("Discover", "Discover")])
-                .frame(maxWidth: 360)
-                .padding(.vertical, 16)
+            Picker("Model library filter", selection: $libraryFilter) {
+                Text("Downloaded").tag("Downloaded")
+                Text("Connected").tag("Connected models")
+                Text("Discover").tag("Discover")
+            }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 390)
+                .padding(.vertical, 20)
                 .accessibilityLabel("Model library filter")
 
             if libraryFilter == "Connected models" {
                 ModelPickerPopover()
                     .frame(height: 520)
             } else if embedded {
-                LocalModelsSection(query: searchText, installedOnly: libraryFilter == "Downloaded")
+                LocalModelsSection(query: searchText, installedOnly: libraryFilter == "Downloaded",
+                                   importing: importInProgress,
+                                   onDiscover: { searchText = ""; libraryFilter = "Discover" },
+                                   onImport: importModel,
+                                   onClearSearch: { searchText = "" })
             } else {
                 ScrollView {
                     LocalModelsSection(query: searchText, installedOnly: libraryFilter == "Downloaded")
@@ -124,8 +130,9 @@ struct ModelManagerView: View {
                                 .controlSize(.small)
                                 .help("Importing model…")
                         } else {
-                            Button("Import…", action: onImport)
-                                .buttonStyle(LFCapsuleButtonStyle(height: 34))
+                            Button("Import…", systemImage: "square.and.arrow.down", action: onImport)
+                                .buttonStyle(.bordered)
+                                .controlSize(.large)
                                 .help("Import a local MLX, GGUF, or Apple Core AI model pack")
                         }
                     }
@@ -134,13 +141,15 @@ struct ModelManagerView: View {
                 HStack {
                     Label(device.summary, systemImage: "desktopcomputer")
                     Spacer()
-                    Label("\(ByteFormatter.bytes(freeBytes)) available memory", systemImage: "circle.fill")
+                    Label("\(ByteFormatter.bytes(freeBytes)) available", systemImage: "memorychip")
                         .foregroundStyle(Theme.positive)
                 }
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .companionCard()
         }
 
     }
@@ -476,6 +485,10 @@ private struct LocalModelsSection: View {
     @EnvironmentObject private var appState: AppState
     let query: String
     var installedOnly = false
+    var importing = false
+    var onDiscover: (() -> Void)?
+    var onImport: (() -> Void)?
+    var onClearSearch: (() -> Void)?
     private let device = DeviceProfile.current()
 
     var body: some View {
@@ -496,9 +509,10 @@ private struct LocalModelsSection: View {
         }
         LazyVStack(alignment: .leading, spacing: Spacing.lg) {
             if sections.isEmpty {
-                ContentUnavailableView(installedOnly ? "No downloaded models" : "No matching models", systemImage: "shippingbox", description: Text(installedOnly ? "Find a model in Discover and download it to get started." : "Try a different name or model family."))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .multilineTextAlignment(.center)
+                CompanionModelEmptyState(isDownloaded: installedOnly && normalizedQuery.isEmpty,
+                                         importing: importing,
+                                         onDiscover: onDiscover, onImport: onImport,
+                                         onClearSearch: normalizedQuery.isEmpty ? nil : onClearSearch)
             } else {
                 ForEach(sections) { section in
                     LazyVStack(alignment: .leading, spacing: 10) {
@@ -512,6 +526,51 @@ private struct LocalModelsSection: View {
                 }
             }
         }
+    }
+}
+
+private struct CompanionModelEmptyState: View {
+    let isDownloaded: Bool
+    let importing: Bool
+    let onDiscover: (() -> Void)?
+    let onImport: (() -> Void)?
+    let onClearSearch: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: isDownloaded ? "square.stack.3d.up" : "magnifyingglass")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(CompanionBrand.accentInk)
+                .frame(width: 62, height: 62)
+                .background(CompanionBrand.accentWash, in: RoundedRectangle(cornerRadius: 18))
+                .accessibilityHidden(true)
+            VStack(spacing: 6) {
+                Text(isDownloaded ? "No downloaded models" : "No matching models")
+                    .font(.system(size: 17, weight: .semibold))
+                Text(isDownloaded
+                     ? "Your local library starts here. Discover a model or import one you already have."
+                     : "Try another name or model family.")
+                    .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
+                    .frame(maxWidth: 350)
+            }
+            HStack(spacing: 10) {
+                if isDownloaded, let onDiscover {
+                    Button("Discover models", action: onDiscover).buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("companion-discover-models")
+                }
+                if isDownloaded, let onImport {
+                    Button("Import…", action: onImport).buttonStyle(.bordered).disabled(importing)
+                }
+                if let onClearSearch {
+                    Button("Clear search", action: onClearSearch).buttonStyle(.bordered)
+                }
+            }
+        }
+        .multilineTextAlignment(.center)
+        .padding(28)
+        .frame(maxWidth: .infinity, minHeight: 255, alignment: .center)
+        .companionCard()
+        .accessibilityIdentifier("companion-empty-library")
     }
 }
 
@@ -553,7 +612,7 @@ private struct SectionHeader: View {
                 .fill(Instrument.seam.opacity(0.45))
                 .frame(height: 0.75)
         }
-        .foregroundStyle(Instrument.engraved)
+        .foregroundStyle(CompanionBrand.secondary)
         .padding(.horizontal, 4)
     }
 }
@@ -632,16 +691,11 @@ private struct ModelCard: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(LinearGradient(
-                    colors: [Theme.sectionSurfaceTop, Theme.sectionSurface, Theme.sectionSurfaceBottom],
-                    startPoint: .top, endPoint: .bottom)))
+        .background(CompanionBrand.surface, in: RoundedRectangle(cornerRadius: CompanionBrand.radius))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(isActive ? Theme.positive : Theme.sectionStroke,
+            RoundedRectangle(cornerRadius: CompanionBrand.radius, style: .continuous)
+                .strokeBorder(isActive ? Theme.positive : CompanionBrand.stroke,
                               lineWidth: isActive ? 1.5 : 1))
-        .shadow(color: Theme.cardShadow, radius: 6, y: 2)
     }
 
     /// Parameters, precision and size as scannable chips rather than one run-on

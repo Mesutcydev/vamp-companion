@@ -70,14 +70,23 @@ struct VampCompanionApp: App {
     @ObservedObject private var settings = SettingsStore.shared
     @State private var navigation = CompanionNavigation.shared
 
+    private var displayAppearance: AppAppearance {
+        // CI screenshots exercise both appearances without modifying anyone's
+        // saved preferences. This override exists only in the test host.
+        if AppState.isTestHost,
+           let value = ProcessInfo.processInfo.environment["VAMP_COMPANION_TEST_APPEARANCE"],
+           let appearance = AppAppearance(rawValue: value) { return appearance }
+        return settings.appearance
+    }
+
     var body: some Scene {
         Window("Vamp Companion", id: "companion") {
             CompanionShell(navigation: navigation)
                 .environmentObject(appState)
                 .environmentObject(appState.sessions)
                 .tint(Theme.accent)
-                .preferredColorScheme(settings.appearance.colorScheme)
-                .onChange(of: settings.appearance, initial: true) { _, appearance in
+                .preferredColorScheme(displayAppearance.colorScheme)
+                .onChange(of: displayAppearance, initial: true) { _, appearance in
                     Theme.applyAppearance(appearance)
                 }
                 .modifier(ThemeSync(palette: settings.accentPalette,
@@ -101,7 +110,9 @@ private struct CompanionMenuLabel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: "macbook.and.iphone")
+        CompanionVampMark()
+            .fill(.primary, style: FillStyle(eoFill: true))
+            .frame(width: 20, height: 20)
             .accessibilityLabel("Vamp Companion")
             .onReceive(NotificationCenter.default.publisher(for: .openCompanionWindow)) { _ in
                 openWindow(id: "companion")

@@ -42,6 +42,12 @@ off by default. Quit stops the companion and its registered child processes.
 
 ## Independent from Vamp Assistant
 
+Companion's Mac interface uses the Vamp screen-and-fangs mark, a distinct app
+icon, graphite and warm white surfaces, and restrained red accents. The reusable
+[brand kit](brandkit/index.html) includes vector assets and design tokens. The
+Mac icon is generated only into the separate Companion asset catalog; inherited
+iOS and Assistant assets are unchanged.
+
 This is an independent copy of the current working Vamp Assistant source.
 The original Mac and iOS applications are unchanged. The companion uses
 `com.beetcode.companion`, Application Support/VampCompanion, separate Keychain

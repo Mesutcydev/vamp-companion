@@ -36,4 +36,32 @@ final class CompanionUITests: XCTestCase {
         XCTAssertTrue(app.windows["companion"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.windows.matching(identifier: "companion").count, 1)
     }
+
+    func testEmptyLibraryOpensDiscoverAndBothAppearancesKeepNavigation() {
+        for appearance in ["light", "dark"] {
+            let app = XCUIApplication()
+            app.launchEnvironment["VAMP_COMPANION_UI_TESTING"] = "1"
+            app.launchEnvironment["VAMP_COMPANION_TEST_APPEARANCE"] = appearance
+            app.launch()
+            let discover = app.buttons["companion-discover-models"]
+            XCTAssertTrue(discover.waitForExistence(timeout: 30))
+            saveScreenshot(app, name: "\(appearance)-models")
+            discover.click()
+            XCTAssertTrue(app.staticTexts["Recommended for this Mac"].firstMatch.waitForExistence(timeout: 15))
+            app.buttons["companion-tab-devices"].click()
+            XCTAssertTrue(app.buttons["companion-enable-access"].waitForExistence(timeout: 10))
+            saveScreenshot(app, name: "\(appearance)-devices")
+            app.buttons["companion-tab-settings"].click()
+            XCTAssertTrue(app.buttons["companion-manage-providers"].waitForExistence(timeout: 10))
+            saveScreenshot(app, name: "\(appearance)-settings")
+            app.terminate()
+        }
+    }
+
+    private func saveScreenshot(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.windows["companion"].screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 }

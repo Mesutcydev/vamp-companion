@@ -7,13 +7,19 @@ struct CompanionShell: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CompanionHeader(selection: $navigation.destination)
-            Divider()
+            CompanionHeader(selection: $navigation.destination,
+                            hostRunning: appState.remoteSessionRunning)
+            Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
             Group {
                 switch navigation.destination {
                 case .models:
                     ScrollView {
-                        ModelManagerView(embedded: true).padding(20)
+                        VStack(alignment: .leading, spacing: 24) {
+                            CompanionPageHeading(eyebrow: "Model library", title: "Your models. Your Mac.",
+                                                 subtitle: "Download a local model or connect a provider. Run it from your iPhone.")
+                            ModelManagerView(embedded: true)
+                        }
+                        .padding(CompanionBrand.pageInset)
                     }
                     .accessibilityIdentifier("companion-models")
                 case .devices:
@@ -23,7 +29,7 @@ struct CompanionShell: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
+            Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
             CompanionRuntimeStatus(
                 hostRunning: appState.remoteSessionRunning,
                 hostEnabled: appState.settings.remoteSessionEnabled,
@@ -31,7 +37,7 @@ struct CompanionShell: View {
                 isWorking: appState.sessions.isRunning)
         }
         .frame(minWidth: 600, minHeight: 520)
-        .background(Theme.workspaceCanvas)
+        .background(CompanionBrand.canvas)
         .sheet(isPresented: $navigation.showsProviders) {
             CompanionProviderSheet()
                 .environmentObject(appState)
@@ -54,37 +60,42 @@ struct CompanionShell: View {
 
 private struct CompanionHeader: View {
     @Binding var selection: CompanionDestination
+    let hostRunning: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "macbook.and.iphone")
-                    .font(.system(size: 25))
-                    .foregroundStyle(Theme.accentText)
-                    .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 13) {
+                CompanionBrandBadge()
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Vamp Companion").font(.title2.weight(.semibold))
-                    Text("Run your iPhone assistant on this Mac.")
-                        .font(.callout).foregroundStyle(Theme.textSecondary)
+                    Text("VAMP").font(.system(size: 27, weight: .heavy, design: .rounded))
+                        .tracking(1.5).foregroundStyle(CompanionBrand.ink)
+                    Text("Companion").font(.system(size: 11, weight: .medium))
+                        .tracking(1.5).foregroundStyle(CompanionBrand.secondary)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Vamp Companion")
                 Spacer()
+                CompanionStatusPill(title: hostRunning ? "iPhone access ready" : "iPhone access off",
+                                    isReady: hostRunning)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(CompanionDestination.allCases) { destination in
                     Button {
                         selection = destination
                     } label: {
                         Label { Text(destination.title) } icon: { Image(systemName: destination.symbol) }
-                            .frame(minWidth: 100)
+                            .frame(minWidth: 72)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(selection == destination ? Theme.accent : .secondary)
+                    .buttonStyle(CompanionNavigationButtonStyle(isSelected: selection == destination))
+                    .accessibilityAddTraits(selection == destination ? [.isSelected] : [])
                     .accessibilityIdentifier("companion-tab-\(destination.rawValue)")
                 }
                 Spacer()
             }
         }
-        .padding(20)
+        .padding(.horizontal, CompanionBrand.pageInset)
+        .padding(.top, 18).padding(.bottom, 14)
+        .background(CompanionBrand.canvas)
     }
 }
 
@@ -96,7 +107,7 @@ private struct CompanionRuntimeStatus: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(hostRunning ? Color.green : Color.secondary).frame(width: 6, height: 6)
+            Image(systemName: "macbook.and.iphone").accessibilityHidden(true)
             Text(hostRunning ? "iPhone access ready" : hostEnabled ? "Connecting…" : "iPhone access off")
             Spacer()
             if isWorking { ProgressView().controlSize(.mini); Text("Assistant is working") }
@@ -109,8 +120,9 @@ private struct CompanionRuntimeStatus: View {
                 }
             }
         }
-        .font(.caption).foregroundStyle(Theme.textSecondary)
-        .padding(.horizontal, 20).padding(.vertical, 12)
+        .font(.system(size: 11)).foregroundStyle(CompanionBrand.secondary)
+        .padding(.horizontal, CompanionBrand.pageInset).padding(.vertical, 12)
+        .background(CompanionBrand.canvas)
     }
 }
 
@@ -133,10 +145,8 @@ struct CompanionDevicesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Pair your iPhone or iPad").font(.title3.weight(.semibold))
-                Text("Open Vamp Assistant or App Stream on iPhone or iPad and scan this Mac’s pairing code. App Stream 1.0 build 11 supports local Wi-Fi and private Tailscale connections. Your assistant runs here, even when this window is closed.")
-                    .font(.callout).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CompanionPageHeading(eyebrow: "Device connections", title: "Your Mac, within reach.",
+                                     subtitle: "Scan the code with Vamp Assistant or App Stream on your iPhone or iPad.")
                 if !settings.remoteSessionEnabled {
                     CompanionAccessSetup(allowLAN: $setupAllowLAN) {
                         settings.remoteSessionAllowLAN = setupAllowLAN
@@ -144,8 +154,10 @@ struct CompanionDevicesView: View {
                         settings.remoteSessionEnabled = true
                     }
                 } else {
-                    Toggle("iPhone access", isOn: $settings.remoteSessionEnabled).toggleStyle(.switch)
-                    Toggle("Allow trusted local Wi-Fi", isOn: $settings.remoteSessionAllowLAN)
+                    SettingsCard(title: "Connection", icon: "wifi") {
+                        SettingToggle(label: "iPhone access", isOn: $settings.remoteSessionEnabled)
+                        SettingToggle(label: "Allow trusted local Wi-Fi", isOn: $settings.remoteSessionAllowLAN)
+                    }
                     if appState.remoteSessionRunning {
                         if appState.remoteNetworkKind == .tailscale,
                            appState.remoteLocalPairingURL != nil {
@@ -157,7 +169,9 @@ struct CompanionDevicesView: View {
                             .accessibilityIdentifier("companion-pairing-network")
                             .onChange(of: pairsOverWiFi) { _, _ in copied = false }
                         }
-                        Text("Choose Local Wi-Fi when both devices are on the same network. To connect remotely with App Stream build 11 or later, connect both devices to your private Tailscale network and choose Tailscale.")
+                        Text(usesWiFi
+                             ? "Keep both devices on the same trusted Wi-Fi network."
+                             : "Connect both devices to the same private Tailscale network. App Stream build 12 or later supports this connection.")
                             .font(.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         CompanionPairingCard(
@@ -183,7 +197,7 @@ struct CompanionDevicesView: View {
                                 .disabled(appState.remotePairedClientCount == 0)
                         }
                         .buttonStyle(.bordered)
-                        Text("\(appState.remotePairedClientCount) paired devices")
+                        Label("\(appState.remotePairedClientCount) paired devices", systemImage: "checkmark.shield")
                             .font(.caption).foregroundStyle(Theme.textSecondary)
                     } else if let error = appState.remoteSessionError {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -192,10 +206,14 @@ struct CompanionDevicesView: View {
                         ProgressView("Starting iPhone access…")
                     }
                 }
-                Text("For access away from home, connect both devices to Tailscale. Clipboard, file sharing, and Mac control can be enabled separately in Settings.")
-                    .font(.caption).foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }.padding(24)
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "lock.shield").foregroundStyle(CompanionBrand.accentInk)
+                    Text("Your assistant keeps running when this window is closed. Choose clipboard, file sharing, and Mac control access in Settings.")
+                        .font(.caption).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(16).companionCard()
+            }.padding(CompanionBrand.pageInset)
         }
         .accessibilityIdentifier("companion-devices")
         .onAppear {
@@ -225,7 +243,7 @@ private struct CompanionAccessSetup: View {
                 .accessibilityIdentifier("companion-enable-access")
         }
         .padding(20)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .companionCard()
     }
 }
 
@@ -238,12 +256,18 @@ private struct CompanionPairingCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 24) {
-            if let url { RemoteQRCodeView(value: url).frame(width: 170, height: 170) }
+            if let url {
+                RemoteQRCodeView(value: url).frame(width: 150, height: 150)
+                    .padding(12).background(.white, in: RoundedRectangle(cornerRadius: 12))
+            }
             VStack(alignment: .leading, spacing: 10) {
                 Label(networkKind == .tailscale ? "Tailscale connected" : "Trusted local Wi-Fi",
                       systemImage: networkKind == .tailscale ? "lock.shield" : "wifi")
-                    .font(.callout).foregroundStyle(Theme.textSecondary)
-                Text(code).font(.system(size: 30, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(CompanionBrand.secondary)
+                Text("Pairing code").font(.system(size: 10, weight: .semibold))
+                    .textCase(.uppercase).tracking(1.2).foregroundStyle(CompanionBrand.secondary)
+                Text(code).font(.system(size: 34, weight: .medium, design: .monospaced))
+                    .tracking(3).foregroundStyle(CompanionBrand.ink)
                     .textSelection(.enabled)
                 if let expires { Text("Expires \(expires, style: .relative)").font(.caption) }
                 if let address {
@@ -253,7 +277,7 @@ private struct CompanionPairingCard: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(20)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .padding(22)
+        .companionCard()
     }
 }

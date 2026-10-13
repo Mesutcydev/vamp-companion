@@ -15,20 +15,22 @@ struct SettingsCard<Content: View>: View {
             VStack(alignment: .leading, spacing: Spacing.sm) {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Instrument.engraved)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(CompanionBrand.accentInk)
+                        .frame(width: 27, height: 27)
+                        .background(CompanionBrand.accentWash, in: RoundedRectangle(cornerRadius: 8))
                     Text(title)
-                        .font(.appUI(size: 13, weight: .semibold))
-                        .foregroundStyle(Instrument.ink)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(CompanionBrand.ink)
                     Spacer(minLength: 0)
                 }
                 VStack(alignment: .leading, spacing: Spacing.sm) {
                     content
                 }
             }
-            .padding(Chrome.cardHPadding)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .instrumentFaceplate(radius: Radius.card, shadow: false)
+            .companionCard()
 
             if let footer {
                 Text(footer)
