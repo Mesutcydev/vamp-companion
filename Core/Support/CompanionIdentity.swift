@@ -1,6 +1,7 @@
 import Foundation
 
-/// App-owned state must never use Vamp Assistant's persistence namespaces.
+/// App-owned state uses separate namespaces. Only model weights/metadata may
+/// be read from Vamp Assistant through the authorized shared model library.
 enum CompanionIdentity {
     static let bundleIdentifier = "com.beetcode.companion"
     static let supportDirectoryName = "VampCompanion"

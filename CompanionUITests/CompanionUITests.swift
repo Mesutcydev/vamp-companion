@@ -72,4 +72,40 @@ final class CompanionUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    func testAssistantModelIsAvailableWithoutDownloadAndHidingKeepsItsFiles() throws {
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vamp-companion-shared-ui-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            if FileManager.default.fileExists(atPath: fixture.path) {
+                try? FileManager.default.removeItem(at: fixture)
+            }
+        }
+        let own = fixture.appendingPathComponent("VampCompanion/Models", isDirectory: true)
+        let assistant = fixture.appendingPathComponent("BeetCode", isDirectory: true)
+        let weights = assistant.appendingPathComponent("Models/shared-ui-fixture/model.gguf")
+        try FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: weights.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture weights".utf8).write(to: weights)
+        let app = XCUIApplication()
+        app.launchEnvironment["VAMP_COMPANION_UI_TESTING"] = "1"
+        app.launchEnvironment["VAMP_COMPANION_UI_MODEL_ROOT"] = own.path
+        app.launchEnvironment["VAMP_COMPANION_UI_ASSISTANT_ROOT"] = assistant.path
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["companion-tab-models"].click()
+        let row = app.descendants(matching: .any)["companion-model-row-shared-ui-fixture"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@",
+            "Shared with Vamp Assistant", "Shared with Vamp Assistant")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["Load"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Download"].exists)
+        saveScreenshot(app, name: "assistant-shared-model")
+        app.descendants(matching: .any)["More actions for shared ui fixture"].firstMatch.click()
+        app.menuItems["Hide from Companion…"].click()
+        XCTAssertTrue(app.buttons["Hide"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Hide"].firstMatch.click()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: weights.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: own.appendingPathComponent("shared-ui-fixture").path))
+    }
 }

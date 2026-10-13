@@ -2,8 +2,9 @@
 
 Vamp Companion is a separate macOS host for the existing Vamp Assistant iOS
 app. Work only in this repository. Never edit or publish to the original
-`vamp-assistant` repository or use its preferences, Keychain services, model
-folders, checkpoint refs, or update-signing key.
+`vamp-assistant` repository or use its preferences, Keychain services,
+checkpoint refs, or update-signing key. The user explicitly authorized sharing
+its downloaded model files on 2026-10-13; see the model-sharing exception below.
 
 ## Product contract
 
@@ -24,8 +25,12 @@ folders, checkpoint refs, or update-signing key.
   Mac identity. Never replay mutations automatically while changing routes.
 - Companion identity is `com.beetcode.companion`; Application Support is
   `VampCompanion`; default hosting port is 9675; checkpoint refs are under
-  `refs/vamp-companion/checkpoints/`. No legacy migration or model discovery
-  from the original app is allowed.
+  `refs/vamp-companion/checkpoints/`. No legacy migration is allowed.
+- Model sharing is a narrow exception: discover complete weights using
+  Assistant's `BeetCode/Models` library, model catalog, and explicit external
+  model references. Read those files in place; never move, overwrite, or delete
+  them, or write Assistant's model registry/catalog. Keep Companion's registry,
+  hidden-model choices, new downloads, and inference runtimes independent.
 - Launch at login, sharing, and Mac control are opt-in. Hosting begins after
   explicit pairing setup and restores that saved choice on later launches.
 

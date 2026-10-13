@@ -1745,10 +1745,12 @@ final class AppState: ObservableObject {
         default:
             break
         }
-        if let modelID = preferences.lastModelID,
-           let catalog = ModelCatalog.model(id: modelID) {
-            Task { await self.activate(model: catalog) }
-            Log.app.info("Auto-reloading last model \(modelID, privacy: .public)")
+        if let modelID = preferences.lastModelID {
+            Task {
+                await modelStore.refreshFromDisk()
+                guard let catalog = ModelCatalog.model(id: modelID) else { return }
+                await self.activate(model: catalog)
+            }
         }
     }
 
@@ -1837,7 +1839,13 @@ final class AppState: ObservableObject {
 
     func startDownload(of model: CatalogModel) {
         guard modelStore.installedModel(id: model.id) == nil else { return }
-        downloadManager.start(model: model, into: destination(for: model))
+        Task {
+            // Assistant may have finished a download since the last scan.
+            // Reuse those weights before creating a multi-GB duplicate.
+            await modelStore.refreshFromDisk()
+            guard !modelStore.restoreSharedModel(id: model.id) else { return }
+            downloadManager.start(model: model, into: destination(for: model))
+        }
     }
 
     func pauseDownload(of model: CatalogModel) {

@@ -615,10 +615,36 @@ enum ModelCatalog {
     }
 
     static var all: [CatalogModel] {
-        bundled + loadUserModels()
+        let own = bundled + loadUserModels()
+        let ids = Set(own.map(\.id))
+        return own + assistantModels.read().filter { !ids.contains($0.id) }
+    }
+
+    private static let assistantModels = AssistantCatalogCache()
+
+    @discardableResult
+    static func updateAssistantModels(_ models: [CatalogModel]) -> Bool {
+        assistantModels.replace(models)
     }
 
     static func model(id: String) -> CatalogModel? {
         all.first { $0.id == id }
+    }
+}
+
+/// ModelCatalog is also queried by inference workers. Keep the discovered
+/// metadata snapshot synchronized without performing disk scans on a render.
+private final class AssistantCatalogCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var models: [CatalogModel] = []
+
+    func read() -> [CatalogModel] { lock.withLock { models } }
+
+    func replace(_ value: [CatalogModel]) -> Bool {
+        lock.withLock {
+            guard models != value else { return false }
+            models = value
+            return true
+        }
     }
 }

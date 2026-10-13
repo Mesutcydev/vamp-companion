@@ -95,6 +95,9 @@ struct ModelManagerView: View {
         // outside the registry (or left unregistered by an interrupted
         // import) must not show stale Download/Load states.
         .onAppear { appState.modelStore.rescanFromDisk() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            appState.modelStore.rescanFromDisk()
+        }
     }
 
     /// Search and catalog metadata sit in their own stable row so the header
@@ -646,8 +649,11 @@ private struct CompanionModelRow: View {
     }
 
     private var modelSummary: String {
-        guard model.notes.hasPrefix("Imported from ") else { return model.notes }
         let installed = appState.modelStore.installedModel(id: model.id)
+        if installed?.isSharedFromAssistant == true {
+            return "Shared with Vamp Assistant. Uses the existing model files."
+        }
+        guard model.notes.hasPrefix("Imported from ") else { return model.notes }
         return installed?.basePath != nil || installed?.directoryBookmark != nil
             ? "Linked local model. Files stay in their original folder."
             : "Imported model in your Companion library."
@@ -899,6 +905,11 @@ private struct ModelActions: View {
                 .buttonStyle(CompanionArcadeButtonStyle())
                 .disabled(budget.verdict.fitsLoad == false)
             }
+        } else if appState.modelStore.isSharedModelAvailable(id: model.id) {
+            Button("Use shared model") {
+                appState.modelStore.restoreSharedModel(id: model.id)
+            }
+            .buttonStyle(CompanionArcadeButtonStyle())
         } else {
             switch downloadState {
             case .preparing, .downloading:
@@ -934,7 +945,8 @@ private struct ModelActions: View {
     private var overflowMenu: some View {
         if isInstalled {
             Menu {
-                Button("Remove…", role: .destructive, action: removeInstalled)
+                Button(appState.modelStore.installedModel(id: model.id)?.isSharedFromAssistant == true
+                    ? "Hide from Companion…" : "Remove…", role: .destructive, action: removeInstalled)
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.app(size: 13, weight: .semibold ))
@@ -973,9 +985,17 @@ private struct ModelActions: View {
     private func removeInstalled() {
         guard let installed = appState.modelStore.installedModel(id: model.id) else { return }
         let alert = NSAlert()
-        alert.messageText = "Remove \(model.displayName)?"
-        alert.informativeText = "Deletes \(ByteFormatter.bytes(installed.sizeBytes)) from disk. You can download it again later."
-        alert.addButton(withTitle: "Remove")
+        if installed.isSharedFromAssistant {
+            alert.messageText = "Hide \(model.displayName) from Companion?"
+            alert.informativeText = "The shared files stay available in Vamp Assistant. Choose Use shared model in Discover to show it again."
+            alert.addButton(withTitle: "Hide")
+        } else {
+            alert.messageText = "Remove \(model.displayName)?"
+            alert.informativeText = installed.basePath != nil || installed.directoryBookmark != nil
+                ? "Removes this reference. The model files stay in their original folder."
+                : "Deletes \(ByteFormatter.bytes(installed.sizeBytes)) from disk. You can download it again later."
+            alert.addButton(withTitle: "Remove")
+        }
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
             if appState.activeModelID == model.id {

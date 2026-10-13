@@ -15,7 +15,8 @@ is not available yet; an existing sideloaded Vamp Assistant iOS build can pair
 with the companion.
 
 1. Download the notarized ZIP, unzip it, and move **Vamp Companion.app** to Applications.
-2. In Models, download or import a supported model. For API-backed models, open
+2. In Models, use a model already downloaded in Vamp Assistant, or download or
+   import a supported model. For API-backed models, open
    Settings → Manage API providers and accounts.
 3. In Devices, enable iPhone access. Allow local Wi-Fi only on a trusted private
    network, or connect both devices to Tailscale.
@@ -64,7 +65,18 @@ The client retains its bundle identity, current assets, model identifiers, and p
 `com.beetcode.companion`, Application Support/VampCompanion, separate Keychain
 services and preferences, separate ChatGPT account storage, remote port 9675
 (with fallback), and its own Git
-checkpoint namespace. It does not migrate or discover the original app's data.
+checkpoint namespace. Model weights are shared through read-only references;
+other Assistant data remains independent.
+
+Companion automatically discovers complete models in Assistant's model library,
+including imported MLX/GGUF models and registered external models. It uses the
+same files without copying or downloading them again. The library refreshes
+when Models opens, when the app becomes active, and every 30 seconds while
+Companion runs. A new download checks for an available Assistant copy first.
+Shared models are labeled **Shared with Vamp Assistant**. **Hide from Companion**
+removes only Companion's reference; **Use shared model** in Discover restores it.
+Assistant's model files and catalog are never modified. New Companion downloads
+and ordinary imports still use its own managed library.
 
 Ordinary model imports copy files into the companion's managed library.
 Externally referenced Qwen streaming artifacts stay in place; removal only

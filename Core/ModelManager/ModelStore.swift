@@ -12,6 +12,9 @@ struct InstalledModel: Codable, Identifiable, Sendable, Equatable {
     var artifactRevision: String? = nil
     var validationStatus: String? = nil
     var directoryBookmark: Data? = nil
+    /// Read-only reference to weights discovered in Vamp Assistant's library.
+    /// The directory can have a different name from the model ID (external imports).
+    var assistantDirectoryPath: String? = nil
     /// Explicit base directory when the model lives OUTSIDE the managed
     /// Application Support Models folder (e.g. the project's gitignored
     /// `beetcode-models/` created by the legacy `lf download` CLI). nil means
@@ -19,6 +22,138 @@ struct InstalledModel: Codable, Identifiable, Sendable, Equatable {
     var basePath: String?
 
     var directoryName: String { id }
+    var isSharedFromAssistant: Bool { assistantDirectoryPath != nil }
+}
+
+/// Read-only discovery of Vamp Assistant weights and model metadata. No
+/// migration, registry writes, file copies, or inference processes are shared.
+enum AssistantModelLibrary {
+    struct Snapshot: Sendable {
+        var catalog: [CatalogModel]
+        var installed: [InstalledModel]
+    }
+
+    static func readJSON<T: Decodable>(_ type: T.Type, at url: URL) -> T? {
+        let limit = 4 * 1_024 * 1_024
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber, size.intValue <= limit,
+              let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: limit + 1), data.count <= limit else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private static func isModelID(_ id: String) -> Bool {
+        !id.isEmpty && !id.hasPrefix(".") && !id.contains("/")
+            && !id.contains("\\") && !id.contains("\0")
+    }
+
+    static func scan(supportDirectory: URL, catalog: [CatalogModel]) -> Snapshot {
+        let base = supportDirectory.appendingPathComponent("Models", isDirectory: true)
+        let users = readJSON([CatalogModel].self,
+            at: supportDirectory.appendingPathComponent("UserModels.json")) ?? []
+        let registered = readJSON([InstalledModel].self,
+            at: base.appendingPathComponent("InstalledModels.json")) ?? []
+        let known = Dictionary((users + catalog).filter { isModelID($0.id) }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first })
+        var references: [String: (URL, InstalledModel?)] = [:]
+        for model in registered.prefix(10_000) where isModelID(model.id) {
+            let directory: URL
+            if let bookmark = model.directoryBookmark {
+                var stale = false
+                guard let resolved = try? URL(resolvingBookmarkData: bookmark,
+                    options: [.withoutUI, .withoutMounting], relativeTo: nil,
+                    bookmarkDataIsStale: &stale) else { continue }
+                directory = resolved
+            } else if let path = model.basePath, path.hasPrefix("/") {
+                directory = URL(fileURLWithPath: path, isDirectory: true)
+                    .appendingPathComponent(model.id, isDirectory: true)
+            } else if model.basePath == nil {
+                directory = base.appendingPathComponent(model.id, isDirectory: true)
+            } else {
+                continue
+            }
+            references[model.id] = (directory, model)
+        }
+        // Also find completed downloads that were never registered, and
+        // imported model IDs that are absent from Companion's bundled catalog.
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []
+        for name in names.sorted().prefix(10_000) where isModelID(name) && references[name] == nil {
+            references[name] = (base.appendingPathComponent(name, isDirectory: true), nil)
+        }
+        for model in users where isModelID(model.id) && references[model.id] == nil {
+            guard let bookmark = model.directoryBookmark else { continue }
+            var stale = false
+            if let url = try? URL(resolvingBookmarkData: bookmark,
+                options: [.withoutUI, .withoutMounting], relativeTo: nil,
+                bookmarkDataIsStale: &stale) {
+                references[model.id] = (url, nil)
+            }
+        }
+
+        var result = Snapshot(catalog: [], installed: [])
+        for id in references.keys.sorted() {
+            guard let (directory, registration) = references[id] else { continue }
+            let scoped = directory.startAccessingSecurityScopedResource()
+            defer { if scoped { directory.stopAccessingSecurityScopedResource() } }
+            guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path),
+                  isComplete(at: directory, names: names) else { continue }
+            if id == QwenStreamArtifact.modelID && (try? QwenStreamArtifact.inspect(directory)) == nil { continue }
+            let size = (try? ModelStore.sizeOfDirectory(directory)) ?? registration?.sizeBytes ?? 0
+            var metadata = known[id] ?? inferredModel(id: id, directory: directory, names: names, size: size)
+            metadata.directoryBookmark = nil  // Do not copy another app's security-scoped state.
+            metadata.diskBytes = size
+            result.catalog.append(metadata)
+            result.installed.append(InstalledModel(
+                id: id, repo: registration?.repo ?? metadata.repo,
+                addedAt: registration?.addedAt ?? .distantPast, sizeBytes: size,
+                artifactRevision: registration?.artifactRevision,
+                validationStatus: registration?.validationStatus,
+                assistantDirectoryPath: directory.standardizedFileURL.path, basePath: nil))
+        }
+        return result
+    }
+
+    private static func isComplete(at directory: URL, names: [String]) -> Bool {
+        guard !names.contains(where: { $0.hasSuffix(".incomplete") }) else { return false }
+        let files = names.filter { name in
+            let attributes = try? FileManager.default.attributesOfItem(
+                atPath: directory.appendingPathComponent(name).path)
+            return attributes?[.type] as? FileAttributeType == .typeRegular
+                && ((attributes?[.size] as? NSNumber)?.int64Value ?? 0) > 0
+        }
+        guard ModelStore.isCompleteSnapshot(dirNames: files)
+                || ModelStore.isCompleteCoreAIPack(at: directory) else { return false }
+        if names.contains("model.safetensors.index.json") {
+            struct Index: Decodable { let weight_map: [String: String] }
+            guard let index = readJSON(Index.self, at: directory.appendingPathComponent("model.safetensors.index.json")),
+                  !index.weight_map.isEmpty,
+                  Set(index.weight_map.values).isSubset(of: Set(files)) else { return false }
+        }
+        return true
+    }
+
+    private static func inferredModel(id: String, directory: URL, names: [String], size: Int64) -> CatalogModel {
+        let gguf = names.sorted().first {
+            $0.lowercased().hasSuffix(".gguf") && !$0.lowercased().contains("mmproj")
+                && !$0.lowercased().contains("lora")
+        }
+        let mlx = MLXModelInspector.read(from: directory)
+        let ggufMetadata = gguf.flatMap { GGUFMetadata.read(from: directory.appendingPathComponent($0)) }
+        let format: CatalogModel.Format = gguf != nil ? .gguf
+            : (ModelStore.isCompleteCoreAIPack(at: directory) ? .coreAI : .mlx)
+        return CatalogModel(
+            id: id, repo: directory.path,
+            displayName: mlx.map { MLXModelInspector.displayName(for: directory, metadata: $0) }
+                ?? id.replacingOccurrences(of: "-", with: " "),
+            family: mlx?.family ?? ggufMetadata?.architecture?.capitalized ?? format.rawValue.uppercased(),
+            parameters: mlx?.parameters ?? "—", quantization: mlx?.quantization ?? format.rawValue.uppercased(),
+            diskBytes: size, contextWindow: mlx?.contextWindow ?? ggufMetadata?.contextLength ?? 8_192,
+            minRAMGB: max(6, Int(Double(size) / 1_000_000_000 * 1.5)),
+            recommendedRAMGB: max(8, Int(Double(size) / 1_000_000_000 * 2)),
+            notes: "Shared with Vamp Assistant. Uses the existing model files.", format: format, lanes: [])
+    }
 }
 
 @MainActor
@@ -29,6 +164,11 @@ final class ModelStore: ObservableObject {
     @Published private(set) var installed: [InstalledModel] = []
 
     private let fileManager = FileManager.default
+    private let assistantSupportDirectory: URL?
+    private var scanTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var sharedModels: [InstalledModel] = []
+    private var hiddenAssistantModels: Set<String> = []
 
     /// Test seam: redirects the models directory away from real Application
     /// Support.
@@ -47,27 +187,54 @@ final class ModelStore: ObservableObject {
         return dir
     }
 
-    /// Original app and legacy CLI model directories are never auto-discovered.
+    /// Legacy CLI folders are not searched. Assistant sharing uses only its
+    /// model library and explicit model references, never its other app state.
     nonisolated static var extraScanDirectories: [URL] { [] }
+
+    nonisolated static var defaultAssistantSupportDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("BeetCode", isDirectory: true)
+    }
 
     private var registryURL: URL {
         modelsDirectory.appendingPathComponent("InstalledModels.json")
     }
 
-    init() {
+    init(modelsDirectory: URL? = nil, assistantSupportDirectory: URL? = nil) {
+        overrideModelsDir = modelsDirectory
         // UI fixtures have their own empty model library. Never read or prune
         // the user's registry just to capture an empty state in a UI test.
         let environment = ProcessInfo.processInfo.environment
+        let isTestHost = environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+            || environment["VAMP_COMPANION_UI_TESTING"] == "1"
+        var assistantRoot = assistantSupportDirectory
         if environment["VAMP_COMPANION_UI_TESTING"] == "1",
            let path = environment["VAMP_COMPANION_UI_MODEL_ROOT"] {
             let candidate = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath()
-            let temporary = fileManager.temporaryDirectory.resolvingSymlinksInPath()
-            if candidate.path.hasPrefix(temporary.path + "/") {
+            // The sandboxed UI runner has a different TMPDIR from the app.
+            // Allow only system temp roots and that runner's known temp container.
+            let temporaryRoots = [fileManager.temporaryDirectory,
+                URL(fileURLWithPath: "/private/tmp", isDirectory: true),
+                fileManager.homeDirectoryForCurrentUser.appendingPathComponent(
+                    "Library/Containers/com.beetcode.companion.uitests.xctrunner/Data/tmp", isDirectory: true)
+            ].map { $0.resolvingSymlinksInPath() }
+            if temporaryRoots.contains(where: { candidate.path.hasPrefix($0.path + "/") }) {
                 overrideModelsDir = candidate
                 try? fileManager.createDirectory(at: candidate, withIntermediateDirectories: true)
+                if let path = environment["VAMP_COMPANION_UI_ASSISTANT_ROOT"] {
+                    let fixture = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath()
+                    if temporaryRoots.contains(where: { fixture.path.hasPrefix($0.path + "/") }) {
+                        assistantRoot = fixture
+                    }
+                }
             }
         }
+        self.assistantSupportDirectory = assistantRoot
+            ?? (!isTestHost && overrideModelsDir == nil ? Self.defaultAssistantSupportDirectory : nil)
         loadRegistry()
+        hiddenAssistantModels = Set(AssistantModelLibrary.readJSON(
+            [String].self, at: hiddenModelsURL) ?? [])
         // Repair: drop registry entries whose directories vanished (moved or
         // deleted outside the app).
         let before = installed.count
@@ -79,37 +246,29 @@ final class ModelStore: ObservableObject {
         if installed.count != before {
             saveRegistry()
         }
-        // Registry missing but model directories present (manual copy, older
-        // version, or the legacy CLI's repo-relative folder): rescan off the
-        // main actor — sizing multi-gigabyte model directories must never
-        // block the UI.
-        if installed.isEmpty, hasModelDirectories() {
-            let base = modelsBaseURL
-            let extras = Self.extraScanDirectories
-            Task.detached(priority: .utility) {
-                var scanned = Self.scanFromDisk(modelsDirectory: base)
-                for extra in extras {
-                    scanned.append(contentsOf: Self.scanFromDisk(modelsDirectory: extra))
-                }
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.installed = scanned
-                    self.saveRegistry()
+        // Always scan: Assistant models must appear even when Companion
+        // already has downloads of its own. All discovery/sizing is off-main.
+        if !isTestHost && overrideModelsDir == nil {
+            rescanFromDisk()
+            refreshTask = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(30))
+                    guard let self, !Task.isCancelled else { return }
+                    self.rescanFromDisk()
                 }
             }
         }
     }
 
-    private func hasModelDirectories() -> Bool {
-        let roots = [modelsDirectory] + Self.extraScanDirectories
-        let catalogIDs = Set(ModelCatalog.all.map(\.id))
-        return roots.contains { root in
-            let names = (try? fileManager.contentsOfDirectory(atPath: root.path)) ?? []
-            return names.contains { catalogIDs.contains($0) }
-        }
+    deinit {
+        scanTask?.cancel()
+        refreshTask?.cancel()
     }
 
     func directory(for model: InstalledModel) -> URL {
+        if let path = model.assistantDirectoryPath {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
         if let bookmark = model.directoryBookmark {
             var stale = false
             if let url = try? URL(resolvingBookmarkData: bookmark,
@@ -245,7 +404,7 @@ final class ModelStore: ObservableObject {
         // living in an external base (legacy CLI folder, user import) get
         // de-registered but their files stay put — deleting repo-local or
         // user-owned directories would be surprising and destructive.
-        if model.basePath == nil && model.directoryBookmark == nil {
+        if model.basePath == nil && model.directoryBookmark == nil && !model.isSharedFromAssistant {
             let base = modelsDirectory.resolvingSymlinksInPath().standardizedFileURL
             let target = directory(for: model).resolvingSymlinksInPath().standardizedFileURL
             // Corrupt registrations and symlinks must not delete another app's files.
@@ -254,7 +413,28 @@ final class ModelStore: ObservableObject {
             }
         }
         installed.removeAll { $0.id == model.id }
+        if model.isSharedFromAssistant {
+            hiddenAssistantModels.insert(model.id)
+            saveHiddenModels()
+        }
         saveRegistry()
+    }
+
+    func isSharedModelAvailable(id: String) -> Bool {
+        sharedModels.contains { $0.id == id }
+    }
+
+    /// Restore a hidden shared reference without copying or downloading weights.
+    @discardableResult
+    func restoreSharedModel(id: String) -> Bool {
+        if installedModel(id: id) != nil { return true }
+        guard let model = sharedModels.first(where: { $0.id == id }), hasConfiguration(model) else { return false }
+        hiddenAssistantModels.remove(id)
+        saveHiddenModels()
+        installed.append(model)
+        installed.sort { $0.addedAt > $1.addedAt }
+        saveRegistry()
+        return true
     }
 
     var totalDiskUsage: Int64 {
@@ -275,16 +455,25 @@ final class ModelStore: ObservableObject {
         try? data.write(to: registryURL, options: .atomic)
     }
 
+    private var hiddenModelsURL: URL { modelsDirectory.appendingPathComponent("HiddenAssistantModels.json") }
+
+    private func saveHiddenModels() {
+        guard let data = try? JSONEncoder().encode(hiddenAssistantModels.sorted()) else { return }
+        try? data.write(to: hiddenModelsURL, options: .atomic)
+    }
+
     /// Pure directory scan, safe off the main actor. Only directories holding
     /// a complete snapshot (MLX or GGUF — the same check `hasConfiguration`
     /// uses) count as installed; half-downloaded models must surface as
     /// downloads, not as loadable models.
-    nonisolated static func scanFromDisk(modelsDirectory baseURL: URL?) -> [InstalledModel] {
+    nonisolated static func scanFromDisk(
+        modelsDirectory baseURL: URL?, catalog: [CatalogModel] = ModelCatalog.all
+    ) -> [InstalledModel] {
         guard let baseURL,
               let names = try? FileManager.default.contentsOfDirectory(atPath: baseURL.path)
         else { return [] }
         return names.compactMap { name -> InstalledModel? in
-            guard let catalog = ModelCatalog.all.first(where: { $0.id == name }) else { return nil }
+            guard let catalog = catalog.first(where: { $0.id == name }) else { return nil }
             let dir = baseURL.appendingPathComponent(name, isDirectory: true)
             guard let dirNames = try? FileManager.default.contentsOfDirectory(atPath: dir.path),
                   (isCompleteSnapshot(dirNames: dirNames) || isCompleteCoreAIPack(at: dir))
@@ -305,37 +494,55 @@ final class ModelStore: ObservableObject {
     /// Called when the Model Manager appears — cheap (directory listings,
     /// sizing off-main), and it keeps the UI honest after external changes.
     func rescanFromDisk() {
+        guard scanTask == nil else { return }
         let base = modelsBaseURL
-        let extras = Self.extraScanDirectories
-        Task.detached(priority: .utility) {
-            var scanned = Self.scanFromDisk(modelsDirectory: base)
-            for extra in extras {
-                scanned.append(contentsOf: Self.scanFromDisk(modelsDirectory: extra))
+        let assistantRoot = assistantSupportDirectory
+        // Fixtures never repair or read the user's Companion catalog.
+        let users = overrideModelsDir == nil ? ModelCatalog.loadUserModels()
+            : AssistantModelLibrary.readJSON([CatalogModel].self,
+                at: base.deletingLastPathComponent().appendingPathComponent("UserModels.json")) ?? []
+        let catalog = ModelCatalog.bundled + users
+        let repairOwnMetadata = overrideModelsDir == nil
+        scanTask = Task { @MainActor [weak self] in
+            let (scanned, shared) = await Task.detached(priority: .utility) {
+                let scanned = Self.scanFromDisk(modelsDirectory: base, catalog: catalog)
+                let shared = assistantRoot.map { AssistantModelLibrary.scan(supportDirectory: $0, catalog: catalog) }
+                    ?? AssistantModelLibrary.Snapshot(catalog: [], installed: [])
+                if repairOwnMetadata { Self.refreshImportedGGUFMetadata(modelsDirectory: base) }
+                return (scanned, shared)
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.scanTask = nil
+            self.sharedModels = shared.installed
+            let catalogChanged = ModelCatalog.updateAssistantModels(shared.catalog)
+            var updated = self.installed.filter { model in
+                if model.isSharedFromAssistant { return false }
+                if model.directoryBookmark != nil { return true }
+                return self.fileManager.fileExists(atPath: self.directory(for: model).path)
+                    && self.hasConfiguration(model)
             }
-            Self.refreshImportedGGUFMetadata(modelsDirectory: base)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                var changed = false
-                // Drop entries whose directories vanished or went incomplete.
-                let before = self.installed.count
-                self.installed.removeAll { model in
-                    if model.directoryBookmark != nil { return false }
-                    return !self.fileManager.fileExists(atPath: self.directory(for: model).path)
-                        || !self.hasConfiguration(model)
-                }
-                if self.installed.count != before { changed = true }
-                // Discover new directories.
-                for var found in scanned where !self.installed.contains(where: { $0.id == found.id }) {
-                    if found.basePath == base.path { found.basePath = nil }
-                    self.installed.append(found)
-                    changed = true
-                }
-                if changed {
-                    self.installed.sort { $0.addedAt > $1.addedAt }
-                    self.saveRegistry()
-                }
+            // Companion-owned models win duplicate IDs. Shared paths are
+            // refreshed so an Assistant import can move without a stale link.
+            for var found in scanned + shared.installed where !updated.contains(where: { $0.id == found.id }) {
+                if found.isSharedFromAssistant && self.hiddenAssistantModels.contains(found.id) { continue }
+                if found.basePath == base.path { found.basePath = nil }
+                if let previous = self.installed.first(where: { $0.id == found.id }) { found.addedAt = previous.addedAt }
+                updated.append(found)
+            }
+            updated.sort { $0.addedAt > $1.addedAt }
+            if updated != self.installed {
+                self.installed = updated
+                self.saveRegistry()
+            } else if catalogChanged {
+                self.objectWillChange.send()
             }
         }
+    }
+
+    /// Awaitable discovery for launch restore, download deduplication and fixtures.
+    func refreshFromDisk() async {
+        rescanFromDisk()
+        await scanTask?.value
     }
 
     /// One-time metadata repair for GGUF models imported before header
