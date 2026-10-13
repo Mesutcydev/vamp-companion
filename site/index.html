@@ -15,23 +15,23 @@
   <h1>Your iPhone assistant.<br>Powered by your Mac.</h1>
   <p class="lead">Run local models on your Mac and use them from the existing Vamp Assistant app on iPhone and iPad. The Mac companion keeps setup simple: Models, Devices, and Settings.</p>
   <div class="actions">
-    <a class="button" href="https://github.com/Mesutcydev/vamp-companion/releases/download/v0.1.6/Vamp-Companion-0.1.6-build-10-public.zip">Download for Mac · 0.1.6</a>
+    <a class="button" href="https://github.com/Mesutcydev/vamp-companion/releases/download/v0.1.7/Vamp-Companion-0.1.7-build-11-public.zip">Download for Mac · 0.1.7</a>
     <a class="button secondary" href="https://thevamp.app/companion/">Features and pairing guide →</a>
   </div>
   <p class="requirements">The iOS download is not published yet. Pair your existing sideloaded Vamp Assistant build.</p>
   <p class="requirements">Apple Silicon · macOS 15 or later · Developer ID signed and notarized</p>
   <section class="cards" aria-label="Companion features">
-    <article class="card"><h2>Models</h2><p>Download models for your Mac, import existing model files, and connect API providers. Your iPhone can choose the model for each session.</p></article>
+    <article class="card"><h2>Models</h2><p>Automatically use models already downloaded in Vamp Assistant, without copying or downloading them again. You can also download new models, import files, and connect API providers. Your iPhone can choose the model for each session.</p></article>
     <article class="card"><h2>Devices</h2><p>Scan a pairing code once. Connect over trusted local Wi-Fi or use Tailscale when you’re away from home.</p></article>
     <article class="card"><h2>Settings</h2><p>Manage credentials, updates, and optional sharing or Mac control. Close the window and the companion keeps running.</p></article>
   </section>
   <section class="setup"><h2>Made for your Mac.</h2><p>Readable model rows, a unified charcoal palette, and a compact home for your assistant.</p><img src="previews/models.png" alt="Vamp Companion model rows in dark mode" style="display:block;max-width:100%;border-radius:8px;border:1px solid var(--line)"><p><a href="brandkit/">Explore the Companion brand kit →</a></p></section><section class="setup"><h2>Start in three steps</h2><ol>
     <li>Unzip the download and move <strong>Vamp Companion.app</strong> to Applications.</li>
-    <li>Add a model in <strong>Models</strong> or configure an API provider in <strong>Settings</strong>.</li>
+    <li>Open <strong>Models</strong> to use your existing Vamp Assistant models, or configure an API provider in <strong>Settings</strong>.</li>
     <li>Open <strong>Devices</strong>, enable iPhone access, and scan the pairing code in Vamp Assistant on iOS.</li>
   </ol><p>Your existing iOS assistant features remain available, including sessions, tools, approvals, bots, and optional Mac control. The Mac must remain running and reachable.</p>
   <p>With the updated Assistant iOS client, a Wi-Fi pairing can also remember the Mac’s Tailscale route. Enable Tailscale on both devices and open iOS once while still on Wi-Fi; it can then reconnect away from home without scanning again.</p>
   <p>App Stream 1.0 build 13 recognizes Companion QR codes from Scan Mac QR Code on the home screen. The address and code are filled in; tap Pair Mac to connect. In Devices, choose Local Wi-Fi for the same network or Tailscale for remote access. Both App Stream editions support your private tailnet; connect both devices to Tailscale. With Companion 0.1.6, Adaptive resize fits app windows to your device, and Original Size restores their previous dimensions. App Stream build 13 is available to internal testers in TestFlight.</p>
-  <p>Vamp Companion installs alongside the full Vamp Assistant Mac app with separate data, credentials, and updates.</p></section>
+  <p>Vamp Companion installs alongside the full Vamp Assistant Mac app with separate sessions, credentials, and updates. Model weights are shared automatically through read-only references; hiding a shared model in Companion leaves Assistant’s files intact.</p></section>
   <footer><a href="https://github.com/Mesutcydev/vamp-companion/releases">Release notes and checksums</a> · <a href="https://github.com/Mesutcydev/vamp-companion/blob/main/LICENSE">MIT license</a></footer>
 </main></body></html>
