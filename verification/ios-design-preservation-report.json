@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-13",
+  "baseline": "Current original working iOS client used for 0.10.54 build 134, captured read-only",
+  "scope": "Homepage redesign and Companion controls explicitly authorized; composer, palette, and shared button surfaces protected",
+  "composerSourceSHA256": "3eca6b2b36cf68c49d5bc81a4def421925507cabeb453338970378aa6eba169e",
+  "frozenInheritedFiles": 89,
+  "protectedRegions": "ios-protected-design-sha256.json",
+  "localTests": {
+    "unit": 48,
+    "ui": 18,
+    "optionalUISkips": 5,
+    "failures": 0
+  },
+  "composerRenders": [
+    {
+      "fixture": "iphone-composer-design-dark-fixture",
+      "baselinePNG_SHA256": "be3fb9f4696eb7c4057f102a0a11546eaa3e608c9012952bab6975786bc225d6",
+      "currentPNG_SHA256": "b8ddd37bf48cbaf0ed84d4c6bf2a523526c05151771bc8007666b6cea21b1d92",
+      "composerRegionNormalized": [
+        0,
+        0.8,
+        1,
+        0.2
+      ],
+      "composerPixelMismatchPercent": 0,
+      "wholeFixtureChanged": "Decorative transcript header thumbnail removed at the user's request; transcript content moves slightly."
+    },
+    {
+      "fixture": "iphone-composer-design-light-fixture",
+      "baselinePNG_SHA256": "eebeffed2a9c6760784e2af303cd8acf7a8e650d542a9c449b30e0086c061429",
+      "currentPNG_SHA256": "818bb711d4bc8986093f72bc2f04aab89242401305ca3f09cb8dc7667d212110",
+      "composerRegionNormalized": [
+        0,
+        0.8,
+        1,
+        0.2
+      ],
+      "composerPixelMismatchPercent": 0,
+      "wholeFixtureChanged": "Decorative transcript header thumbnail removed at the user's request; transcript content moves slightly."
+    }
+  ],
+  "hardwareLimitations": [
+    "Physical iPhone and Tailscale remote inference",
+    "Concurrent live provider accounts",
+    "Physical sleep/wake reconnection"
+  ]
+}

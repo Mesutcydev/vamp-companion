@@ -6,7 +6,9 @@ import re
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-expected = json.loads((root / "verification/ios-source-sha256.json").read_text())
+current_baseline = root / "verification/ios-current-source-sha256.json"
+baseline = current_baseline if current_baseline.exists() else root / "verification/ios-source-sha256.json"
+expected = json.loads(baseline.read_text())
 authorization = root / "verification/ios-authorized-ui-changes.json"
 allowed = set(json.loads(authorization.read_text())["files"]) if authorization.exists() else set()
 if any(not name.startswith("iOSApp/") or not name.endswith(".swift") for name in allowed):
@@ -19,7 +21,9 @@ for name, fingerprint in expected.items():
 if changed:
     raise SystemExit("Frozen iOS files changed:\n" + "\n".join(changed))
 project = (root / "project.yml").read_text()
-project_expected = json.loads((root / "verification/ios-project-sha256.json").read_text())
+current_project = root / "verification/ios-current-project-sha256.json"
+project_baseline = current_project if current_project.exists() else root / "verification/ios-project-sha256.json"
+project_expected = json.loads(project_baseline.read_text())
 for section, fingerprint in project_expected.items():
     kind, name = section.split(":", 1)
     if kind == "target":
@@ -33,6 +37,16 @@ for section, fingerprint in project_expected.items():
         changed.append(section)
 if changed:
     raise SystemExit("Frozen iOS project settings changed:\n" + "\n".join(changed))
+design_path = root / "verification/ios-protected-design-sha256.json"
+if design_path.exists():
+    for region in json.loads(design_path.read_text())["regions"]:
+        source = (root / region["file"]).read_text()
+        start = source.find(region["start"])
+        end = source.find(region["end"], start)
+        body = source[start:end] if start >= 0 and end > start else ""
+        if hashlib.sha256(body.encode()).hexdigest() != region["sha256"]:
+            raise SystemExit(f"Protected shared palette/composer design changed: {region['file']} ({region['start']})")
+    print("Verified the current shared palette and original composer button surfaces.")
 print(f"Verified {len(set(expected) - allowed)} unchanged iOS source, test, asset, and distribution files.")
 if allowed: print(f"User-authorized iOS UI scope: {len(allowed)} Swift files; original baseline retained.")
 print("Verified unchanged iOS targets and release scheme.")

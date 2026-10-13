@@ -6,6 +6,8 @@ final class CompanionHubUITests: XCTestCase {
         for appearance in ["light", "dark"] {
             let app = launch(appearance: appearance)
             XCTAssertTrue(app.staticTexts["Vamp Companion"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.staticTexts["Mac control status unavailable"].exists,
+                          "An older host's missing status must not report disabled Mac permissions")
             let model = app.buttons["remote.mac.model.local|fixture"]
             XCTAssertTrue(model.isEnabled)
             XCTAssertGreaterThanOrEqual(model.frame.height, 44)

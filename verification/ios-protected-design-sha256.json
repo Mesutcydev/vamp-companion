@@ -1,0 +1,18 @@
+{
+  "baseline": "Current working Assistant iOS client, matching the 0.10.54 build 134 design, captured read-only on 2026-10-13.",
+  "authorization": "The homepage redesign is explicitly authorized. Preserve the shared palette and composer button surfaces.",
+  "regions": [
+    {
+      "file": "iOSApp/RemoteViews.swift",
+      "start": "enum RemoteInstrument {",
+      "end": "struct RemoteBackdrop: View {",
+      "sha256": "4fb289e933df3fc26bde1b8ccb492706428464eb4a39d0982903bc6e6a4dbfa0"
+    },
+    {
+      "file": "iOSApp/RemoteViews.swift",
+      "start": "struct RemoteKeySurface: ViewModifier {",
+      "end": "private struct InstrumentKeyShell<Content: View>: View {",
+      "sha256": "1772e645655ac0f75e3b85d39b74635a8766bd4eee28a4afff59427e26dc2079"
+    }
+  ]
+}

@@ -185,7 +185,7 @@ final class RemoteStore {
         default: network = "Unknown"
         }
         return """
-        Vamp Assistant connection diagnostics
+        Vamp Companion connection diagnostics
         Client: \(version) (\(build))
         Host: \(hostStatus?.appVersion ?? "unreported") (\(hostStatus?.appBuild ?? "unreported"))
         Protocol: \(hostStatus?.protocolVersion.map(String.init) ?? "legacy")
@@ -313,7 +313,7 @@ final class RemoteStore {
         let (nextStatus, nextList) = try await (status, list)
         try requireConnection(generation)
         if let version = nextStatus.protocolVersion, version != 1 {
-            throw RemoteClientError.server("This Mac uses remote protocol \(version). Update both Vamp Assistant apps to compatible versions.")
+            throw RemoteClientError.server("This Mac uses remote protocol \(version). Update Vamp Companion on your iPhone and Vamp Assistant on your Mac to compatible versions.")
         }
         let nextBotRuns = (try? await client.botRuns())?.runs ?? []
         try requireConnection(generation)

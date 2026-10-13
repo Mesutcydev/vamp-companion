@@ -1,35 +1,66 @@
-# Vamp Assistant iOS and Companion
+# Assistant iOS client and Companion
 
-The user authorized iOS design and Companion controls on 2026-10-13 and
-explicitly selected Vamp Assistant iOS. Work stays in this isolated repository;
-the original Assistant checkout and App Stream sources are untouched.
+The user selected Vamp Assistant iOS for the Companion controls and design
+round. All work stays in this isolated repository. The original Assistant
+checkout, App Stream sources, and their installed applications remain untouched.
 
-The phone uses the same neutral charcoal surfaces and Vamp red accent as the
-Mac. Text keeps native Dynamic Type, controls keep their existing accessibility
-semantics, and buttons use flatter, clearer surfaces.
+## Compact live home
 
-The session header's **Your Mac** action opens a hub with connection and host
-activity, local and provider models, model unloading, control readiness,
-provider setup, and computer switching. Choosing a model opens the existing
-new-session form with that model selected; no task is sent until the user
-enters a prompt and starts it. The full model browser searches names, IDs,
-and provider details. Offline model and control actions are disabled.
+Home combines a layered graphite Mac console, a compact shortcut bar, active
+work, two editable quick starts, and recent conversations in one scrollable
+surface. The console uses the existing dotted Vamp mark, a soft red signal,
+thin edge highlights, and a quiet dot texture. It shows the actual connection,
+loaded model, and queue; it does not invent performance measurements. The
+texture and beacon animate only while work is running and the app is active.
+Reduce Motion stops those effects and press scaling. Controls remain at least
+44 points tall; larger accessibility text reflows the shortcuts and starters.
 
-Downloads and imports remain in the Mac's Models tab. Permissions are granted
-on the Mac. The hub uses the existing protocol-v1 APIs; routes, authentication,
-model identifiers, session behavior, approvals, bots, sharing, and tools are
-preserved. Older Vamp Assistant hosts remain supported.
+Models, Control, Bots, and Share open the existing workflows. Quick starts
+prefill the existing new-session form for review; they never submit work
+without an explicit Start action. Active conversations can be resumed directly.
+Search, pull to refresh, rename, delete, Settings, and New remain available.
+Offline state retains cached conversations and disables new work. Decorative
+thumbnails have been removed from chat list rows and transcript speaker headers.
+The composer file, shared palette, and composer button materials are preserved.
 
-`verification/ios-source-sha256.json` retains the original baseline. The six
-modified UI files are explicitly listed in `ios-authorized-ui-changes.json`;
-all other inherited files, assets, target identity and distribution settings
-are still checked by `scripts/verify-ios-unchanged.py`.
+## Mac cooperation
 
-The existing iOS bundle is `com.beetcode.remote.ios`. Its App Store Connect
-record is named Vamp Companion (ID 6822249541); this is distinct from App
-Stream's `com.mesutcy.remotedesktop.stream`. Release version/build values can
-be supplied to Xcode at archive time without changing the inherited target.
+The Models shortcut opens Your Mac with connection and host activity, local
+and provider models, model unloading, control readiness, provider setup, and
+computer switching. Choosing a model opens the existing new-session form with
+that model selected. A missing control status from an older host is reported as
+unavailable, rather than falsely reporting disabled Mac permissions.
 
-Validation includes the existing iOS unit/regression and UI suites, plus
-Companion hub checks for light/dark, model selection, and disabled offline
-actions. Fixtures never restore a real Mac connection or send work to it.
+Downloads, imports, and permission grants remain on the Mac. The hub uses the
+existing protocol-v1 APIs. Routes, authentication, model identifiers, session
+behavior, approvals, bots, sharing, tools, and provider behavior are preserved.
+Older Vamp Assistant hosts remain supported.
+
+## Source and release identity
+
+The newer working iOS client used for TestFlight 0.10.54 (134) was imported
+read-only on 2026-10-13 before this pass, including its current branding, icon,
+privacy manifest, and client fixes. The initial baseline remains in
+`verification/ios-source-sha256.json`; the current baseline is in
+`ios-current-source-sha256.json` and `ios-current-project-sha256.json`.
+Five inherited UI files have authorized exceptions. New homepage and Mac-hub
+files are isolated additions. The guard verifies the other 89 inherited files,
+iOS target identity and scheme, shared palette, and composer button surfaces.
+
+The current display name and App Store Connect record are **Vamp Companion**
+(ID 6822249541). This is the existing Assistant client, bundle
+`com.beetcode.remote.ios`, distinct from App Stream's
+`com.mesutcy.remotedesktop.stream`. The next archive uses 0.10.55, build 135.
+The user authorized distribution to the existing internal TestFlight group
+**mes**. No other tester invitations or App Store submission are included.
+
+## Validation
+
+Run the existing iOS unit and UI suites, Companion hub tests, and homepage UI
+checks. The homepage checks cover light/dark model state, reviewed quick-start
+prompts, active-session navigation, and offline history/disabled starters.
+Native composer renders are compared against the current original source in
+both appearances. DEBUG fixtures use temporary in-memory credentials and
+stubbed loopback API calls; they do not restore a real paired Mac or submit
+work. Physical iPhone, Tailscale streaming, and sleep/wake tests still require
+live hardware and must not be inferred from simulator results.

@@ -269,6 +269,7 @@ struct RemoteTranscriptTurn: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(speaker).font(.caption.weight(.semibold))
+                    .foregroundStyle(speaker == "Vamp" ? BeetTheme.accentBright : RemoteInstrument.secondaryInk)
                 if let phase {
                     ProgressView().controlSize(.mini)
                     Text(phase.capitalized).font(.caption)

@@ -1,11 +1,10 @@
 {
-  "authorization": "User requested Vamp Assistant iOS design, UI/UX, and Companion controls on 2026-10-13 and explicitly selected Vamp Assistant iOS.",
+  "authorization": "User selected the Assistant iOS client, requested Companion cooperation, then explicitly requested a modern, compact, detailed homepage with motion and depth, better buttons, and removal of chat-header thumbnails. Preserve the composer and shared style.",
   "files": [
-    "iOSApp/BeetCodeRemoteApp.swift",
     "iOSApp/RemoteViews.swift",
-    "iOSApp/RemotePairingViews.swift",
     "iOSApp/RemoteSessionViews.swift",
     "iOSApp/RemoteSettingsView.swift",
-    "iOSApp/RemoteStartSessionView.swift"
+    "iOSApp/RemoteStartSessionView.swift",
+    "iOSApp/RemoteTranscriptViews.swift"
   ]
 }

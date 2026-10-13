@@ -1,0 +1,6 @@
+{
+  "scheme:BeetCodeRemoteIOS": "be85bef0b91406cfa01cf07b992c8d1febf1a6374566f9029f5d2cbe117ca8af",
+  "target:BeetCodeRemoteIOS": "5688998d6bb51bdfd230009aefe7de454b8071fd65a43183cceef005c53e5113",
+  "target:BeetCodeRemoteIOSTests": "5cdf7e612e994acc89a2b66dada5baa18c1f9b563d8d6d3fce2b2149f268d1b7",
+  "target:BeetCodeRemoteIOSUITests": "0d485bce41e94b4d0328931218f647a56ea6d17b5d13744bc1aad72922e5323d"
+}

@@ -179,3 +179,52 @@ data is used as a test fixture.
 - Sparkle’s actual 0.1.0 to 0.1.1 download, installation, and relaunch succeeded in Applications. The verified 0.1.2 is now installed there with the existing models, preferences, credentials, and hosting choice.
 - The public 0.1.2 ZIP exactly matches the verified local package: 15,246,498 bytes, SHA-256 `beccb353c30f305ed767ee4f4abeb03c8910e437ca5fd175aabb844417852cea`. Developer ID, notarization, stapling, Gatekeeper, and Sparkle archive/feed signatures passed before feed publication.
 - Current App Stream 1.0 build 9 is VALID and IN_BETA_TESTING in the existing Internal Testers group; older build 8 is absent. Its current iOS suite covered 84 cases: 83 passed initially, one stale label expectation was corrected, and all 28 tests in that layout class then passed. 667 backend tests, 25 Linux checks, and all four active Stream/Sync/Control Release target builds passed. Its tested nine-file fix was applied to the current working project while preserving the other 824 snapshot files.
+
+
+## Current release and iOS home polish — 2026-10-13
+
+- Mac release **0.1.4 (8)**, source `c16534ce5911aee73ab9bff043fcd2d891c7dc6a`,
+  is Developer ID signed, notarized (Apple Accepted submission
+  `3a979c67-9500-4566-a8a3-118c2405167b`), stapled, and independently verified
+  after downloading the public ZIP. SHA-256:
+  `628d23c6c8947515314864dee82eab840d6986a3622d44df93b3073a47f4e1bb`.
+  Strict signature and Gatekeeper checks passed. The distinct Sparkle archive
+  and feed signatures passed before feed publication. The installed app is
+  0.1.4 (8); the user's models, preferences, and permission choices were retained.
+- Closing the installed Companion window retained its process and host on
+  port 9675. The native Settings view reported Accessibility and Screen
+  Recording granted. No system permission database was edited for this check.
+- The website's current native Mac gallery, brand kit, download, checksum,
+  and appcast are live. Pages deployment `38387402473` and 15 site checks
+  passed. The iOS download stays empty at the user's request.
+- Current **App Stream 1.0 (12)** is VALID and in the existing Internal Testers
+  group. Its App Store edition supports trusted Tailscale as well as local
+  Wi-Fi. **Vamp Sync 2.3.2 (73)** is signed, notarized, stapled, published,
+  and installed; its own signed feed is live. Sync's trusted peer file was
+  unchanged by the upgrade. Physical end-to-end Tailscale video still requires
+  a paired phone; simulator and policy tests do not certify that workflow.
+- The newer working Assistant iOS client used for **0.10.54 (134)** was copied
+  read-only into this isolated repository before the design pass. It already
+  uses the display name Vamp Companion and bundle `com.beetcode.remote.ios`.
+  All 89 inherited files outside the five authorized UI exceptions, the iOS
+  targets and release scheme, shared palette, and composer surfaces pass the
+  source guard. Core source and dependency versions did not change.
+- The compact live home has actual Mac/model/queue state, restrained active
+  motion, an integrated shortcut bar, resumable active work, reviewed quick
+  starts, and recent conversations. Session and transcript header thumbnails
+  were removed. An atomic presentation request carries the selected prompt
+  or model into the existing form; cancellation clears it before a fresh New.
+- The final local simulator run passed **48 unit tests and 18 UI cases**
+  (five optional UI skips, zero failures). The three new homepage cases check
+  both appearances, prompt review and cancellation reset, offline history and
+  disabled starters, and active conversation navigation. Six composer UI cases
+  and both Companion hub cases passed with the existing suite.
+- The original composer source SHA-256 remains
+  `3eca6b2b36cf68c49d5bc81a4def421925507cabeb453338970378aa6eba169e`.
+  Its native rendered region is pixel-identical to the current original source
+  in light and dark. The complete fixture has a small expected transcript
+  layout change from the requested thumbnail removal; it is not claimed to be
+  globally identical. Details are in `ios-design-preservation-report.json`.
+- Physical phone remote inference, full concurrent live provider-account
+  workflows, and physical sleep/wake reconnection remain unverified. No real
+  Mac credentials, original app data, or user workspaces were test fixtures.
