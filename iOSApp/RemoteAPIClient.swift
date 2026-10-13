@@ -73,11 +73,26 @@ struct RemoteAPIClient {
             delegateQueue: nil)
     }()
 
+    /// Route probes must finish even when iOS is waiting for the old Wi-Fi
+    /// path to return. Ordinary API requests retain their existing timeouts.
+    private static let connectionSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForResource = 5
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration, delegate: redirectBlocker, delegateQueue: nil)
+    }()
+
     func pair(code: String) async throws -> RemotePairResponse {
         try await request("api/pair", method: "POST", body: ["code": code], authorized: false, timeout: 30)
     }
 
     func status() async throws -> RemoteStatus { try await request("api/status") }
+    func connectionStatus() async throws -> RemoteStatus {
+        var probe = self
+        probe.session = session ?? Self.connectionSession
+        return try await probe.request("api/status", timeout: 3)
+    }
     func sessions() async throws -> RemoteSessionEnvelope { try await request("api/sessions") }
     func models() async throws -> RemoteModelEnvelope { try await request("api/models") }
     func providers() async throws -> RemoteProviderEnvelope { try await request("api/providers") }

@@ -36,6 +36,11 @@ bots, terminal, and permission-gated clipboard/file exchange and Mac control.
 API credentials can be configured from either device. Remote unlock remains
 limited to Tailscale. The Mac must remain running and reachable.
 
+The updated Assistant iOS client can retain both Wi-Fi and Tailscale routes
+for the same pairing. Existing Wi-Fi pairings learn the VPN address when both
+apps are updated and reachable with Tailscale connected. They can then reconnect
+outside Wi-Fi without another scan. See [private-network reconnection](docs/PRIVATE-NETWORK-RECONNECTION.md).
+
 Closing the window keeps downloads and the remote host running. Use the menu
 bar item to reopen Models, Devices, or Settings. Launch at login is optional and
 off by default. Quit stops the companion and its registered child processes.

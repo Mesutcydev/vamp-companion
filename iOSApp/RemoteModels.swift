@@ -3,6 +3,8 @@ import Foundation
 struct RemotePairResponse: Decodable {
     let token: String
     let expiresAt: Double
+    let hostID: UUID?
+    let connectionEndpoints: [RemoteConnectionEndpoint]?
 }
 
 struct RemoteStatus: Decodable {
@@ -17,6 +19,8 @@ struct RemoteStatus: Decodable {
     let phase: String
     let queuedTasks: Int
     let macControl: RemoteMacControlStatus?
+    let hostID: UUID?
+    let connectionEndpoints: [RemoteConnectionEndpoint]?
 }
 
 struct RemoteMacControlStatus: Decodable, Equatable {

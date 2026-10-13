@@ -3,6 +3,13 @@ name: Companion and iOS compatibility
 on:
   push:
     branches: [main]
+    # Feed publication and release notes use the separate Pages workflow.
+    paths-ignore:
+      - 'site/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'verification/VALIDATION.md'
+      - 'verification/ios-design-preservation-report.json'
   pull_request:
 
 permissions:

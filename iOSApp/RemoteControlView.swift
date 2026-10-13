@@ -592,7 +592,11 @@ struct RemoteControlView: View {
         .sheet(isPresented: $showTerminal) {
             RemoteTerminalView(store: store)
         }
-        .task {
+        .task(id: store.baseURL) {
+            decoder.reset()
+            videoBinder.reset()
+            streamState.reset()
+            stopAudio()
             configureDecoder()
             await run()
         }

@@ -12,14 +12,21 @@ final class ChatPolishUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
             capture(app, name: "chat-polish-\(appearance)")
             copy.tap()
-            XCTAssertTrue(app.buttons["Code copied"].waitForExistence(timeout: 5))
+            let editor = app.textFields["remote.composer.editor"]
+            editor.tap()
+            editor.press(forDuration: 1)
+            let paste = app.menuItems["Paste"].firstMatch
+            XCTAssertTrue(paste.waitForExistence(timeout: 5))
+            paste.tap()
+            XCTAssertEqual(editor.value as? String, "let release = \"Ready for review\"\nprint(release)",
+                           "Copy must put the code, without its fence or language label, into the system clipboard")
             app.terminate()
         }
     }
 
     func testReuseUserMessagePreservesAnExistingDraft() {
         let app = launch(appearance: "dark")
-        let editor = app.textFields["remote.composer.editor"]
+        let editor = app.descendants(matching: .any).matching(identifier: "remote.composer.editor").firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
         editor.tap(); editor.typeText("Keep this draft.")
         app.buttons["remote.hideKeyboard"].tap()
@@ -28,8 +35,10 @@ final class ChatPolishUITests: XCTestCase {
         XCTAssertTrue(prompt.waitForExistence(timeout: 5))
         prompt.press(forDuration: 1)
         app.buttons["Use in composer"].tap()
-        XCTAssertTrue((editor.value as? String)?.hasPrefix("Keep this draft.") == true)
-        XCTAssertTrue((editor.value as? String)?.contains("release notes") == true)
+        let expected = "Keep this draft.\n\nHelp me turn these release notes into a clear checklist."
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: editor)
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed,
+                       "Reusing a turn must preserve the draft and append the selected text: \(String(describing: editor.value))")
         XCTAssertTrue(app.buttons["remote.composer.primary"].isEnabled)
     }
 

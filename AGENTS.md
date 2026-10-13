@@ -17,6 +17,11 @@ folders, checkpoint refs, or update-signing key.
   remote protocol and existing behavior. UI exceptions are listed in
   `verification/ios-authorized-ui-changes.json`. Run
   `python3 scripts/verify-ios-unchanged.py` to check all other frozen files.
+- The user also explicitly authorized Wi-Fi-to-Tailscale reconnection on
+  2026-10-13. The inherited client connection/lifecycle exceptions are in
+  `verification/ios-authorized-connectivity-changes.json`. Keep alternate routes
+  authenticated, private, restricted to the paired port, and tied to the same
+  Mac identity. Never replay mutations automatically while changing routes.
 - Companion identity is `com.beetcode.companion`; Application Support is
   `VampCompanion`; default hosting port is 9675; checkpoint refs are under
   `refs/vamp-companion/checkpoints/`. No legacy migration or model discovery

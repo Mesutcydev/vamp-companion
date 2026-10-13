@@ -138,6 +138,17 @@ final class RemoteSessionTests: XCTestCase {
             "8.8.8.8", advertisedKind: .tailscale, allowLAN: true))
     }
 
+    func testTailscalePeerCanReconnectAfterInitiallyPairingOnLAN() {
+        XCTAssertTrue(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "100.90.4.3", advertisedKind: .localNetwork, allowLAN: true))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "8.8.8.8", advertisedKind: .localNetwork, allowLAN: true))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "100.90.4.999", advertisedKind: .localNetwork, allowLAN: true))
+        XCTAssertFalse(RemoteNetworkEndpointDiscovery.allowsPeer(
+            "100.90.4.3", advertisedKind: nil, allowLAN: false))
+    }
+
     func testTailscaleCLIStateOverridesStaleInterfaces() {
         let running = RemoteNetworkEndpointDiscovery.selectEndpoint(
             addresses: ["192.168.1.20", "100.70.1.2"],
@@ -761,6 +772,24 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertEqual(status.json.objectValue?["networkKind"]?.stringValue, endpoint?.kind.rawValue)
         XCTAssertNotNil(status.json.objectValue?["tokenExpiresAt"]?.numberValue)
         XCTAssertNotNil(status.json.objectValue?["phase"]?.stringValue)
+        XCTAssertEqual(status.json.objectValue?["protocolVersion"]?.numberValue, 1)
+        let identity = try XCTUnwrap(pair.json.objectValue?["hostID"]?.stringValue)
+        XCTAssertEqual(status.json.objectValue?["hostID"]?.stringValue, identity)
+        let routes = try XCTUnwrap(pair.json.objectValue?["connectionEndpoints"]?.arrayValue)
+        XCTAssertFalse(routes.isEmpty)
+        for route in routes {
+            let address = try XCTUnwrap(route.objectValue?["url"]?.stringValue)
+            XCTAssertEqual(URL(string: address)?.port, host.actualPort)
+            XCTAssertFalse(address.contains("pair="))
+        }
+        let livePort = host.actualPort
+        let liveCode = host.pairingCode
+        try await host.start(port: 0, allowLAN: true)
+        XCTAssertEqual(host.actualPort, livePort, "Refreshing route advertisements must retain the live listener")
+        XCTAssertEqual(host.pairingCode, liveCode, "Network monitoring must not invalidate a displayed pairing code")
+        let resumedStatus = try await request(baseURL, path: "/api/status", token: token)
+        XCTAssertEqual(resumedStatus.status, 200)
+        XCTAssertEqual(resumedStatus.json.objectValue?["hostID"]?.stringValue, identity)
 
         let unauthorizedApps = try await request(baseURL, path: "/api/control/apps")
         XCTAssertEqual(unauthorizedApps.status, 401)

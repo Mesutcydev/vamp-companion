@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the inherited iOS baseline outside the user's authorized UI scope."""
+"""Check the inherited iOS baseline outside the user's explicit change scopes."""
 import hashlib
 import json
 import re
@@ -11,8 +11,11 @@ baseline = current_baseline if current_baseline.exists() else root / "verificati
 expected = json.loads(baseline.read_text())
 authorization = root / "verification/ios-authorized-ui-changes.json"
 allowed = set(json.loads(authorization.read_text())["files"]) if authorization.exists() else set()
+connectivity = root / "verification/ios-authorized-connectivity-changes.json"
+network_allowed = set(json.loads(connectivity.read_text())["files"]) if connectivity.exists() else set()
+allowed |= network_allowed
 if any(not name.startswith("iOSApp/") or not name.endswith(".swift") for name in allowed):
-    raise SystemExit("iOS UI authorization must not include assets, identity, or release settings.")
+    raise SystemExit("iOS authorization must not include assets, identity, or release settings.")
 changed = []
 for name, fingerprint in expected.items():
     path = root / name
@@ -48,5 +51,5 @@ if design_path.exists():
             raise SystemExit(f"Protected shared palette/composer design changed: {region['file']} ({region['start']})")
     print("Verified the current shared palette and original composer button surfaces.")
 print(f"Verified {len(set(expected) - allowed)} unchanged iOS source, test, asset, and distribution files.")
-if allowed: print(f"User-authorized iOS UI scope: {len(allowed)} Swift files; original baseline retained.")
+if allowed: print(f"User-authorized iOS scope: {len(allowed)} Swift files ({len(network_allowed)} connectivity); original baseline retained.")
 print("Verified unchanged iOS targets and release scheme.")

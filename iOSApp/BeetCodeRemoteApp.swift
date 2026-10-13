@@ -51,6 +51,12 @@ private struct RemoteRootShell: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { Task { await store.drafts.flush() } }
+                else {
+#if DEBUG
+                    if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] != nil { return }
+#endif
+                    Task { await store.connectSaved(showFailure: false) }
+                }
             }
             .task {
 #if DEBUG

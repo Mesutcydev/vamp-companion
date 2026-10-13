@@ -236,6 +236,8 @@ final class RemoteSessionHost {
     private(set) var networkHost: String?
     private(set) var networkKind: RemoteNetworkKind?
     private var allowLANPeers = false
+    private var connectionEndpoints: [RemoteNetworkEndpointDiscovery.Endpoint] = []
+    private let hostID: UUID
 
     init(
         engine: any LLMEngine,
@@ -250,6 +252,15 @@ final class RemoteSessionHost {
         self.botComputers = botComputers ?? BotComputerService()
         self.persistsPairedClients = persistsPairedClients
         self.tokens = persistsPairedClients ? RemotePairedClientStore.load() : [:]
+        if persistsPairedClients {
+            let key = "remote.host-identity.v1"
+            if let saved = UserDefaults.standard.string(forKey: key).flatMap(UUID.init(uuidString:)) {
+                hostID = saved
+            } else {
+                hostID = UUID()
+                UserDefaults.standard.set(hostID.uuidString, forKey: key)
+            }
+        } else { hostID = UUID() }
     }
 
     var isRunning: Bool { server != nil }
@@ -286,15 +297,22 @@ final class RemoteSessionHost {
     func start(port: Int, allowLAN: Bool = false) async throws {
         startGeneration &+= 1
         let generation = startGeneration
-        let endpoint = RemoteNetworkEndpointDiscovery.preferredEndpoint(allowLAN: allowLAN)
+        let endpoints = RemoteNetworkEndpointDiscovery.connectionEndpoints(allowLAN: allowLAN)
+        let endpoint = endpoints.first
         if let server {
             if await server.isRunning {
                 let currentPort = await server.actualPort
                 if let endpoint,
-                   (port == 0 || currentPort == port || currentPort == RemoteSessionPorts.resolved(port)),
-                   networkHost == endpoint.host,
-                   networkKind == endpoint.kind,
-                   allowLANPeers == allowLAN { return }
+                   (port == 0 || RemoteSessionPorts.candidates(preferred: port).contains(currentPort)),
+                   allowLANPeers == allowLAN {
+                    // The listener binds all IPv4 interfaces. Updating its
+                    // advertised routes does not need to interrupt streams,
+                    // rotate the code, or discard the existing socket.
+                    networkHost = endpoint.host
+                    networkKind = endpoint.kind
+                    connectionEndpoints = endpoints
+                    return
+                }
                 await server.stop()
             }
             self.server = nil
@@ -313,6 +331,7 @@ final class RemoteSessionHost {
         networkHost = endpoint.host
         networkKind = endpoint.kind
         allowLANPeers = allowLAN
+        connectionEndpoints = endpoints
         rotatePairingCode()
         let resolver: LocalAPIServer.RouteResolver = { [weak self] request in
             guard let self else { return nil }
@@ -375,6 +394,7 @@ final class RemoteSessionHost {
         boundPort = nil
         networkHost = nil
         networkKind = nil
+        connectionEndpoints = []
         pairFailuresByAddress.removeAll()
         remoteUnlockAttemptLimiter.removeAll()
     }
@@ -460,9 +480,14 @@ final class RemoteSessionHost {
                 "protocolVersion": .number(1),
                 "appVersion": .string(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"),
                 "appBuild": .string(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"),
-                "capabilities": .array(["sessions", "bots", "workspaces", "sharing", "stream-revocation", "chat-images"].map(LFJSONValue.string)),
+                "capabilities": .array(["sessions", "bots", "workspaces", "sharing", "stream-revocation", "chat-images", "connection-routes"].map(LFJSONValue.string)),
+                "hostID": .string(hostID.uuidString),
+                "connectionEndpoints": connectionEndpointsJSON,
                 "pairedClients": .number(Double(pairedClientCount)),
-                "networkKind": .string(networkKind?.rawValue ?? "unknown"),
+                "networkKind": .string(RemoteNetworkEndpointDiscovery.isTailscale(request.remoteAddress)
+                    ? RemoteNetworkKind.tailscale.rawValue
+                    : RemoteNetworkEndpointDiscovery.isPrivateIPv4(request.remoteAddress)
+                        ? RemoteNetworkKind.localNetwork.rawValue : networkKind?.rawValue ?? "unknown"),
                 "tokenExpiresAt": tokenDigest(from: request).flatMap { tokens[$0] }.map { .number($0.timeIntervalSince1970) } ?? .null,
                 "activeSessionID": sessions.activeSessionID.map { .string($0.uuidString) } ?? .null,
                 "isRunning": .bool(sessions.isRunning),
@@ -1632,7 +1657,17 @@ final class RemoteSessionHost {
             "token": .string(token),
             "expiresAt": .number(tokenExpiresAt.timeIntervalSince1970),
             "product": .string("Vamp Assistant"),
+            "hostID": .string(hostID.uuidString),
+            "connectionEndpoints": connectionEndpointsJSON,
         ]))
+    }
+
+    private var connectionEndpointsJSON: LFJSONValue {
+        guard let port = actualPort else { return .array([]) }
+        return .array(connectionEndpoints.map { endpoint in
+            .object(["url": .string("http://\(endpoint.host):\(port)/"),
+                     "networkKind": .string(endpoint.kind.rawValue)])
+        })
     }
 
     private func sessionRoute(_ request: LocalAPIServer.Request) async -> LocalAPIServer.RouteResult {
@@ -2708,6 +2743,14 @@ enum RemoteNetworkEndpointDiscovery {
             tailscaleStatus: tailscaleCLIStatus())
     }
 
+    static func connectionEndpoints(allowLAN: Bool) -> [Endpoint] {
+        let addresses = interfaceIPv4Addresses()
+        let status = tailscaleCLIStatus()
+        let tailscale = selectEndpoint(addresses: addresses, allowLAN: false, tailscaleStatus: status)
+        let lan = allowLAN ? localNetworkEndpoint() : nil
+        return [tailscale, lan].compactMap { $0 }
+    }
+
     static func localNetworkEndpoint() -> Endpoint? {
         selectLocalNetworkEndpoint(addresses: interfaceIPv4Addresses(physicalOnly: true))
     }
@@ -2804,7 +2847,8 @@ enum RemoteNetworkEndpointDiscovery {
 
     static func isTailscale(_ value: String) -> Bool {
         let parts = value.split(separator: ".").compactMap { Int($0) }
-        return parts.count == 4 && parts[0] == 100 && (64...127).contains(parts[1])
+        return parts.count == 4 && parts.allSatisfy({ (0...255).contains($0) })
+            && parts[0] == 100 && (64...127).contains(parts[1])
     }
 
     static func isPrivateIPv4(_ value: String) -> Bool {
@@ -2821,6 +2865,9 @@ enum RemoteNetworkEndpointDiscovery {
     ) -> Bool {
         guard address != "unknown" else { return false }
         if address == "127.0.0.1" || address == "::1" { return true }
+        // A trusted Tailscale peer can arrive just after the VPN comes up,
+        // before the next five-second advertisement refresh.
+        if advertisedKind != nil, isTailscale(address) { return true }
         if allowLAN, isPrivateIPv4(address) { return true }
         switch advertisedKind {
         case .tailscale:

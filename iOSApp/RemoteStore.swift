@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Network
 
 struct PairedBeetCodeComputer: Codable, Identifiable, Equatable {
     let id: UUID
@@ -7,6 +8,8 @@ struct PairedBeetCodeComputer: Codable, Identifiable, Equatable {
     var baseURL: URL
     var tokenExpiresAt: Date?
     var networkKind: String?
+    var hostID: UUID?
+    var connectionEndpoints: [RemoteConnectionEndpoint]?
 
     init(
         id: UUID = UUID(),
@@ -73,6 +76,7 @@ final class RemoteStore {
     private(set) var baseURL: URL?
     private var token: String?
     private var pollingTask: Task<Void, Never>?
+    private var networkMonitor: NWPathMonitor?
     private var sessionStreamTask: Task<Void, Never>?
     private enum SessionStreamPhase: Equatable {
         case stopped
@@ -205,6 +209,7 @@ final class RemoteStore {
 
     func restore() async {
         guard hasSavedConnection else { return }
+        startNetworkMonitoring()
         await connectSaved(showFailure: false)
     }
 
@@ -236,6 +241,9 @@ final class RemoteStore {
                 errorTitle = "Mac unavailable"
                 errorMessage = "Your saved Mac is not reachable yet. Make sure Vamp Assistant Remote Sessions and Tailscale are on, then try again."
             }
+            // A phone can launch before its VPN connects. Keep retrying the
+            // saved routes instead of leaving an offline launch disconnected.
+            startPolling()
         }
     }
 
@@ -252,6 +260,8 @@ final class RemoteStore {
             var computer = pairedComputers.first { $0.baseURL == parsed.url }
                 ?? PairedBeetCodeComputer(baseURL: parsed.url)
             computer.tokenExpiresAt = Date(timeIntervalSince1970: response.expiresAt)
+            computer.hostID = response.hostID
+            computer.connectionEndpoints = validatedEndpoints(response.connectionEndpoints, pairedURL: parsed.url)
             try connectionStorage.saveToken(response.token, for: computer.id)
             if let index = pairedComputers.firstIndex(where: { $0.id == computer.id }) {
                 pairedComputers[index] = computer
@@ -273,6 +283,7 @@ final class RemoteStore {
                 backgroundNotice = "Pairing succeeded. Reconnecting to load your Mac…"
             }
             startPolling()
+            startNetworkMonitoring()
             if observesNotifications { await RemoteNotificationCenter.shared.requestPermission() }
             return true
         } catch {
@@ -307,16 +318,23 @@ final class RemoteStore {
     }
 
     private func performRefresh(generation: UInt64) async throws {
-        guard let client else { throw RemoteClientError.notConnected }
-        async let status = client.status()
-        async let list = client.sessions()
-        let (nextStatus, nextList) = try await (status, list)
+        let (client, nextStatus) = try await resolveConnection(generation: generation)
+        let nextList = try await client.sessions()
         try requireConnection(generation)
         if let version = nextStatus.protocolVersion, version != 1 {
             throw RemoteClientError.server("This Mac uses remote protocol \(version). Update Vamp Companion on your iPhone and Vamp Assistant on your Mac to compatible versions.")
         }
         let nextBotRuns = (try? await client.botRuns())?.runs ?? []
         try requireConnection(generation)
+        if baseURL != client.baseURL {
+            // Preserve the selected conversation/draft while replacing only
+            // its transport. In-flight mutations are never replayed.
+            sessionStreamTask?.cancel()
+            sessionStreamTask = nil
+            sessionStreamPhase = .stopped
+            sessionStreamLastActivity = nil
+            baseURL = client.baseURL
+        }
         hostStatus = nextStatus
         lastConnectedAt = Date()
         connectionAvailable = true
@@ -331,7 +349,8 @@ final class RemoteStore {
         }
         updateActiveComputer(
             networkKind: nextStatus.networkKind,
-            tokenExpiresAt: nextStatus.tokenExpiresAt.map { Date(timeIntervalSince1970: $0) })
+            tokenExpiresAt: nextStatus.tokenExpiresAt.map { Date(timeIntervalSince1970: $0) },
+            hostID: nextStatus.hostID, endpoints: nextStatus.connectionEndpoints)
         connectionLabel = nextStatus.isRunning ? nextStatus.phase.capitalized : "Connected"
         if let id = selectedSession?.id,
            sessions.contains(where: { $0.id == id }) {
@@ -1293,6 +1312,61 @@ final class RemoteStore {
         return RemoteAPIClient(baseURL: baseURL, token: token, session: apiSession)
     }
 
+    private func validatedEndpoints(_ endpoints: [RemoteConnectionEndpoint]?, pairedURL: URL) -> [RemoteConnectionEndpoint] {
+        var seen: Set<URL> = []
+        return (endpoints ?? []).compactMap { $0.validated(relativeTo: pairedURL) }
+            .filter { seen.insert($0.url).inserted }.prefix(4).map { $0 }
+    }
+
+    private func resolveConnection(generation: UInt64) async throws -> (RemoteAPIClient, RemoteStatus) {
+        guard let client else { throw RemoteClientError.notConnected }
+        let alternatives = validatedEndpoints(activeComputer?.connectionEndpoints, pairedURL: client.baseURL)
+            .map(\.url).filter { $0.host != client.baseURL.host || $0.port != client.baseURL.port }
+        let candidates = [client.baseURL] + alternatives
+        let expectedHostID = activeComputer?.hostID
+        var authenticationError: Error?
+        var otherError: Error?
+        for address in candidates {
+            try requireConnection(generation)
+            let candidate = RemoteAPIClient(baseURL: address, token: client.token, session: apiSession)
+            do {
+                let status = try await (candidates.count > 1 ? candidate.connectionStatus() : candidate.status())
+                try requireConnection(generation)
+                if let expectedHostID, status.hostID != expectedHostID {
+                    throw RemoteClientError.server("This saved address belongs to a different Mac. Reconnect to the paired Mac.")
+                }
+                if let version = status.protocolVersion, version != 1 {
+                    throw RemoteClientError.server("This Mac uses remote protocol \(version). Update both devices to compatible versions.")
+                }
+                return (candidate, status)
+            } catch {
+                try requireConnection(generation)
+                if Self.isCancellation(error) { throw error }
+                if (error as? RemoteClientError)?.requiresPairing == true { authenticationError = error }
+                else { otherError = error }
+            }
+        }
+        // A reused LAN address may return another Mac's 401. A still-offline
+        // Tailscale route must not turn that into revocation of our pairing.
+        throw otherError ?? authenticationError ?? RemoteClientError.notConnected
+    }
+
+    private func startNetworkMonitoring() {
+        guard networkMonitor == nil, apiSession == nil, observesNotifications else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.hasSavedConnection else { return }
+                await self.connectSaved(showFailure: false)
+            }
+        }
+        networkMonitor = monitor
+        monitor.start(queue: DispatchQueue(label: "com.beetcode.remote.connection-path"))
+    }
+
+    isolated deinit { networkMonitor?.cancel() }
+
     private func isCurrentConnection(_ generation: UInt64) -> Bool {
         generation == connectionGeneration && !Task.isCancelled
     }
@@ -1384,12 +1458,21 @@ final class RemoteStore {
         connectionStorage.save(computers: pairedComputers, activeID: activeComputerID)
     }
 
-    private func updateActiveComputer(networkKind: String, tokenExpiresAt: Date?) {
+    private func updateActiveComputer(networkKind: String, tokenExpiresAt: Date?,
+                                      hostID: UUID?, endpoints: [RemoteConnectionEndpoint]?) {
         guard let activeComputerID,
               let index = pairedComputers.firstIndex(where: { $0.id == activeComputerID }) else { return }
         var computer = pairedComputers[index]
         let previous = computer
         computer.networkKind = networkKind
+        if let baseURL { computer.baseURL = baseURL }
+        if let hostID { computer.hostID = hostID }
+        if let endpoints {
+            // Remember a known Tailscale route through temporary VPN outages;
+            // the Mac's address generally stays stable across network changes.
+            computer.connectionEndpoints = validatedEndpoints(
+                endpoints + (computer.connectionEndpoints ?? []), pairedURL: computer.baseURL)
+        }
         if let tokenExpiresAt { computer.tokenExpiresAt = tokenExpiresAt }
         guard computer != previous else { return }
         pairedComputers[index] = computer
@@ -1470,6 +1553,7 @@ final class RemoteStore {
                 do {
                     for try await event in client.sessionEvents(id) {
                         guard self.isCurrentConnection(generation), self.selectionGeneration == selection,
+                              self.baseURL == client.baseURL,
                               self.selectedSession?.id == id else { return }
                         self.sessionStreamPhase = .connected
                         self.sessionStreamLastActivity = Date()
