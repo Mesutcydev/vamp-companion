@@ -146,6 +146,7 @@ struct RemoteAdvancedAccessBank: View {
 struct StartSessionSheet: View {
   @Bindable var store: RemoteStore
   let initialBotID: String
+  let initialModelID: String?
   let onStarted: (UUID) -> Void
   @Environment(\.dismiss) private var dismiss
   @Environment(\.remoteAppearance) private var appearance
@@ -190,11 +191,12 @@ struct StartSessionSheet: View {
 
   init(
     store: RemoteStore, initialBotID: String, initialPrompt: String = "",
-    showAdvanced: Bool = false,
+    showAdvanced: Bool = false, initialModelID: String? = nil,
     onStarted: @escaping (UUID) -> Void
   ) {
     self.store = store
     self.initialBotID = initialBotID
+    self.initialModelID = initialModelID
     self.onStarted = onStarted
     _prompt = State(initialValue: initialPrompt)
     _showAdvanced = State(initialValue: showAdvanced)
@@ -430,6 +432,12 @@ struct StartSessionSheet: View {
         async let computers: Void = loadBotComputers()
         async let folders: Void = store.loadWorkspaces()
         _ = await (models, computers, folders)
+        if let initialModelID,
+           let model = store.startModels.first(where: { $0.id == initialModelID }) {
+          source = model.source
+          selectedModelID = model.id
+          selectedReasoningEffort = model.defaultReasoningEffort
+        }
         attachMatchingBotComputer()
         selectFirstModel(allowSourceFallback: true)
         if store.workspacesSupported {

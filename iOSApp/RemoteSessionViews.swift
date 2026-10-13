@@ -63,6 +63,9 @@ struct SessionListView: View {
     @State private var showBotRuns = false
     @State private var showDiagnostics = false
     @State private var showSettings = false
+    @State private var showMacHub = false
+    @State private var startModelID: String?
+    @State private var deferredMacAction: RemoteMacHubAction?
     @State private var startBotID = ""
     @State private var deferredSessionID: UUID?
     private var visible: [RemoteSessionSummary] { search.isEmpty ? store.sessions : store.sessions.filter { $0.title.localizedCaseInsensitiveContains(search) || $0.workspace.localizedCaseInsensitiveContains(search) } }
@@ -75,7 +78,7 @@ struct SessionListView: View {
                     search: $search,
                     onBots: { showBotRuns = true },
                     onControl: { showControl = true },
-                    onChooseComputer: { showComputers = true })
+                    onChooseComputer: { showMacHub = true })
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         if visible.isEmpty {
@@ -103,6 +106,7 @@ struct SessionListView: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button(action: {
                         startBotID = ""
+                        startModelID = nil
                         showStartSession = true
                     }) {
                         Image(systemName: "plus")
@@ -125,7 +129,7 @@ struct SessionListView: View {
                 }
             }
             .fullScreenCover(isPresented: $showStartSession, onDismiss: openDeferredSession) {
-                StartSessionSheet(store: store, initialBotID: startBotID) { sessionID in
+                StartSessionSheet(store: store, initialBotID: startBotID, initialModelID: startModelID) { sessionID in
                     deferredSessionID = sessionID
                     showStartSession = false
                 }
@@ -144,6 +148,12 @@ struct SessionListView: View {
                 }
             }
             .sheet(isPresented: $showComputers) { ComputerSwitcherSheet(store: store) }
+            .sheet(isPresented: $showMacHub, onDismiss: openDeferredMacAction) {
+                RemoteMacHubView(store: store) { action in
+                    deferredMacAction = action
+                    showMacHub = false
+                }
+            }
             .sheet(isPresented: $showDiagnostics) {
                 NavigationStack {
                     RemoteDiagnosticsSettingsView()
@@ -166,6 +176,22 @@ struct SessionListView: View {
         Task { @MainActor in
             await Task.yield()
             onOpen(sessionID)
+        }
+    }
+
+    private func openDeferredMacAction() {
+        guard let action = deferredMacAction else { return }
+        deferredMacAction = nil
+        Task { @MainActor in
+            await Task.yield()
+            switch action {
+            case .start(let modelID):
+                startBotID = ""
+                startModelID = modelID
+                showStartSession = true
+            case .control: showControl = true
+            case .switchComputer: showComputers = true
+            }
         }
     }
 }
@@ -254,7 +280,7 @@ struct SessionControlHeader: View {
                                      action: $0)
                 },
                 onChooseComputer.map {
-                    InstrumentAction(id: "choose", title: "Computer",
+                    InstrumentAction(id: "choose", title: "Your Mac",
                                      symbol: "desktopcomputer.and.macbook",
                                      index: "03",
                                      secondary: store.activeComputerName,

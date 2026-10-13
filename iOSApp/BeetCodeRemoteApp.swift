@@ -156,11 +156,13 @@ enum BeetTheme {
 
     /// Fill and foreground accents remain distinct for contrast in both themes.
     @MainActor static var accent: Color {
-        RemoteInstrument.adaptive(currentPalette.hexes.accentLight, 0x777777)
+        if currentPalette == .graphite { return RemoteInstrument.brandRed }
+        return RemoteInstrument.adaptive(currentPalette.hexes.accentLight, 0x777777)
     }
 
     @MainActor static var accentBright: Color {
-        RemoteInstrument.adaptive(currentPalette.hexes.accentLight,
+        if currentPalette == .graphite { return RemoteInstrument.orange }
+        return RemoteInstrument.adaptive(currentPalette.hexes.accentLight,
             0xD0D0D0)
     }
 

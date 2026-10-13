@@ -64,8 +64,9 @@ struct RemoteSettingsSheet: View {
               InstrumentAccentBank(
                 selection: $accent,
                 palettes: AccentPalette.allCases,
-                labels: AccentPalette.allCases.map { "\($0.label) accent" },
+                labels: AccentPalette.allCases.map { $0 == .graphite ? "Vamp red accent" : "\($0.label) accent" },
                 colors: AccentPalette.allCases.map { palette in
+                  if palette == .graphite { return RemoteInstrument.brandRed }
                   let hex = palette.hexes.accentLight
                   return Color(
                     red: Double((hex >> 16) & 0xFF) / 255,
@@ -227,7 +228,7 @@ struct RemoteSettingsSheet: View {
 
 /// Provider metadata and connection state come from the paired Mac. The phone
 /// never reads back credentials; saving sends the draft once to Mac Keychain.
-private struct RemoteProvidersView: View {
+struct RemoteProvidersView: View {
   @Bindable var store: RemoteStore
   @State private var query = ""
   @State private var isLoading = false

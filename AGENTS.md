@@ -11,8 +11,12 @@ folders, checkpoint refs, or update-signing key.
   item. Runtime services belong to the application and survive window closure.
 - Preserve the session host, agent tools, bots, approvals, streaming, native
   dialogs, local and provider models, and remote protocol version 1.
-- Keep the inherited iOS application, assets, identity, and release settings
-  unchanged. Run `python3 scripts/verify-ios-unchanged.py` after changes.
+- The user explicitly authorized Vamp Assistant iOS design and Companion
+  controls on 2026-10-13. Make those changes only in this isolated copy;
+  preserve the original Assistant checkout, iOS assets, bundle identity,
+  remote protocol and existing behavior. UI exceptions are listed in
+  `verification/ios-authorized-ui-changes.json`. Run
+  `python3 scripts/verify-ios-unchanged.py` to check all other frozen files.
 - Companion identity is `com.beetcode.companion`; Application Support is
   `VampCompanion`; default hosting port is 9675; checkpoint refs are under
   `refs/vamp-companion/checkpoints/`. No legacy migration or model discovery

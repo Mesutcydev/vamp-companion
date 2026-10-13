@@ -49,7 +49,9 @@ Mac icon is generated only into the separate Companion asset catalog; inherited
 iOS and Assistant assets are unchanged.
 
 This is an independent copy of the current working Vamp Assistant source.
-The original Mac and iOS applications are unchanged. The companion uses
+The original Mac and iOS checkouts remain untouched. This isolated copy also
+contains the user-authorized Vamp Assistant iOS design updates and Your Mac hub.
+The client retains its bundle identity, assets, model identifiers, and protocol. The companion uses
 `com.beetcode.companion`, Application Support/VampCompanion, separate Keychain
 services and preferences, separate ChatGPT account storage, remote port 9675
 (with fallback), and its own Git
@@ -78,7 +80,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 The committed `Package.resolved` preserves the inherited dependency revisions.
 The internal Mac module remains `BeetCode` so the inherited backend tests and
 interfaces can stay intact. The preserved `BeetCodeRemoteIOS` scheme is available
-for unchanged iOS regression tests; this project publishes only the Mac companion.
+for iOS regression tests and the Companion hub UI checks. See
+[the iOS design scope](docs/IOS-COMPANION-DESIGN.md).
 Local UI testing requires a signed test runner; the command above uses ad hoc
 signing. Public releases always use Developer ID and hardened runtime.
 

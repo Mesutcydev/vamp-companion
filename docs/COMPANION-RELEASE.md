@@ -24,7 +24,9 @@ original app's `vamp-assistant` signing account. Do not export private keys
 into this repository.
 
 The shipped feed is `https://mesutcydev.github.io/vamp-companion/appcast.xml`.
-The original iOS app is unchanged and distributed from its existing repository.
+The original iOS checkout remains unchanged. User-authorized client UI updates
+are developed and tested in this isolated copy; its existing bundle identity
+and distribution configuration are preserved.
 The `site/` directory alone is deployed to Pages; inherited historical documents
 and original distribution metadata under `docs/` are not deployed.
 

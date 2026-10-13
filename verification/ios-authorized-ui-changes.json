@@ -1,0 +1,11 @@
+{
+  "authorization": "User requested Vamp Assistant iOS design, UI/UX, and Companion controls on 2026-10-13 and explicitly selected Vamp Assistant iOS.",
+  "files": [
+    "iOSApp/BeetCodeRemoteApp.swift",
+    "iOSApp/RemoteViews.swift",
+    "iOSApp/RemotePairingViews.swift",
+    "iOSApp/RemoteSessionViews.swift",
+    "iOSApp/RemoteSettingsView.swift",
+    "iOSApp/RemoteStartSessionView.swift"
+  ]
+}

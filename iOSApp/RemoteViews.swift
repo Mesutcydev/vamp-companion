@@ -19,6 +19,8 @@ struct RemoteRootView: View {
                 showAdvanced: ProcessInfo.processInfo.environment["VAMP_REMOTE_FIXTURE"] == "advanced") { _ in }
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "bots" {
             RemoteBotsView(store: store) { _ in }
+        } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "mac-hub" {
+            RemoteMacHubFixture()
         } else if store.hasSavedConnection { SessionNavigationView(store: store) }
         else { PairingView(store: store) }
 #else
@@ -138,22 +140,23 @@ enum RemoteInstrument {
     // Light mode uses a neutral pearl family: a white reading plane with a
     // restrained cool-rose shift through the chassis. It stays luminous
     // without reading as beige metal or flat office gray.
-    static let canvas = adaptive(0xF9F8F7, 0x0E0E0E)
-    static let reading = adaptive(0xFFFFFF, 0x141414)
-    static let panel = adaptive(0xF3F1F2, 0x292929)
-    static let header = adaptive(0xF8F7F8, 0x1B1B1B)
-    static let navigation = adaptive(0xEEECEF, 0x232323)
-    static let ink = adaptive(0x202022, 0xF0EFEC)
-    static let secondaryInk = adaptive(0x5F5D61, 0xB7B5B1)
-    static let pearlTop = adaptive(0xFFFDFE, 0x383838)
-    static let pearlMid = adaptive(0xF5F1F4, 0x323232)
-    static let pearlLow = adaptive(0xE7E6EA, 0x292929)
-    static let recess = adaptive(0xECE9ED, 0x202020)
-    static let darkInsert = adaptive(0x232226, 0x090909)
-    static let seam = adaptive(0xB2ADB5, 0x444444)
-    static let orange = adaptive(0xC6530A, 0xE9954B)
-    static let green = adaptive(0x287C43, 0x79AF89)
-    static let danger = adaptive(0xA73730, 0xE58E87)
+    static let canvas = adaptive(0xF4F4F4, 0x181818)
+    static let reading = adaptive(0xFAFAFA, 0x181818)
+    static let panel = adaptive(0xFAFAFA, 0x222222)
+    static let header = canvas
+    static let navigation = adaptive(0xEFEFEF, 0x222222)
+    static let ink = adaptive(0x222222, 0xF2F2F2)
+    static let secondaryInk = adaptive(0x555555, 0xBBBBBB)
+    static let pearlTop = panel
+    static let pearlMid = panel
+    static let pearlLow = panel
+    static let recess = adaptive(0xEFEFEF, 0x1C1C1C)
+    static let darkInsert = adaptive(0x444444, 0x303030)
+    static let seam = adaptive(0xD0D0D0, 0x414141)
+    static let brandRed = adaptive(0xBD2939, 0xBD2939)
+    static let orange = adaptive(0xAD2030, 0xF0808D)
+    static let green = ink
+    static let danger = orange
     // Physical instrument control surfaces. The housing is one machined
     // enclosure; the keys sit inside it, one tonal step brighter so the
     // enclosure edge reads. All three stay legible in both appearances.
@@ -558,7 +561,8 @@ struct RemoteKeySurface: ViewModifier {
 
     private var engaged: Bool { isSelected || (isPressed && isEnabled) }
     private var face: Color {
-        if prominent || isSelected { return RemoteInstrument.darkInsert }
+        if prominent { return RemoteInstrument.brandRed }
+        if isSelected { return RemoteInstrument.darkInsert }
         return engaged ? RemoteInstrument.keyFacePressed : RemoteInstrument.keyFace
     }
 
@@ -571,24 +575,8 @@ struct RemoteKeySurface: ViewModifier {
                         shape.strokeBorder(RemoteInstrument.keySeam.opacity(contrast == .increased ? 0.85 : 0.28),
                                            lineWidth: contrast == .increased ? 1.5 : 0.5)
                     }
-                    .overlay(alignment: .top) {
-                        Rectangle()
-                            .fill(RemoteInstrument.keyTopHighlight.opacity(engaged ? 0.12 : 0.65))
-                            .frame(height: 0.5)
-                            .padding(.horizontal, radius)
-                            .padding(.top, 0.5)
-                    }
-                    .overlay(alignment: .top) {
-                        LinearGradient(colors: [RemoteInstrument.keyInsetShadow.opacity(engaged ? 0.20 : 0), .clear],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: 3).clipShape(shape)
-                    }
-                    .shadow(color: RemoteInstrument.keyBottomShadow.opacity(engaged ? 0 : 0.28),
-                            radius: 0, x: 0, y: engaged ? 0 : 1)
             }
-            .offset(y: engaged && !reduceMotion ? 1 : 0)
-            .padding(.bottom, 1)
-            .background(RemoteInstrument.housingFoot.opacity(0.55), in: shape)
+            .scaleEffect(isPressed && !reduceMotion ? 0.98 : 1)
             .opacity(isEnabled ? 1 : 0.48)
             .animation(reduceMotion ? nil : .easeOut(duration: isPressed ? 0.08 : 0.14), value: isPressed)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isSelected)

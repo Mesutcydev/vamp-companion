@@ -124,18 +124,18 @@ struct PairingHero: View {
                 .tracking(-0.5)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
-            Text("Bring your conversations, approvals, and Mac controls to this device.")
+            Text("Your assistant on iPhone. Your models and tools on Mac.")
                 .font(.body)
                 .foregroundStyle(RemoteInstrument.secondaryInk)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 10) {
                 Text("01").font(RemoteInstrument.TypeStyle.metadata).foregroundStyle(RemoteInstrument.orange)
-                Text("Open Remote Sessions on your Mac").font(.subheadline)
+                Text("Open Vamp Companion → Devices, or Remote Sessions in Vamp Assistant.").font(.subheadline)
             }
             HStack(alignment: .top, spacing: 10) {
                 Text("02").font(RemoteInstrument.TypeStyle.metadata).foregroundStyle(RemoteInstrument.orange)
-                Text("Scan the code with this device").font(.subheadline)
+                Text("Scan the pairing code. Use the same Wi-Fi or private Tailscale network.").font(.subheadline)
             }
         }
         .foregroundStyle(RemoteInstrument.ink)
@@ -143,8 +143,8 @@ struct PairingHero: View {
     }
 
     private var pairingGlyph: some View {
-        Image(systemName: "desktopcomputer")
-            .font(.system(size: 20, weight: .regular))
+        RemoteVampMark()
+            .padding(6)
             .foregroundStyle(.white)
             .frame(width: 42, height: 42)
             .background(RemoteInstrument.darkInsert, in: RoundedRectangle(cornerRadius: 8))
