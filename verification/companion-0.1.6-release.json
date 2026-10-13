@@ -1,0 +1,32 @@
+{
+  "macOS": {
+    "version": "0.1.6",
+    "build": 10,
+    "release": "https://github.com/Mesutcydev/vamp-companion/releases/tag/v0.1.6",
+    "sourceCommit": "a80a1f69aa294f0240119adade8f55819bc8ffb8",
+    "sha256": "706732970442097189f4562dd27945ac2cf734bbdc0e684bbec1364c0bf152c0",
+    "notarizationSubmissionID": "c5c4b232-936c-4cb6-b11a-78009c8d25a4",
+    "notarized": true,
+    "stapled": true,
+    "gatekeeper": "passed",
+    "feedSignatureVerified": true,
+    "archiveSignatureVerified": true,
+    "designatedRequirementPreserved": true,
+    "installed": false
+  },
+  "appStreamIOS": {
+    "version": "1.0",
+    "build": 13,
+    "appId": "6819316114",
+    "buildId": "2a60ad4e-5283-40f7-9175-45db039e90e9",
+    "bundle": "com.mesutcy.remotedesktop.stream",
+    "processingState": "VALID",
+    "internalTesting": "IN_BETA_TESTING",
+    "group": "Internal Testers",
+    "ipaSHA256": "5d05ec992c62f9ee084134aaefed4549e889762661a79d55350a01f04b2c33f5",
+    "testNotesVerified": true
+  },
+  "website": "https://thevamp.app/companion/",
+  "sparkleFeed": "https://mesutcydev.github.io/vamp-companion/appcast.xml",
+  "physicalWindowSizingVerified": false
+}
