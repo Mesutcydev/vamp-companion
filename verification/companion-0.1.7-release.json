@@ -1,0 +1,63 @@
+{
+  "product": "Vamp Companion",
+  "version": "0.1.7",
+  "build": "11",
+  "sourceCommit": "9aedfded9beb7970b2c0395e1cfb39522ecfb7a6",
+  "websiteCommit": "3b846c69b3b5f99e3e176c91607664a2d5494b0b",
+  "releaseURL": "https://github.com/Mesutcydev/vamp-companion/releases/tag/v0.1.7",
+  "archive": {
+    "name": "Vamp-Companion-0.1.7-build-11-public.zip",
+    "bytes": 15559023,
+    "sha256": "2ae3ac47618849755fc4792ed1897d070b2ce372e0815b28ad80a2623603543b",
+    "uploadedBytesVerified": true,
+    "publicDownloadVerified": true
+  },
+  "notarization": {
+    "submissionID": "5ebda22c-7f58-4f96-9aef-0777172333a2",
+    "status": "Accepted",
+    "stapled": true
+  },
+  "distribution": {
+    "developerIDSigned": true,
+    "hardenedRuntime": true,
+    "gatekeeperAccepted": true,
+    "sameInstalledSigningRequirement": true,
+    "sparkleArchiveSignatureVerified": true,
+    "sparkleFeedSignatureVerified": true,
+    "liveFeedMatchesSignedBytes": true
+  },
+  "tests": {
+    "backendExecuted": 1154,
+    "backendSkipped": 51,
+    "backendFailures": 0,
+    "modelSharingCasesPassed": 10,
+    "isolationCasesPassed": 8,
+    "iOSRegressionCasesPassed": 57,
+    "macUICasesVerified": 4,
+    "initialUITestServiceCrash": true,
+    "iOSFrozenFilesVerified": 76
+  },
+  "installedVerification": {
+    "installedVersion": "0.1.7",
+    "installedBuild": "11",
+    "sharedModelCount": 6,
+    "sameAssistantPaths": true,
+    "ownModelDirectories": 0,
+    "assistantFilesUnchanged": true,
+    "assistantEntriesVerified": 49
+  },
+  "deployments": {
+    "companionRun": 38455724010,
+    "companionConclusion": "success",
+    "canonicalSiteRun": 38455805142,
+    "canonicalSiteConclusion": "success",
+    "canonicalSiteReleaseVerified": true
+  },
+  "sharing": {
+    "automatic": true,
+    "readOnlyReferences": true,
+    "assistantRegistryWritten": false,
+    "assistantModelFilesChanged": false,
+    "modelFilesCopied": false
+  }
+}
