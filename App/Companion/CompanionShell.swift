@@ -134,7 +134,7 @@ struct CompanionDevicesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Pair your iPhone or iPad").font(.title3.weight(.semibold))
-                Text("Open Vamp Assistant or App Stream on iPhone or iPad and scan this Mac’s pairing code. App Stream 1.0 build 9 supports Companion QR codes. Your assistant runs here, even when this window is closed.")
+                Text("Open Vamp Assistant or App Stream on iPhone or iPad and scan this Mac’s pairing code. App Stream 1.0 build 11 supports local Wi-Fi and private Tailscale connections. Your assistant runs here, even when this window is closed.")
                     .font(.callout).foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if !settings.remoteSessionEnabled {
@@ -157,7 +157,7 @@ struct CompanionDevicesView: View {
                             .accessibilityIdentifier("companion-pairing-network")
                             .onChange(of: pairsOverWiFi) { _, _ in copied = false }
                         }
-                        Text("For App Stream from TestFlight, choose Local Wi-Fi and keep your iPhone and Mac on the same Wi-Fi or Ethernet network.")
+                        Text("Choose Local Wi-Fi when both devices are on the same network. To connect remotely with App Stream build 11 or later, connect both devices to your private Tailscale network and choose Tailscale.")
                             .font(.caption).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         CompanionPairingCard(
