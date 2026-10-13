@@ -1,18 +1,21 @@
 {
   "date": "2026-10-13",
   "baseline": "Current original working iOS client used for 0.10.54 build 134, captured read-only",
-  "scope": "Homepage redesign and Companion controls explicitly authorized; composer, palette, and shared button surfaces protected",
+  "scope": "Authorized homepage/chat design, Companion controls, and Wi-Fi/Tailscale reconnection; composer, palette, assets and identity protected",
   "composerSourceSHA256": "3eca6b2b36cf68c49d5bc81a4def421925507cabeb453338970378aa6eba169e",
-  "frozenInheritedFiles": 88,
+  "frozenInheritedFiles": 83,
   "protectedRegions": "ios-protected-design-sha256.json",
   "localTests": {
-    "unit": 48,
+    "unit": 57,
     "ui": 24,
     "optionalUISkips": 5,
     "failures": 0,
     "fullSuiteBeforeLastNavigationCase": 23,
     "chatPolishCases": 4,
-    "finalHomepageRerun": 5
+    "finalHomepageRerun": 5,
+    "routingCases": 9,
+    "finalHomepageComposerChatRerun": 15,
+    "currentFullSuite": "57 unit cases passed after isolated fixture cleanup; all 24 UI cases passed on iOS 26.5 CI (five optional skips), and final 15 relevant UI cases also passed locally on iOS 27"
   },
   "composerRenders": [
     {
@@ -47,6 +50,35 @@
     "Concurrent live provider accounts",
     "Physical sleep/wake reconnection"
   ],
-  "finalBuild": "0.10.55 (137)",
-  "reference": "User-provided Desktop/SiteAgent; inspected read-only. ChatView, MotionKit, DesignKit and native screenshot."
+  "finalBuild": "0.10.55 (138)",
+  "reference": "User-provided Desktop/SiteAgent; inspected read-only. ChatView, MotionKit, DesignKit and native screenshot.",
+  "ci": {
+    "macOS": {
+      "run": 38416304913,
+      "backend": 1135,
+      "optionalBackendSkips": 51,
+      "ui": 3,
+      "releaseBuild": "passed"
+    },
+    "iOSUI": {
+      "run": 38416304913,
+      "cases": 24,
+      "optionalSkips": 5,
+      "failures": 0
+    },
+    "iOSUnitAndRelease": {
+      "run": 38420679884,
+      "cases": 57,
+      "failures": 0,
+      "releaseBuild": "passed"
+    }
+  },
+  "release": {
+    "version": "0.10.55",
+    "build": "138",
+    "processingState": "VALID",
+    "internalTesting": "IN_BETA_TESTING",
+    "group": "mes",
+    "intermediate135": "expired"
+  }
 }

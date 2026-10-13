@@ -268,3 +268,48 @@ data is used as a test fixture.
 - Build 136 was exported but not uploaded; the user's subsequent chat-reference
   request is included in the combined 0.10.55 (137) package. Build 135 is our own
   uploaded intermediate and will be superseded after the combined build verifies.
+
+
+## Final Wi-Fi / Tailscale release — 2026-10-13
+
+- Companion 0.1.5 (9) advertises authenticated private routes and a stable Mac
+  UUID without changing protocol version 1. Network advertisement changes keep
+  the existing listener and code. The iOS client preserves its computer ID,
+  token, conversation and draft when switching routes; it reconnects on
+  foreground/network changes without replaying mutations.
+- Clean macOS job 115361529545 in run 38416304913 passed 1,135 backend cases
+  (51 optional skips), three companion UI cases, and the Release build.
+- That run passed all 24 iOS UI cases (five optional skips). Its unit process
+  exposed a fixture cleanup issue: a pre-seeded fake Mac was automatically
+  reconnected after the test URLSession was invalidated. First pairing now
+  starts with no profiles and cleanup removes all fixture profiles first.
+  This changed only tests and workflow controls; signed production source
+  remains identical to revision 254fdff.
+- Corrected clean iOS run 38420679884 passed all 57 unit cases, including nine
+  routing cases, and the device Release build. Local iOS 27 also passed all
+  57 unit cases and the final 15 homepage/composer/chat checks. The shared
+  composer remains byte-identical to the current original; 83 inherited
+  files outside the explicit UI/connectivity scopes pass the frozen guard.
+- Apple notarization accepted Mac submission
+  a9a5e553-1c65-48e6-93d1-388028768ed2. The stapled public ZIP passed SHA-256,
+  strict signature, hardened-runtime, ticket and Gatekeeper checks after
+  downloading it from release v0.1.5. SHA-256:
+  45c40372237601be1277b0bf950d2336f6c311f2d5c1917e6581b65eee2f4f88.
+- The installed app is 0.1.5 (9). Existing three pairings and native
+  Accessibility/Screen Recording grants survived. With its window closed,
+  the same temporary test token authenticated status, sessions and models
+  through both Wi-Fi and Tailscale. Both reported the same host UUID and
+  ready Mac control; unlock was offered only on Tailscale. Cleanup revoked
+  only that temporary token and preserved all existing pairings.
+- The live signed Sparkle feed advertises precisely the verified archive.
+  The thevamp.app page and homepage download use 0.1.5 (9), with matching
+  setup instructions. Fifteen site tests and all 49 download/checksum links
+  passed. The public iOS download remains empty as requested.
+- iOS 0.10.55 (138), bundle com.beetcode.remote.ios, passed strict signing
+  and profile/privacy checks, Apple processing is VALID, internal state is
+  IN_BETA_TESTING, and the existing mes group lists the build. Its notes
+  describe route learning and the combined home/chat polish. Only our own
+  intermediate 135 was expired; 136/137 were never uploaded.
+- Physical iPhone reconnection outside the LAN, real sleep/wake and concurrent
+  live-provider inference remain unverified. The local two-route check does
+  not substitute for an actual phone on another network.

@@ -1,0 +1,23 @@
+{
+  "macOS": {
+    "version": "0.1.5",
+    "build": 9,
+    "release": "https://github.com/Mesutcydev/vamp-companion/releases/tag/v0.1.5",
+    "sha256": "45c40372237601be1277b0bf950d2336f6c311f2d5c1917e6581b65eee2f4f88",
+    "installed": true,
+    "notarized": true,
+    "stapled": true,
+    "feedSignatureVerified": true
+  },
+  "iOS": {
+    "version": "0.10.55",
+    "build": 138,
+    "bundle": "com.beetcode.remote.ios",
+    "state": "VALID",
+    "internalTesting": "IN_BETA_TESTING",
+    "group": "mes",
+    "ipaSHA256": "9a318533e70625faae07b0d70c7b4f6e2144de6334dc9530ff22e1ed157a0937"
+  },
+  "website": "https://thevamp.app/companion/",
+  "physicalOutsideLANVerified": false
+}
