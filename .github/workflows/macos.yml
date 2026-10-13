@@ -11,12 +11,24 @@ on:
       - 'verification/VALIDATION.md'
       - 'verification/ios-design-preservation-report.json'
   pull_request:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to validate
+        type: choice
+        options: [both, iOS]
+        default: both
+      test_scope:
+        description: iOS test scope (full UI runs remain the push default)
+        type: choice
+        options: [all, unit]
+        default: all
 
 permissions:
   contents: read
 
 concurrency:
-  group: apple-${{ github.ref }}
+  group: apple-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -27,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macOS, iOS]
+        platform: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.platform == 'iOS' && '["iOS"]' || '["macOS","iOS"]') }}
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       # XCTest must forward this for tests that invoke xcodebuild themselves.
@@ -56,11 +68,16 @@ jobs:
           test
       - name: iOS simulator tests
         if: matrix.platform == 'iOS'
-        run: >-
-          xcodebuild -project BeetCode.xcodeproj -scheme BeetCodeRemoteIOS
-          -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5'
-          -derivedDataPath "$RUNNER_TEMP/Derived" -resultBundlePath "$RUNNER_TEMP/Tests.xcresult"
-          -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation
+        run: |
+          TEST_SELECTION=()
+          if [[ "${{ inputs.test_scope }}" == unit ]]; then
+            TEST_SELECTION=(-only-testing:BeetCodeRemoteIOSTests)
+          fi
+          xcodebuild -project BeetCode.xcodeproj -scheme BeetCodeRemoteIOS \
+          -destination 'platform=iOS Simulator,name=iPhone 17,OS=26.5' \
+          -derivedDataPath "$RUNNER_TEMP/Derived" -resultBundlePath "$RUNNER_TEMP/Tests.xcresult" \
+          -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation \
+          "${TEST_SELECTION[@]}" \
           CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM="" test
       - name: macOS Release build
         if: matrix.platform == 'macOS'

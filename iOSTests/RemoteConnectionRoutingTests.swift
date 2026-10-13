@@ -9,13 +9,13 @@ final class RemoteConnectionRoutingTests: XCTestCase {
     nonisolated private static let tail = URL(string: "http://100.90.4.3:9675/")!
     nonisolated private static let hostID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
 
-    private func makeStore(_ computer: PairedBeetCodeComputer,
+    private func makeStore(_ computer: PairedBeetCodeComputer?,
                            handler: @escaping RemoteStubProtocol.Handler) -> (RemoteStore, MemoryConnectionStorage, URLSession) {
         RemoteStubProtocol.handler.withLock { $0 = handler }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RemoteStubProtocol.self]
         let session = URLSession(configuration: configuration)
-        let storage = MemoryConnectionStorage([computer])
+        let storage = MemoryConnectionStorage(computer.map { [$0] } ?? [])
         return (RemoteStore(connectionStorage: storage, apiSession: session,
             observesNotifications: false, drafts: RemoteDraftStore(directory: nil)), storage, session)
     }
@@ -44,6 +44,11 @@ final class RemoteConnectionRoutingTests: XCTestCase {
     }
 
     private func finish(_ store: RemoteStore, _ session: URLSession) {
+        // Removing an active Mac deliberately reconnects to the next saved
+        // one. Clear every fixture profile before invalidating its transport.
+        for computer in store.pairedComputers where computer.id != store.activeComputerID {
+            store.removeComputer(computer.id)
+        }
         store.forgetSavedMac()
         session.invalidateAndCancel()
     }
@@ -66,7 +71,7 @@ final class RemoteConnectionRoutingTests: XCTestCase {
         let conversationID = UUID()
         let streamReconnected = expectation(description: "selected conversation stream reconnects on Tailscale")
         streamReconnected.assertForOverFulfill = false
-        let (store, storage, session) = makeStore(computer(routes: false)) { request in
+        let (store, storage, session) = makeStore(nil) { request in
             let isLAN = request.url?.host == "192.168.1.20"
             if isLAN && !wifi.withLock({ $0 }) { throw URLError(.networkConnectionLost) }
             if request.httpMethod == "POST" {
