@@ -66,7 +66,7 @@ struct ModelManagerView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(maxWidth: 390)
-                .padding(.vertical, 20)
+                .padding(.vertical, 12)
                 .accessibilityLabel("Model library filter")
 
             if libraryFilter == "Connected models" {
@@ -541,7 +541,7 @@ private struct CompanionModelEmptyState: View {
             Image(systemName: isDownloaded ? "square.stack.3d.up" : "magnifyingglass")
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(CompanionBrand.accentInk)
-                .frame(width: 62, height: 62)
+                .frame(width: 50, height: 50)
                 .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
                 .accessibilityHidden(true)
@@ -549,7 +549,7 @@ private struct CompanionModelEmptyState: View {
                 Text(isDownloaded ? "No downloaded models" : "No matching models")
                     .textCase(.uppercase).font(CompanionBrand.display(24))
                 Text(isDownloaded
-                     ? "Your local library starts here. Discover a model or import one you already have."
+                     ? "Download your first model or import one you already have."
                      : "Try another name or model family.")
                     .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
                     .frame(maxWidth: 350)
@@ -568,8 +568,8 @@ private struct CompanionModelEmptyState: View {
             }
         }
         .multilineTextAlignment(.center)
-        .padding(28)
-        .frame(maxWidth: .infinity, minHeight: 255, alignment: .center)
+        .padding(20)
+        .frame(maxWidth: .infinity, minHeight: 215, alignment: .center)
         .companionCard()
         .accessibilityIdentifier("companion-empty-library")
     }

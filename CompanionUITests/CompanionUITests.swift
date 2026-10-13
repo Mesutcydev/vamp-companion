@@ -49,6 +49,9 @@ final class CompanionUITests: XCTestCase {
             app.launch()
             app.buttons["companion-tab-models"].click()
             let discover = app.buttons["companion-discover-models"]
+            if !discover.exists {
+                app.scrollViews["companion-models"].scroll(byDeltaX: 0, byDeltaY: -250)
+            }
             XCTAssertTrue(discover.waitForExistence(timeout: 30))
             saveScreenshot(app, name: "\(appearance)-models")
             discover.click()
