@@ -52,7 +52,7 @@ struct VampSearchField: View {
                 if text.isEmpty {
                     Text(placeholder)
                         .font(.appUI(size: SidebarMetrics.searchText))
-                        .foregroundStyle(Theme.placeholderOnSilver)
+                        .foregroundStyle(CompanionBrand.secondary)
                         .allowsHitTesting(false)
                 }
                 TextField("", text: $text)
@@ -80,10 +80,10 @@ struct VampSearchField: View {
         .frame(height: minHeight ?? Chrome.searchHeight)
         .background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Instrument.recessFill.opacity(0.85)))
+                .fill(CompanionBrand.inset))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(focused ? Instrument.accentOrange : Instrument.seam.opacity(0.7),
+                .strokeBorder(focused ? CompanionBrand.accentInk : CompanionBrand.stroke,
                               lineWidth: focused ? 1 : 0.75))
     }
 }

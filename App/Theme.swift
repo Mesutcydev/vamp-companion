@@ -61,8 +61,8 @@ enum Theme {
     // plus a hairline seam reads as part of the window. The OLED steps keep
     // the column darker than any panel but still visibly above a true-black
     // canvas, which is the whole point of the appearance.
-    static var navigationTop: Color { Color.dynamic(light: 0xF7F7F8, dark: 0x1E1E20, oled: 0x131315) }
-    static var navigationBottom: Color { Color.dynamic(light: 0xEEEEF0, dark: 0x171719, oled: 0x0B0B0D) }
+    static var navigationTop: Color { CompanionBrand.canvas }
+    static var navigationBottom: Color { CompanionBrand.canvas }
     /// Row/selection wash on the navigation surface.
     static var navigationRowHover: Color { Color.primary.opacity(0.05) }
 
@@ -83,7 +83,7 @@ enum Theme {
     static let placeholderOnSilver = Color(nsColor: .placeholderTextColor)
     /// Selected / primary control fill: the system accent, with the text color
     /// AppKit pairs with it.
-    static let controlInsert = Color(nsColor: .controlAccentColor)
+    static var controlInsert: Color { CompanionBrand.accent }
     static let textOnControlInsert = Color.white
     static let structuralDivider = Color(nsColor: .separatorColor)
 
@@ -118,13 +118,13 @@ enum Theme {
     // group looks like the same grey rectangle. The card surface is a hair
     // lighter than the canvas with a cool cast, and it steps — top to bottom —
     // by just enough to read as a raised face without becoming a gradient.
-    static let sectionSurfaceTop    = Color.dynamic(light: 0xFFFFFF, dark: 0x24262D, oled: 0x17191D)
-    static let sectionSurface       = Color.dynamic(light: 0xFFFFFF, dark: 0x202228, oled: 0x141619)
-    static let sectionSurfaceBottom = Color.dynamic(light: 0xFAFAFC, dark: 0x1C1E24, oled: 0x111316)
+    static var sectionSurfaceTop: Color { CompanionBrand.surface }
+    static var sectionSurface: Color { CompanionBrand.surface }
+    static var sectionSurfaceBottom: Color { CompanionBrand.surface }
     /// A recessed well inside a card: fields, editors, code, console bodies.
-    static let wellSurface          = Color.dynamic(light: 0xF4F5F7, dark: 0x171920, oled: 0x0D0E11)
-    static let sectionStroke        = Color.dynamic(light: 0xE3E5EA, dark: 0x353842, oled: 0x272A31)
-    static let sectionStrokeStrong  = Color.dynamic(light: 0xD3D6DD, dark: 0x424654, oled: 0x33363E)
+    static var wellSurface: Color { CompanionBrand.inset }
+    static var sectionStroke: Color { CompanionBrand.stroke }
+    static let sectionStrokeStrong = Color.dynamic(light: 0xB0B0B0, dark: 0x737373, oled: 0x737373)
 
     // MARK: Reading ink
     //
@@ -140,22 +140,21 @@ enum Theme {
     // clears 4.5:1 on every light surface it sits on (card 5.30, well 4.86,
     // navigation top 4.95, bottom 4.57) while staying a visible step lighter
     // than the secondary ink, so the hierarchy survives the fix.
-    static let inkPrimary   = Color.dynamic(light: 0x17191C, dark: 0xF0F1F4, oled: 0xEDEFF3)
-    static let inkSecondary = Color.dynamic(light: 0x555A62, dark: 0xB3B8C0, oled: 0xADB2BA)
-    static let inkTertiary  = Color.dynamic(light: 0x666C74, dark: 0x8A9099, oled: 0x848A93)
+    static let inkPrimary = CompanionBrand.ink
+    static let inkSecondary = CompanionBrand.secondary
+    static let inkTertiary = CompanionBrand.tertiary
 
     // MARK: Capability tints
     //
-    // The model library is scanned, not read: a colour per capability lets you
-    // find "the vision one" or "the coding one" without parsing every card.
-    static let tintChat      = Color.dynamic(light: 0x2F6FB0, dark: 0x6FB2E8, oled: 0x7CBCEF)
-    static let tintCoding    = Color.dynamic(light: 0x6A4BB5, dark: 0xB194F0, oled: 0xB99FF4)
-    static let tintVision    = Color.dynamic(light: 0x0F7A6B, dark: 0x54C9B4, oled: 0x64D3BE)
-    static let rose          = Color.dynamic(light: 0x913E58, dark: 0xD68CA4)
+    // Capabilities are named in the rows. Their icons share the neutral ink.
+    static let tintChat = CompanionBrand.secondary
+    static let tintCoding = CompanionBrand.secondary
+    static let tintVision = CompanionBrand.secondary
+    static let rose = CompanionBrand.accentInk
 
     // Semantic ink, not decorative fills. Signal LEDs use Instrument tokens.
-    static let positive      = Color.dynamic(light: 0x255B34, dark: 0x7FCA92)
-    static let negative      = Color.dynamic(light: 0x8E352F, dark: 0xED958B)
+    static let positive = CompanionBrand.ink
+    static let negative = CompanionBrand.accentInk
     static let controlStrong = Color.fixed(0x686868)
     static let statusNeutral = Color.fixed(0x8E8E93)
 
@@ -175,9 +174,9 @@ enum Theme {
     static var accentSoft: Color { accent.opacity(0.14) }
 
     static let success = positive
-    static let warning = Color.dynamic(light: 0x72490F, dark: 0xDEB570)
+    static let warning = CompanionBrand.secondary
     static let danger  = negative
-    static let info    = Color.dynamic(light: 0x2A5578, dark: 0x8AB8DA)
+    static let info = CompanionBrand.secondary
 
     // Tint washes — the ONLY opacities views may use for tinted fills and
     // borders, so "washed" surfaces read identically everywhere in the app.

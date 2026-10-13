@@ -523,7 +523,9 @@ private struct LocalModelsSection: View {
                             }
                         }
                         .background(CompanionBrand.surface)
-                        .overlay(alignment: .top) { Rectangle().fill(CompanionBrand.ink).frame(height: 2) }
+                        .clipShape(RoundedRectangle(cornerRadius: CompanionBrand.radius))
+                        .overlay(RoundedRectangle(cornerRadius: CompanionBrand.radius)
+                            .strokeBorder(CompanionBrand.stroke, lineWidth: 1))
                         .overlay(alignment: .bottom) { Rectangle().fill(CompanionBrand.stroke).frame(height: 1) }
                         .accessibilityIdentifier("companion-model-list")
                     }
@@ -552,6 +554,7 @@ private struct CompanionModelEmptyState: View {
             VStack(spacing: 6) {
                 Text(isDownloaded ? "No downloaded models" : "No matching models")
                     .font(.system(size: 20, weight: .semibold))
+                    .accessibilityIdentifier("companion-empty-library")
                 Text(isDownloaded
                      ? "Download your first model or import one you already have."
                      : "Try another name or model family.")
@@ -575,7 +578,6 @@ private struct CompanionModelEmptyState: View {
         .padding(20)
         .frame(maxWidth: .infinity, minHeight: 215, alignment: .center)
         .companionCard()
-        .accessibilityIdentifier("companion-empty-library")
     }
 }
 
@@ -638,13 +640,6 @@ private struct CompanionModelRow: View {
 
     private var isActive: Bool { appState.activeModelID == model.id }
 
-    /// One colour per capability, so the library can be scanned by what a model
-    /// is for instead of read card by card.
-    private var capabilityTint: Color {
-        if model.role == .vision { return Theme.tintVision }
-        return model.kind == .coding ? Theme.tintCoding : Theme.tintChat
-    }
-
     private var capabilityLabel: String {
         if model.role == .vision { return "Vision sidecar" }
         return model.kind == .coding ? "Coding" : "General chat"
@@ -661,7 +656,7 @@ private struct CompanionModelRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 14) {
-                ModelGlyph(format: model.format, isActive: isActive, tint: capabilityTint)
+                ModelGlyph(format: model.format, isActive: isActive)
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 8) {
@@ -683,7 +678,7 @@ private struct CompanionModelRow: View {
                         .foregroundStyle(CompanionBrand.secondary).lineLimit(2).lineSpacing(2)
                     if isRecommended {
                         Label("Recommended for this Mac", systemImage: "sparkles")
-                            .font(.system(size: 12)).foregroundStyle(capabilityTint)
+                            .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
                     }
                     DownloadStatusView(state: downloadState)
                 }
@@ -712,13 +707,14 @@ private struct CompanionModelRow: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isActive ? Theme.positive.opacity(0.06) : Color.clear)
+        .background(isActive ? CompanionBrand.control.opacity(0.5) : Color.clear)
         .overlay(alignment: .leading) {
-            Rectangle().fill(isActive ? Theme.positive : .clear).frame(width: 3)
+            Rectangle().fill(isActive ? CompanionBrand.accent : .clear).frame(width: 3)
         }
         .overlay(alignment: .bottom) {
             Rectangle().fill(CompanionBrand.stroke.opacity(0.5)).frame(height: 0.75)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("companion-model-row-\(model.id)")
     }
 
@@ -766,17 +762,14 @@ private struct CompanionModelRow: View {
 private struct ModelGlyph: View {
     let format: CatalogModel.Format
     let isActive: Bool
-    var tint: Color = Instrument.accentOrange
-
     var body: some View {
-        let mark = isActive ? Theme.positive : tint
         Image(systemName: format == .gguf ? "shippingbox" : (format == .coreAI ? "apple.intelligence" : "cpu"))
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(mark)
+            .foregroundStyle(isActive ? CompanionBrand.ink : CompanionBrand.secondary)
             .frame(width: 32, height: 32)
-            .background(mark.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(CompanionBrand.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(mark.opacity(0.28), lineWidth: 0.75))
+                .strokeBorder(CompanionBrand.stroke, lineWidth: 0.75))
     }
 }
 
@@ -800,15 +793,16 @@ private struct VerdictBadge: View {
     let projectedFootprint: UInt64
 
     var body: some View {
-        let (label, tint): (String, Color) = {
+        let (label, symbol): (String, String) = {
             switch verdict {
-            case .fits:     return ("Fits", Theme.positive)
-            case .marginal: return ("Marginal", Theme.warning)
-            case .wontFit:  return ("Won't fit", Theme.negative)
+            case .fits:     return ("Fits", "checkmark.circle")
+            case .marginal: return ("Marginal", "exclamationmark.circle")
+            case .wontFit:  return ("Won't fit", "xmark.circle")
             }
         }()
         return HStack(spacing: 5) {
-            Circle().fill(tint).frame(width: 5, height: 5)
+            Image(systemName: symbol).font(.system(size: 11))
+                .foregroundStyle(CompanionBrand.secondary)
             Text(label)
                 .font(.system(size: 12, weight: .medium))
                 .tracking(0.5)
@@ -902,7 +896,7 @@ private struct ModelActions: View {
                 Button("Load") {
                     Task { await appState.activate(model: model) }
                 }
-                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
+                .buttonStyle(CompanionArcadeButtonStyle())
                 .disabled(budget.verdict.fitsLoad == false)
             }
         } else {
@@ -916,12 +910,12 @@ private struct ModelActions: View {
                 Button("Resume") {
                     appState.startDownload(of: model)
                 }
-                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
+                .buttonStyle(CompanionArcadeButtonStyle())
             case .failed:
                 Button("Retry") {
                     appState.startDownload(of: model)
                 }
-                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
+                .buttonStyle(CompanionArcadeButtonStyle())
             case .completed:
                 ProgressView().controlSize(.small)
             case .idle:
@@ -930,7 +924,7 @@ private struct ModelActions: View {
                 Button("Download") {
                     appState.startDownload(of: model)
                 }
-                .buttonStyle(CompanionArcadeButtonStyle(primary: true))
+                .buttonStyle(CompanionArcadeButtonStyle())
                 .help("Resumable download with integrity checks")
             }
         }

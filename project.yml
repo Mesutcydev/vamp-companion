@@ -63,7 +63,7 @@ targets:
         CFBundleIconName: CompanionIcon
         NSLocalNetworkUsageDescription: "Vamp Companion connects to your paired iPhone or iPad on a trusted private network."
         CFBundleShortVersionString: "0.1.4"
-        CFBundleVersion: "7"
+        CFBundleVersion: "8"
         SUFeedURL: https://mesutcydev.github.io/vamp-companion/appcast.xml
         SUPublicEDKey: "FuLCW0ZngmVauQZQ2YKTaNRT/m5TOqVL81V/WQIMPSI="
         SUEnableAutomaticChecks: true

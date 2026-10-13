@@ -9,7 +9,7 @@ struct CompanionShell: View {
         VStack(spacing: 0) {
             CompanionHeader(selection: $navigation.destination,
                             hostRunning: appState.remoteSessionRunning)
-            Rectangle().fill(CompanionBrand.ink).frame(height: 2)
+            Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
             Group {
                 switch navigation.destination {
                 case .models:
@@ -116,7 +116,7 @@ private struct CompanionRuntimeStatus: View {
                 case .idle: Text("Choose a model to get started")
                 case .loading(let name): Text("Loading \(name)…")
                 case .ready(let name): Text(name).lineLimit(1)
-                case .failed: Text("Model needs attention").foregroundStyle(.orange)
+                case .failed: Text("Model needs attention").foregroundStyle(CompanionBrand.accentInk)
                 }
             }
         }
@@ -200,7 +200,7 @@ struct CompanionDevicesView: View {
                         Label("\(appState.remotePairedClientCount) paired devices", systemImage: "checkmark.shield")
                             .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     } else if let error = appState.remoteSessionError {
-                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(CompanionBrand.accentInk)
                             Button("Retry") { appState.retryRemoteSessionHost() }.buttonStyle(CompanionArcadeButtonStyle())
                     } else {
                         ProgressView("Starting iPhone access…")

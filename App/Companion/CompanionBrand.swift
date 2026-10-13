@@ -4,16 +4,20 @@ import SwiftUI
 /// Companion's brand is independent of the inherited Assistant preferences.
 /// The same screen-and-fangs geometry is used by the app icon and thevamp.app.
 enum CompanionBrand {
-    static var canvas: Color { .dynamic(light: 0xF4F4F4, dark: 0x111111, oled: 0x000000) }
-    static var surface: Color { .dynamic(light: 0xFAFAFA, dark: 0x1C1C1C, oled: 0x131313) }
-    static var inset: Color { .dynamic(light: 0xE8E8E8, dark: 0x080808, oled: 0x050505) }
-    static var stroke: Color { .dynamic(light: 0xA4A4A4, dark: 0x777777, oled: 0x777777) }
-    static let ink = Color.dynamic(light: 0x202124, dark: 0xF4F4F2, oled: 0xF4F4F2)
-    static let secondary = Color.dynamic(light: 0x505156, dark: 0xCACBD0, oled: 0xCACBD0)
+    // Every large surface is neutral. Red is reserved for a primary action or
+    // an active/attention signal, rather than colouring model categories.
+    static var canvas: Color { .dynamic(light: 0xF4F4F4, dark: 0x181818, oled: 0x000000) }
+    static var surface: Color { .dynamic(light: 0xFAFAFA, dark: 0x222222, oled: 0x131313) }
+    static var inset: Color { .dynamic(light: 0xEFEFEF, dark: 0x1C1C1C, oled: 0x0C0C0C) }
+    static var control: Color { .dynamic(light: 0xE8E8E8, dark: 0x303030, oled: 0x242424) }
+    static var stroke: Color { .dynamic(light: 0xD0D0D0, dark: 0x414141, oled: 0x383838) }
+    static let ink = Color.dynamic(light: 0x222222, dark: 0xF2F2F2, oled: 0xF2F2F2)
+    static let secondary = Color.dynamic(light: 0x555555, dark: 0xBBBBBB, oled: 0xBBBBBB)
+    static let tertiary = Color.dynamic(light: 0x666666, dark: 0x999999, oled: 0x999999)
     static let accent = Color.fixed(0xBD2939)
-    static let accentInk = Color.dynamic(light: 0xAD2030, dark: 0xFF7B88, oled: 0xFF7B88)
-    static let accentWash = Color.dynamic(light: 0xFCE9E9, dark: 0x382126, oled: 0x301B21)
-    static let radius: CGFloat = 4
+    static let accentInk = Color.dynamic(light: 0xAD2030, dark: 0xF0808D, oled: 0xF0808D)
+    static var accentWash: Color { control }
+    static let radius: CGFloat = 8
     static let pageInset: CGFloat = 24
 
     static func display(_ size: CGFloat) -> Font { .custom("BarlowCondensed-Bold", size: size) }
@@ -102,8 +106,9 @@ struct CompanionStatusPill: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Circle().fill(isReady ? Theme.positive : CompanionBrand.secondary)
-                .frame(width: 6, height: 6)
+            Image(systemName: isReady ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(isReady ? CompanionBrand.ink : CompanionBrand.secondary)
             Text(title).font(.system(size: 12, weight: .medium))
         }
         .foregroundStyle(CompanionBrand.ink)
@@ -123,11 +128,6 @@ struct CompanionCardModifier: ViewModifier {
             .overlay(RoundedRectangle(cornerRadius: CompanionBrand.radius)
                 .strokeBorder(contrast == .increased ? CompanionBrand.secondary : CompanionBrand.stroke,
                               lineWidth: 1))
-            .overlay(alignment: .top) {
-                Rectangle().fill(CompanionBrand.ink).frame(height: 2)
-                    .padding(.horizontal, 1)
-            }
-            .shadow(color: CompanionBrand.inset, radius: 0, x: 3, y: 3)
     }
 }
 
@@ -142,19 +142,17 @@ struct CompanionNavigationButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(isSelected ? CompanionBrand.canvas : CompanionBrand.secondary)
+            .foregroundStyle(isSelected ? CompanionBrand.ink : CompanionBrand.secondary)
             .padding(.horizontal, 18).frame(height: 36)
-            .background(isSelected ? CompanionBrand.ink : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3)
-                .strokeBorder(isSelected ? CompanionBrand.ink : CompanionBrand.stroke, lineWidth: 1))
+            .background(isSelected ? CompanionBrand.control : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6))
             .overlay(alignment: .bottom) {
                 Rectangle().fill(isSelected ? CompanionBrand.accent : .clear)
                     .frame(height: 2)
             }
             .opacity(configuration.isPressed ? 0.7 : 1)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 3))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -166,15 +164,13 @@ struct CompanionArcadeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(primary ? CompanionBrand.canvas : CompanionBrand.ink)
+            .foregroundStyle(primary ? Color.white : CompanionBrand.ink)
             .padding(.horizontal, 14).frame(minHeight: 36)
-            .background(primary ? CompanionBrand.ink : CompanionBrand.surface,
-                        in: RoundedRectangle(cornerRadius: 3))
-            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(CompanionBrand.ink, lineWidth: 1))
-            .shadow(color: CompanionBrand.stroke, radius: 0,
-                    x: configuration.isPressed ? 0 : 2, y: configuration.isPressed ? 0 : 2)
-            .offset(x: configuration.isPressed && !reduceMotion ? 1 : 0,
-                    y: configuration.isPressed && !reduceMotion ? 1 : 0)
+            .background(primary ? CompanionBrand.accent : CompanionBrand.control,
+                        in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(primary ? CompanionBrand.accent : CompanionBrand.stroke, lineWidth: 1))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
     }
 }

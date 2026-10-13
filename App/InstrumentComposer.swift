@@ -57,8 +57,8 @@ enum Instrument {
     static var silverMid: Color { Theme.sectionSurface }
     static var silverLow: Color { Theme.sectionSurfaceBottom }
     static var faceplate: Color { Theme.sectionSurface }
-    static let silverEdgeDark = Theme.sectionStrokeStrong
-    static let recessFill = Theme.wellSurface
+    static var silverEdgeDark: Color { Theme.sectionStrokeStrong }
+    static var recessFill: Color { Theme.wellSurface }
     /// The bright edge of raised controls, paired with their body material.
     static let controlHighlight = Color(nsColor: .separatorColor)
 
@@ -112,10 +112,10 @@ enum Instrument {
     static let seam = Color(nsColor: .separatorColor)
     static let seamLight = Color(nsColor: .separatorColor)
     static let engraved = Color(nsColor: .secondaryLabelColor)
-    static let darkInsert = Color(nsColor: .controlAccentColor)
-    static let sendFace = Color(nsColor: .controlAccentColor)
-    static let accentOrange = Color(red: 0.88, green: 0.48, blue: 0.18)
-    static let signalGreen = Color(red: 0.34, green: 0.76, blue: 0.37)
+    static var darkInsert: Color { CompanionBrand.control }
+    static var sendFace: Color { CompanionBrand.accent }
+    static let accentOrange = CompanionBrand.accentInk
+    static let signalGreen = CompanionBrand.secondary
     static let signalIdle = Color(red: 0.55, green: 0.55, blue: 0.55)
     /// Dark screen inserts — the display family shared by the user's message
     /// screen, the status readout, and the rail's perforated module.
@@ -124,8 +124,8 @@ enum Instrument {
     /// Primary/secondary ink for text on silver surfaces.
     static let ink = Theme.textOnSilver
     static let inkSecondary = Theme.secondaryOnSilver
-    static let signalBlue = Color.fixed(0x58A4D2)
-    static let signalPurple = Color.fixed(0xB77ACE)
+    static let signalBlue = CompanionBrand.secondary
+    static let signalPurple = CompanionBrand.secondary
 
     /// Micro-label style: spaced uppercase technical text.
     static func microLabel(_ text: String) -> some View {

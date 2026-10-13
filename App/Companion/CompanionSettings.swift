@@ -39,7 +39,7 @@ struct CompanionSettingsView: View {
                     Text("Set up API providers here or from Settings in the paired iOS app.")
                         .font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
                     Button("Manage API providers and accounts…") { navigation.showsProviders = true }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(CompanionArcadeButtonStyle())
                         .accessibilityIdentifier("companion-manage-providers")
                 }
                 HuggingFaceProviderCard()
@@ -70,7 +70,7 @@ private struct CompanionGeneralSettings: View {
                 Button("Allow in Login Items…") { SMAppService.openSystemSettingsLoginItems() }
             }
             if let error = loginItem.errorMessage {
-                Text(error).font(.system(size: 13)).foregroundStyle(.orange)
+                Text(error).font(.system(size: 13)).foregroundStyle(CompanionBrand.accentInk)
             }
             SettingToggle(label: "Resume interrupted downloads", isOn: Binding(
                 get: { AppPreferencesStore.shared.current.autoResumeDownloads },
@@ -145,7 +145,7 @@ private struct CompanionPermissionRow: View {
             Text(title)
             Spacer()
             if granted { Text("Granted").foregroundStyle(Theme.textSecondary) }
-            else if needsRelaunch { Text("Quit and reopen to finish").foregroundStyle(.orange) }
+            else if needsRelaunch { Text("Quit and reopen to finish").foregroundStyle(CompanionBrand.accentInk) }
             else { Button("Grant…", action: grant).buttonStyle(.bordered) }
         }.font(.system(size: 14))
     }

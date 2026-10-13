@@ -366,9 +366,9 @@ private struct ProviderDirectoryTile: View {
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
                     Image(systemName: icon).font(.title3)
-                        .foregroundStyle(connected ? Theme.positive : Instrument.accentOrange)
+                        .foregroundStyle(CompanionBrand.secondary)
                         .frame(width: 34, height: 34)
-                        .background((connected ? Instrument.signalGreen : Instrument.accentOrange).opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                        .background(CompanionBrand.control, in: RoundedRectangle(cornerRadius: 6))
                     Spacer()
                     if connected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.positive) }
                     Image(systemName: "arrow.up.right").foregroundStyle(Theme.textTertiary)
