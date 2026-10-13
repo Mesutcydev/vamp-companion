@@ -9,6 +9,132 @@ import XCTest
 /// clamps — none of which a unit test has. It is verified live instead; see the report.
 final class StreamGeometryParityTests: XCTestCase {
 
+    @MainActor
+    func testSizingRetryWaitsForTheAcceptedFrameBeforeReapplying() async throws {
+        let requested = CGSize(width: 627, height: 1364)
+        var observed = CGSize(width: 640, height: 480)
+        var applications = 0
+        var events: [String] = []
+        let result = try await RemoteControlApplicationRegistry.applySettledFrame(
+            requestedSize: requested, mode: .adaptive,
+            apply: { applications += 1; events.append("apply"); return true },
+            measure: { events.append("measure"); return observed },
+            settle: {
+                events.append("settle")
+                observed = applications == 1 ? CGSize(width: 627, height: 900) : requested
+            })
+        XCTAssertEqual(events, ["apply", "settle", "measure", "apply", "settle", "measure"])
+        XCTAssertTrue(result.retried)
+        XCTAssertTrue(result.accepted)
+        XCTAssertEqual(result.observedSize, requested)
+    }
+
+    @MainActor
+    func testAlreadyAcceptedResizeDoesNotRetryOnAStaleImmediateFrame() async throws {
+        let requested = CGSize(width: 627, height: 1364)
+        var observed = CGSize(width: 640, height: 480)
+        var applications = 0
+        let result = try await RemoteControlApplicationRegistry.applySettledFrame(
+            requestedSize: requested, mode: .adaptive,
+            apply: { applications += 1; return true },
+            measure: { observed },
+            settle: { observed = requested })
+        XCTAssertEqual(applications, 1)
+        XCTAssertFalse(result.retried)
+        XCTAssertEqual(result.observedSize, requested)
+    }
+
+    @MainActor
+    func testRejectedOrOriginalResizeNeverLoopsOnAppConstraints() async throws {
+        let requested = CGSize(width: 627, height: 1364)
+        for (mode, accepts): (RemoteControlApplicationRegistry.WindowSizingMode, Bool) in [(.adaptive, false), (.original, true)] {
+            var applications = 0
+            let result = try await RemoteControlApplicationRegistry.applySettledFrame(
+                requestedSize: requested, mode: mode,
+                apply: { applications += 1; return accepts },
+                measure: { CGSize(width: 640, height: 480) },
+                settle: {})
+            XCTAssertEqual(applications, 1)
+            XCTAssertFalse(result.retried)
+        }
+    }
+
+    @MainActor
+    func testSizingRequestSupportsLegacyAndMeasuredViewportWithoutInvertingPortrait() throws {
+        let legacy = try RemoteControlApplicationRegistry.WindowSizingRequest(fields: [
+            "windowID": .number(42), "clientViewportAspect": .number(0.5)])
+        XCTAssertEqual(legacy.windowID, 42)
+        XCTAssertNil(legacy.mode)
+        XCTAssertNil(legacy.viewport)
+        let modern = try RemoteControlApplicationRegistry.WindowSizingRequest(fields: [
+            "windowID": .number(42), "clientViewportAspect": .number(0.5),
+            "viewportWidth": .number(390), "viewportHeight": .number(794),
+            "sizingMode": .string("adaptive")])
+        XCTAssertEqual(modern.viewport, CGSize(width: 390, height: 794))
+        XCTAssertEqual(modern.mode, .adaptive)
+    }
+
+    @MainActor
+    func testSizingRequestRejectsPartialInvalidOrUnknownSizingFields() {
+        let valid: [String: LFJSONValue] = ["windowID": .number(42), "clientViewportAspect": .number(0.5)]
+        for invalid: [String: LFJSONValue] in [
+            ["windowID": .number(42.5)], ["windowID": .number(0)],
+            ["windowID": .number(Double(UInt32.max) + 1)],
+            ["clientViewportAspect": .number(.nan)], ["clientViewportAspect": .number(5)],
+            ["viewportWidth": .number(390)],
+            ["viewportWidth": .number(390), "viewportHeight": .number(0)],
+            ["viewportWidth": .number(.infinity), "viewportHeight": .number(794)],
+            ["sizingMode": .string("unknown")]
+        ] {
+            XCTAssertThrowsError(try RemoteControlApplicationRegistry.WindowSizingRequest(
+                fields: valid.merging(invalid) { _, new in new }))
+        }
+    }
+
+    @MainActor
+    func testOriginalSizeSurvivesMultipleAdaptiveRequestsAndWindowIDReuse() {
+        typealias Key = RemoteControlApplicationRegistry.OriginalWindowSizes.Key
+        var originals = RemoteControlApplicationRegistry.OriginalWindowSizes()
+        let key = Key(windowID: 42, pid: 100)
+        let original = CGSize(width: 1100, height: 700)
+        XCTAssertEqual(originals.remember(original, for: key, liveKeys: [key]), original)
+        XCTAssertEqual(originals.remember(CGSize(width: 627, height: 1364), for: key, liveKeys: [key]), original)
+        let reused = Key(windowID: 42, pid: 200)
+        let newSize = CGSize(width: 800, height: 600)
+        XCTAssertEqual(originals.remember(newSize, for: reused, liveKeys: [reused]), newSize)
+        XCTAssertNil(originals.sizes[key])
+    }
+
+    @MainActor
+    func testOriginalWindowSizeRetentionIsBounded() {
+        typealias Key = RemoteControlApplicationRegistry.OriginalWindowSizes.Key
+        var originals = RemoteControlApplicationRegistry.OriginalWindowSizes()
+        let keys = (1...200).map { Key(windowID: UInt32($0), pid: 100) }
+        for key in keys {
+            _ = originals.remember(CGSize(width: 800, height: 600), for: key, liveKeys: Set(keys))
+            XCTAssertLessThanOrEqual(originals.sizes.count, 128)
+        }
+    }
+
+    func testOriginalRestoresExactDimensionsWithoutApplyingViewportAspect() {
+        let frame = RemoteControlApplicationRegistry.targetWindowFrame(
+            current: CGRect(x: 1800, y: 900, width: 627, height: 1364),
+            display: CGRect(x: 0, y: 0, width: 2560, height: 1440), aspect: 390.0 / 794.0,
+            originalSize: CGSize(width: 1100, height: 700), sizingMode: .original)
+        XCTAssertEqual(frame.size, CGSize(width: 1100, height: 700))
+        XCTAssertLessThanOrEqual(frame.maxX, 2536)
+        XCTAssertLessThanOrEqual(frame.maxY, 1416)
+    }
+
+    func testOriginalSizeIsConstrainedToTheWindowsActualDisplay() {
+        let frame = RemoteControlApplicationRegistry.targetWindowFrame(
+            current: CGRect(x: -500, y: 900, width: 627, height: 1364),
+            display: CGRect(x: -1920, y: 0, width: 1920, height: 1080), aspect: 0.5,
+            originalSize: CGSize(width: 2560, height: 1440), sizingMode: .original)
+        XCTAssertEqual(frame.size, CGSize(width: 1872, height: 1004))
+        XCTAssertEqual(frame.origin, CGPoint(x: -1896, y: 52))
+    }
+
     private let maxLongEdge = 3840
     private let maxPixels = 3840 * 2160
 

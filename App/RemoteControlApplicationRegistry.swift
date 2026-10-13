@@ -19,6 +19,59 @@ final class RemoteControlApplicationRegistry {
         let windowTitle: String?
         let width: Double
         let height: Double
+        var appliedSizingMode: String? = nil
+        var sizingNotice: String? = nil
+    }
+
+    enum WindowSizingMode: String { case adaptive, original }
+
+    /// Optional additions preserve the aspect-only API used by older Assistant clients.
+    struct WindowSizingRequest {
+        let windowID: UInt32
+        let aspect: Double
+        let viewport: CGSize?
+        let mode: WindowSizingMode?
+
+        init(fields: [String: LFJSONValue]) throws {
+            guard let value = fields["windowID"]?.numberValue, value > 0,
+                  let windowID = UInt32(exactly: value),
+                  let aspect = fields["clientViewportAspect"]?.numberValue else {
+                throw RegistryError.windowUnavailable
+            }
+            try RemoteControlApplicationRegistry.validate(aspect: aspect)
+            self.windowID = windowID
+            self.aspect = aspect
+            if let rawMode = fields["sizingMode"] {
+                guard let name = rawMode.stringValue, let mode = WindowSizingMode(rawValue: name) else {
+                    throw RegistryError.invalidViewportAspect
+                }
+                self.mode = mode
+            } else { mode = nil }
+            if fields["viewportWidth"] != nil || fields["viewportHeight"] != nil {
+                guard let width = fields["viewportWidth"]?.numberValue,
+                      let height = fields["viewportHeight"]?.numberValue else {
+                    throw RegistryError.invalidViewportAspect
+                }
+                let viewport = CGSize(width: width, height: height)
+                try RemoteControlApplicationRegistry.validate(viewport: viewport)
+                self.viewport = viewport
+            } else { viewport = nil }
+        }
+    }
+
+    /// The same bounded, in-memory original-size retention as Sync. A reused window number
+    /// from another process never restores a previous application's size.
+    struct OriginalWindowSizes {
+        struct Key: Hashable { let windowID: UInt32; let pid: pid_t }
+        private(set) var sizes: [Key: CGSize] = [:]
+
+        mutating func remember(_ size: CGSize, for key: Key, liveKeys: Set<Key>) -> CGSize {
+            sizes = sizes.filter { liveKeys.contains($0.key) }
+            if let original = sizes[key] { return original }
+            if sizes.count >= 128 { sizes.removeAll() }
+            sizes[key] = size
+            return size
+        }
     }
 
     enum RegistryError: LocalizedError {
@@ -54,6 +107,7 @@ final class RemoteControlApplicationRegistry {
     }
 
     private var iconCache: [String: String] = [:]
+    private var originalWindowSizes = OriginalWindowSizes()
 
     func snapshot(includeIcons: Bool = true) -> [Application] {
         let windowsByPID = Dictionary(grouping: onScreenWindows(), by: \.ownerPID)
@@ -179,21 +233,11 @@ final class RemoteControlApplicationRegistry {
             }), let windowID = application.windowID,
                await Self.isShareableWindow(windowID) {
                 guard let clientViewportAspect else { return application }
-                guard let running = NSRunningApplication.runningApplications(
-                    withBundleIdentifier: bundleIdentifier
-                ).first else { throw RegistryError.applicationUnavailable }
                 // Launch must still succeed when Accessibility has not been granted or an app
                 // enforces a minimum window size. The explicit resize route reports that state;
                 // launch returns the closest streamable geometry.
-                try? resizeFocusedWindow(
-                    pid: running.processIdentifier,
-                    toAspect: clientViewportAspect,
-                    preferredBounds: nil)
-                try await Task.sleep(for: .milliseconds(350))
-                // Report the window that was just fitted. Re-querying by bundle identifier
-                // returns the app's *largest* window, which after a fit is very likely a
-                // different one than the fit touched.
-                return self.application(forWindowID: windowID, includeIcons: true) ?? application
+                return (try? await resize(windowID: windowID, clientViewportAspect: clientViewportAspect))
+                    ?? self.application(forWindowID: windowID, includeIcons: true) ?? application
             }
             // Safari and several document apps can remain running with every
             // window closed. Activating that process does not create a window,
@@ -235,9 +279,12 @@ final class RemoteControlApplicationRegistry {
         try? await RemoteMacControl.perform(.key("n", modifiers: ["command"]))
     }
 
-    func resize(windowID: UInt32, clientViewportAspect: Double) async throws -> Application {
+    func resize(windowID: UInt32, clientViewportAspect: Double,
+                viewport: CGSize? = nil, sizingMode: WindowSizingMode? = nil) async throws -> Application {
         try Self.validate(aspect: clientViewportAspect)
-        guard let window = onScreenWindows().first(where: { $0.id == windowID }) else {
+        if let viewport { try Self.validate(viewport: viewport) }
+        let windows = onScreenWindows()
+        guard let window = windows.first(where: { $0.id == windowID }) else {
             throw RegistryError.windowUnavailable
         }
         guard let running = NSWorkspace.shared.runningApplications.first(where: {
@@ -245,17 +292,35 @@ final class RemoteControlApplicationRegistry {
         }), running.bundleIdentifier != nil else {
             throw RegistryError.windowUnavailable
         }
+        let original = originalWindowSizes.remember(
+            window.bounds.size,
+            for: .init(windowID: windowID, pid: window.ownerPID),
+            liveKeys: Set(windows.map { .init(windowID: $0.id, pid: $0.ownerPID) }))
+        let aspect = sizingMode == .adaptive ? viewport.map { Double($0.width / $0.height) } ?? clientViewportAspect
+            : clientViewportAspect
         running.activate()
-        try resizeFocusedWindow(
+        let result = try await resizeFocusedWindow(
             pid: window.ownerPID,
-            toAspect: clientViewportAspect,
+            toAspect: aspect,
             preferredBounds: window.bounds,
-            windowID: windowID)
-        try await Task.sleep(for: .milliseconds(350))
+            windowID: windowID,
+            originalSize: original,
+            sizingMode: sizingMode ?? .adaptive)
         // Same window in, same window out — resizing never changes a CGWindowID, and looking
         // it back up by bundle identifier would hand back the app's largest window instead.
-        guard let application = self.application(forWindowID: windowID, includeIcons: true) else {
+        guard var application = self.application(forWindowID: windowID, includeIcons: true) else {
             throw RegistryError.windowUnavailable
+        }
+        application.appliedSizingMode = sizingMode?.rawValue
+        if !result.accepted {
+            application.sizingNotice = "The selected window could not be resized safely. Keeping its current size."
+        } else if sizingMode == .original {
+            if abs(application.width - original.width) > 2 || abs(application.height - original.height) > 2 {
+                application.sizingNotice = "The Mac constrained the original window size to its available space."
+            }
+        } else if Self.aspectMismatch(CGSize(width: application.width, height: application.height),
+                                      desired: result.requestedSize) {
+            application.sizingNotice = "The Mac kept a different window shape. Zoom or pan for a closer view."
         }
         return application
     }
@@ -398,10 +463,16 @@ final class RemoteControlApplicationRegistry {
             height: Double(window.bounds.height))
     }
 
-    private static func validate(aspect: Double) throws {
+    nonisolated private static func validate(aspect: Double) throws {
         guard aspect.isFinite, (0.25...4).contains(aspect) else {
             throw RegistryError.invalidViewportAspect
         }
+    }
+
+    nonisolated private static func validate(viewport: CGSize) throws {
+        guard viewport.width.isFinite, viewport.height.isFinite,
+              viewport.width > 0, viewport.height > 0 else { throw RegistryError.invalidViewportAspect }
+        try validate(aspect: Double(viewport.width / viewport.height))
     }
 
     /// Where a window of `size` should be anchored: its current origin when that still fits on
@@ -445,7 +516,7 @@ final class RemoteControlApplicationRegistry {
         to window: AXUIElement,
         origin: CGPoint,
         size: CGSize
-    ) {
+    ) -> Bool {
         var requestedOrigin = origin
         let positionValue = AXValueCreate(.cgPoint, &requestedOrigin)
         if let positionValue {
@@ -455,11 +526,18 @@ final class RemoteControlApplicationRegistry {
                 positionValue)
         }
         var requestedSize = size
+        var accepted = false
         if let sizeValue = AXValueCreate(.cgSize, &requestedSize) {
-            _ = AXUIElementSetAttributeValue(
+            accepted = AXUIElementSetAttributeValue(
                 window,
                 kAXSizeAttribute as CFString,
-                sizeValue)
+                sizeValue) == .success
+            // Sync reasserts the size once before restoring the anchor. This also makes
+            // Original Size robust when AppKit applies the preceding move asynchronously.
+            let observed = frame(of: window).size
+            if accepted, abs(observed.width - size.width) > 2 || abs(observed.height - size.height) > 2 {
+                _ = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
+            }
         }
         if let positionValue {
             _ = AXUIElementSetAttributeValue(
@@ -467,14 +545,47 @@ final class RemoteControlApplicationRegistry {
                 kAXPositionAttribute as CFString,
                 positionValue)
         }
+        return accepted
+    }
+
+    struct WindowSizingResult {
+        let requestedSize: CGSize
+        let observedSize: CGSize
+        let accepted: Bool
+        let retried: Bool
+    }
+
+    /// Read after AppKit settles, then retry once from the actual geometry, as Sync does.
+    /// Immediate AX reads can report the old frame and cannot verify an asynchronous resize.
+    static func applySettledFrame(
+        requestedSize: CGSize,
+        mode: WindowSizingMode,
+        apply: () -> Bool,
+        measure: () -> CGSize,
+        settle: () async throws -> Void = { try await Task.sleep(for: .milliseconds(350)) }
+    ) async throws -> WindowSizingResult {
+        let accepted = apply()
+        try await settle()
+        var observed = measure()
+        var retried = false
+        if accepted, mode == .adaptive, aspectMismatch(observed, desired: requestedSize) {
+            retried = true
+            _ = apply()
+            try await settle()
+            observed = measure()
+        }
+        return WindowSizingResult(requestedSize: requestedSize, observedSize: observed,
+                                  accepted: accepted, retried: retried)
     }
 
     private func resizeFocusedWindow(
         pid: pid_t,
         toAspect aspect: Double,
         preferredBounds: CGRect?,
-        windowID: UInt32? = nil
-    ) throws {
+        windowID: UInt32? = nil,
+        originalSize: CGSize? = nil,
+        sizingMode: WindowSizingMode = .adaptive
+    ) async throws -> WindowSizingResult {
         guard AXIsProcessTrusted() else { throw RegistryError.accessibilityRequired }
         guard let window = Self.axWindow(pid: pid, matching: preferredBounds) else {
             throw RegistryError.windowUnavailable
@@ -486,32 +597,29 @@ final class RemoteControlApplicationRegistry {
         let targetFrame = Self.targetWindowFrame(
             current: currentBounds,
             display: displayBounds,
-            aspect: CGFloat(aspect))
+            aspect: CGFloat(aspect),
+            originalSize: originalSize,
+            sizingMode: sizingMode)
         let requestedSize = targetFrame.size
         let requestedOrigin = Self.anchoredOrigin(
             requestedSize: requestedSize,
             currentOrigin: currentBounds.origin,
             display: displayBounds)
 
-        var retried = false
-        var observed = before
-        // Two passes at most. The first is the fix; the second is idempotent and covers an app
-        // whose AX size set landed before the move settled.
-        //
-        // The retry keys on **aspect**, not on the size matching exactly. An app that constrains
-        // its first AX resize — before accepting the new origin, or while it relayouts — leaves a
-        // window that kept its own shape, and shape is what the phone actually renders: a window
-        // that is 3pt off its request is fine, a window at the wrong aspect is letterboxed. A
-        // size set can still report failure for a window enforcing a minimum, or one that is
-        // simply fixed — that is the app declining, not a window that has gone away, so the
-        // request never fails here. The snapshot in `resize(windowID:)` stays authoritative.
-        for attempt in 0..<2 {
-            Self.applyFrame(to: window, origin: requestedOrigin, size: requestedSize)
-            observed = Self.frame(of: window)
-            let mismatched = Self.aspectMismatch(observed.size, desired: requestedSize)
-            if !mismatched { break }
-            retried = attempt == 0
-        }
+        let result = try await Self.applySettledFrame(
+            requestedSize: requestedSize, mode: sizingMode,
+            apply: {
+                let current = Self.frame(of: window)
+                let anchor = Self.anchoredOrigin(
+                    requestedSize: requestedSize,
+                    currentOrigin: current == .zero ? requestedOrigin : current.origin,
+                    display: displayBounds)
+                return Self.applyFrame(to: window, origin: anchor, size: requestedSize)
+            },
+            measure: {
+                windowID.flatMap { id in self.onScreenWindows().first { $0.id == id }?.bounds.size }
+                    ?? Self.frame(of: window).size
+            })
 
         // Durability matters: a live "the Mac kept a different window shape" report has to be
         // diagnosable from the host's ordinary log, without a special build. `.notice` survives
@@ -519,11 +627,11 @@ final class RemoteControlApplicationRegistry {
         // window content.
         let requested = "\(Int(requestedSize.width))x\(Int(requestedSize.height))"
             + "@\(Int(requestedOrigin.x)),\(Int(requestedOrigin.y))"
-        let seen = "\(Int(observed.width))x\(Int(observed.height))"
-            + "@\(Int(observed.origin.x)),\(Int(observed.origin.y))"
+        let seen = "\(Int(result.observedSize.width))x\(Int(result.observedSize.height))"
         Log.app.notice(
-            "window resize requested=\(requested, privacy: .public) observed=\(seen, privacy: .public) aspect=\(aspect, privacy: .public) windowID=\(windowID.map(String.init) ?? "launch", privacy: .public) retried=\(retried, privacy: .public)"
+            "window resize requested=\(requested, privacy: .public) observed=\(seen, privacy: .public) aspect=\(aspect, privacy: .public) windowID=\(windowID.map(String.init) ?? "launch", privacy: .public) retried=\(result.retried, privacy: .public)"
         )
+        return result
     }
 
     /// The longest edge a fitted window may reach, in points.
@@ -552,7 +660,9 @@ final class RemoteControlApplicationRegistry {
     nonisolated static func targetWindowFrame(
         current: CGRect,
         display: CGRect,
-        aspect: CGFloat
+        aspect: CGFloat,
+        originalSize: CGSize? = nil,
+        sizingMode: WindowSizingMode = .adaptive
     ) -> CGRect {
         guard aspect.isFinite, aspect > 0 else { return current }
         let available = CGRect(
@@ -560,22 +670,23 @@ final class RemoteControlApplicationRegistry {
             y: display.minY + 52,
             width: max(display.width - 48, 1),
             height: max(display.height - 76, 1))
+        if sizingMode == .original, let originalSize,
+           originalSize.width.isFinite, originalSize.height.isFinite,
+           originalSize.width > 0, originalSize.height > 0 {
+            let size = CGSize(width: min(originalSize.width, available.width),
+                              height: min(originalSize.height, available.height))
+            return CGRect(origin: anchoredOrigin(requestedSize: size, currentOrigin: current.origin,
+                                                  display: display), size: size)
+        }
         let clampedAspect = min(max(aspect, 0.25), 4)
         // Clamp first so the aspect match starts from a shape the display can actually hold.
         let currentSize = CGSize(
             width: min(max(current.width, 1), available.width),
             height: min(max(current.height, 1), available.height))
-        // Match the viewport aspect by holding the **width** and deriving the height.
-        //
-        // Holding the shorter dimension instead (the previous behaviour) asked for a narrow
-        // window: from a 640x480 source and a portrait viewport it requested 220x480. An app with
-        // a minimum window width — Safari's floor is 574pt — cannot accept that, so it stayed
-        // 574x480. The aspect then came back 1.196 against the phone's 0.461, which is precisely
-        // the "The Mac kept a different window shape" letterbox. Deriving the height from the
-        // current width keeps the request inside what the app will accept, and the fit below has
-        // already bounded it by the display, so the window still cannot grow off-screen.
-        let matchedWidth = currentSize.width
-        let matchedHeight = currentSize.width / clampedAspect
+        // Match the viewport, then scale into the display using Sync's exact calculation.
+        let currentAspect = currentSize.width / currentSize.height
+        let matchedWidth = clampedAspect < currentAspect ? currentSize.height * clampedAspect : currentSize.width
+        let matchedHeight = clampedAspect < currentAspect ? currentSize.height : currentSize.width / clampedAspect
         // Then scale that shape *into* the display instead of leaving it small, bounded by the
         // decoder-friendly longest edge.
         let fitScale = min(

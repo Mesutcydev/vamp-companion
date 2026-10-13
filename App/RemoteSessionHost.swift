@@ -1141,6 +1141,7 @@ final class RemoteSessionHost {
             "remoteUnlockEnabled": .bool(unlockEnabled),
             "remoteUnlockAvailable": .bool(unlockAvailable),
             "supportsCursorlessCapture": .bool(true),
+            "supportsAdaptiveSizing": .bool(true),
             "remoteUnlockMessage": .string(remoteUnlockMessage(
                 enabled: enabled,
                 unlockEnabled: unlockEnabled,
@@ -1225,17 +1226,18 @@ final class RemoteSessionHost {
         guard ComputerPermission.accessibilityGranted else {
             return macControlDenied("Accessibility permission is required to resize a streamed application.")
         }
-        guard let windowValue = request.bodyJSON?.objectValue?["windowID"]?.numberValue,
-              windowValue >= 0,
-              windowValue <= Double(UInt32.max),
-              let windowID = UInt32(exactly: windowValue),
-              let aspect = request.bodyJSON?.objectValue?["clientViewportAspect"]?.numberValue else {
-            return .response(json(["error": .string("A valid window and viewport aspect are required.")], status: 400))
+        let sizing: RemoteControlApplicationRegistry.WindowSizingRequest
+        do {
+            sizing = try .init(fields: request.bodyJSON?.objectValue ?? [:])
+        } catch {
+            return .response(json(["error": .string("A valid window, viewport, and sizing mode are required.")], status: 400))
         }
         do {
             let application = try await macControlApplicationRegistry.resize(
-                windowID: windowID,
-                clientViewportAspect: aspect)
+                windowID: sizing.windowID,
+                clientViewportAspect: sizing.aspect,
+                viewport: sizing.viewport,
+                sizingMode: sizing.mode)
             return .response(json(["application": Self.macControlApplicationJSON(application)]))
         } catch {
             return .response(json(["error": .string(error.localizedDescription)], status: 409))
@@ -1297,6 +1299,8 @@ final class RemoteSessionHost {
             "isRunning": .bool(application.isRunning),
             "isActive": .bool(application.isActive),
             "iconPNGBase64": application.iconPNGBase64.map(LFJSONValue.string) ?? .null,
+            "appliedSizingMode": application.appliedSizingMode.map(LFJSONValue.string) ?? .null,
+            "sizingNotice": application.sizingNotice.map(LFJSONValue.string) ?? .null,
         ])
     }
 
