@@ -15,8 +15,7 @@ struct RemoteRootView: View {
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "instrument" {
             RemoteInstrumentFixture()
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "new-session" {
-            StartSessionSheet(store: store, initialBotID: "",
-                showAdvanced: ProcessInfo.processInfo.environment["VAMP_REMOTE_FIXTURE"] == "advanced") { _ in }
+            StartSessionSheet(store: store, initialBotID: "") { _ in }
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "bots" {
             RemoteBotsView(store: store) { _ in }
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "homepage" {
@@ -25,6 +24,8 @@ struct RemoteRootView: View {
             RemoteChatFixture()
         } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"] == "mac-hub" {
             RemoteMacHubFixture()
+        } else if ProcessInfo.processInfo.environment["VAMP_REMOTE_TEST_SCREEN"]?.hasPrefix("secondary-") == true {
+            RemoteSecondaryPageFixture()
         } else if store.hasSavedConnection { SessionNavigationView(store: store) }
         else { PairingView(store: store) }
 #else

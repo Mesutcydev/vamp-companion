@@ -34,6 +34,7 @@ struct CompanionSettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 CompanionPageHeading(eyebrow: "Preferences", title: "Make it yours.",
                                      subtitle: "Connect your providers and choose what paired devices can access.")
+                if CompanionDistribution.isAppStore { CompanionWebsitePromoCard() }
                 CompanionGeneralSettings()
                 SettingsCard(title: "Connections", icon: "key") {
                     Text("Set up API providers here or from Settings in the paired iOS app.")
@@ -43,8 +44,18 @@ struct CompanionSettingsView: View {
                         .accessibilityIdentifier("companion-manage-providers")
                 }
                 HuggingFaceProviderCard()
-                CompanionPermissionsSettings()
+                if CompanionDistribution.isAppStore {
+                    SettingsCard(title: "Sharing", icon: "hand.raised") {
+                        CompanionStoreSharingSettings()
+                    }
+                } else {
+                    CompanionPermissionsSettings()
+                }
                 AppUpdateSettings()
+                HStack(spacing: 16) {
+                    Link("Privacy policy", destination: CompanionDistribution.privacyURL)
+                    Link("Support", destination: CompanionDistribution.websiteURL)
+                }.font(.callout)
             }.padding(CompanionBrand.pageInset)
         }
         .accessibilityIdentifier("companion-settings")
@@ -170,5 +181,16 @@ struct CompanionProviderSheet: View {
         }
         .frame(width: 660, height: 580)
         .background(CompanionBrand.canvas)
+    }
+}
+
+private struct CompanionStoreSharingSettings: View {
+    @ObservedObject private var settings = SettingsStore.shared
+
+    var body: some View {
+        SettingToggle(label: "Clipboard exchange", isOn: $settings.remoteClipboardSharingEnabled)
+        SettingToggle(label: "File transfer", isOn: $settings.remoteFileSharingEnabled)
+        Text("Shared files stay in Vamp Companion’s app storage. Paired devices can chat with your models while this app is running.")
+            .font(.callout).foregroundStyle(Theme.textSecondary)
     }
 }

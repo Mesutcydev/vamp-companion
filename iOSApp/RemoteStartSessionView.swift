@@ -2,144 +2,50 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-struct RemoteStartModeRow: View {
-  @Binding var mode: RemoteSessionMode
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-  var body: some View {
-    RemoteConfigurationRow(title: "Works in") {
-      Menu {
-        Picker("Works in", selection: $mode) {
-          ForEach(RemoteSessionMode.allCases) { option in
-            Label(option.title, systemImage: option.symbol).tag(option)
-          }
-        }
-      } label: {
-        HStack(spacing: 8) {
-          Rectangle().fill(RemoteInstrument.orange).frame(width: 2, height: 12)
-          Label(mode.title, systemImage: mode.symbol)
-          Image(systemName: "chevron.down").font(.caption2)
-        }
-        .font(.subheadline.weight(.medium)).foregroundStyle(.white)
-        .padding(.horizontal, 12).frame(minHeight: 44)
-        .background(RemoteInstrument.darkInsert, in: RoundedRectangle(cornerRadius: 7))
-      }
-      .accessibilityLabel("Works in, \(mode.title)")
-    }
-  }
-}
-
-struct RemoteStartNavigationRow<Destination: View>: View {
+/// A compact composer control: the current choice, tappable to change it.
+struct RemoteStartChip: View {
   let title: String
-  let subtitle: String
   let symbol: String
-  @ViewBuilder let destination: () -> Destination
 
   var body: some View {
-    NavigationLink {
-      destination()
-    } label: {
-      RemoteConfigurationRow(title: title) {
-        HStack(spacing: 8) {
-          Text(subtitle)
-          Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-        }
-      }
+    HStack(spacing: 6) {
+      Image(systemName: symbol).font(.caption.weight(.semibold))
+        .foregroundStyle(BeetTheme.accentBright).accessibilityHidden(true)
+      Text(title).lineLimit(1).truncationMode(.middle)
+      Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+        .foregroundStyle(RemoteInstrument.secondaryInk).accessibilityHidden(true)
     }
-    .buttonStyle(RemotePressButtonStyle())
+    .font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
+    .padding(.horizontal, 12).frame(minHeight: 36)
+    .background(RemoteInstrument.recess, in: Capsule())
+    .overlay { Capsule().strokeBorder(RemoteInstrument.seam.opacity(0.3), lineWidth: 0.75) }
+    // 36-point capsule, 44-point target.
+    .padding(.vertical, 4).contentShape(Rectangle())
   }
 }
 
-/// Two independent run permissions presented as one small hardware bank.
-/// Native switch rows let their labels compress inside the disclosure column;
-/// equal-width keys keep both names and states readable on narrow phones, then
-/// stack at accessibility sizes without changing either setting's meaning.
+/// The permission flags stay independent and reach the same Mac gate.
 struct RemoteAdvancedAccessBank: View {
   @Binding var autoMode: Bool
   @Binding var fullAccess: Bool
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
-    let layout = dynamicTypeSize.isAccessibilitySize
-      ? AnyLayout(VStackLayout(spacing: 1))
-      : AnyLayout(HStackLayout(spacing: 1))
-
-    return VStack(alignment: .leading, spacing: 6) {
-      layout {
-        // Both flags reach the Mac's permission gate as `fullAccess || autoMode`
-        // (AgentSessionController.effectiveFullAccess), so Auto mode on its own
-        // already runs uninterrupted. The hints say so rather than implying that
-        // Full Access off still means "you will be asked".
-        accessKey(title: "Auto mode", isOn: $autoMode,
-                  hint: "Runs the task without pausing for your approval.")
-        accessKey(title: "Full access", isOn: $fullAccess,
-                  hint: "Runs without approval prompts, including file writes and commands.")
-      }
-      .padding(3)
-      .background(
-        RemoteInstrument.housing,
-        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-      )
-      .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-      .overlay {
-        RoundedRectangle(cornerRadius: 7, style: .continuous)
-          .strokeBorder(RemoteInstrument.chassisEdge, lineWidth: 1)
-          .allowsHitTesting(false)
-      }
-
-      // Two independent-looking keys implied a graduated model, but the Mac
-      // gates on `fullAccess || autoMode`, so Auto mode alone already runs
-      // uninterrupted — and Auto mode is on by default. State the effective
-      // policy rather than letting "FULL ACCESS / OFF" imply restraint.
+    VStack(alignment: .leading, spacing: 10) {
+      Toggle("Auto mode", isOn: $autoMode)
+        .frame(minHeight: 44)
+        .accessibilityHint("Runs the task without pausing for your approval.")
+      RemotePageDivider()
+      Toggle("Full access", isOn: $fullAccess)
+        .frame(minHeight: 44)
+        .accessibilityHint("Runs without approval prompts, including file writes and commands.")
       Text(autoMode || fullAccess
            ? "This run skips approval prompts."
            : "Your Mac's approval settings apply.")
-        .font(.caption2)
-        .foregroundStyle(autoMode || fullAccess
-                         ? RemoteInstrument.orange : RemoteInstrument.secondaryInk)
+        .font(.caption)
+        .foregroundStyle(autoMode || fullAccess ? RemoteInstrument.orange : RemoteInstrument.secondaryInk)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Without this the line sits 12pt off the next row's micro-label and
-        // the two read as one block.
-        .padding(.bottom, 6)
     }
-  }
-
-  private func accessKey(title: String, isOn: Binding<Bool>, hint: String) -> some View {
-    Button {
-      UISelectionFeedbackGenerator().selectionChanged()
-      isOn.wrappedValue.toggle()
-    } label: {
-      HStack(spacing: 9) {
-        VStack(alignment: .leading, spacing: 2) {
-          Text(title.uppercased())
-            .font(.caption.monospaced().weight(.semibold))
-            .tracking(0.45)
-            .lineLimit(1)
-            .minimumScaleFactor(0.82)
-          Text(isOn.wrappedValue ? "ON" : "OFF")
-            .font(.caption2.monospaced().weight(.medium))
-            .foregroundStyle(isOn.wrappedValue ? RemoteInstrument.orange : RemoteInstrument.secondaryInk)
-        }
-        Spacer(minLength: 4)
-        InstrumentIndicator(
-          color: RemoteInstrument.orange,
-          visible: isOn.wrappedValue,
-          width: 14,
-          height: 2
-        )
-      }
-      .padding(.horizontal, 12)
-      .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? 58 : 50)
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(RemoteKeyButtonStyle(isSelected: isOn.wrappedValue))
-    .accessibilityLabel(title)
-    .accessibilityValue(isOn.wrappedValue ? "On" : "Off")
-    // ponytail: it behaves as a switch, so announce it as one. `.isSelected`
-    // made VoiceOver read a two-state control as a plain selected button.
-    .accessibilityAddTraits(.isToggle)
-    .accessibilityHint(hint)
+    .font(.subheadline).tint(BeetTheme.accent)
   }
 }
 
@@ -174,7 +80,6 @@ struct StartSessionSheet: View {
   @State private var showNewFolder = false
   @State private var folderPathDraft = ""
   @State private var showPathEntry = false
-  @State private var showAdvanced = false
   @State private var didRestoreChoices = false
   // Start choices follow the Mac's restored-project behavior without
   // becoming part of the remote protocol or a persisted prompt draft.
@@ -191,7 +96,7 @@ struct StartSessionSheet: View {
 
   init(
     store: RemoteStore, initialBotID: String, initialPrompt: String = "",
-    showAdvanced: Bool = false, initialModelID: String? = nil,
+    initialModelID: String? = nil,
     onStarted: @escaping (UUID) -> Void
   ) {
     self.store = store
@@ -199,7 +104,14 @@ struct StartSessionSheet: View {
     self.initialModelID = initialModelID
     self.onStarted = onStarted
     _prompt = State(initialValue: initialPrompt)
-    _showAdvanced = State(initialValue: showAdvanced)
+  }
+
+  // The App Store Mac edition omits these; older hosts send no list and keep
+  // every option.
+  private var codeModeAvailable: Bool { store.hostStatus?.capabilities?.contains("workspaces") ?? true }
+  private var botsAvailable: Bool { store.hostStatus?.capabilities?.contains("bots") ?? true }
+  private var reasoningEfforts: [String] {
+    models.first(where: { $0.id == selectedModelID })?.reasoningEfforts ?? []
   }
 
   private var codeFolderMissing: Bool {
@@ -259,149 +171,51 @@ struct StartSessionSheet: View {
   var body: some View {
     NavigationStack {
       ScrollView {
-        VStack(alignment: .leading, spacing: 20) {
-          if !store.isConnected {
-            Section {
-              RemoteReconnectBanner(store: store)
-                .listRowInsets(EdgeInsets())
+        VStack(alignment: .leading, spacing: 16) {
+          if !store.isConnected { RemoteReconnectBanner(store: store) }
+
+          VStack(alignment: .leading, spacing: 7) {
+            if codeModeAvailable {
+              RemotePageSegments(selection: $sessionMode,
+                options: RemoteSessionMode.allCases.map { ($0.title, $0) })
+                .accessibilityLabel("Session mode")
             }
+            Text(sessionMode == .chat
+                 ? "Ask anything. No project folder is opened."
+                 : "Vamp works inside a project folder on your Mac.")
+              .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+              .fixedSize(horizontal: false, vertical: true)
           }
 
-          RemoteInstrumentSegments(selection: $sessionMode,
-            options: RemoteSessionMode.allCases.map { ($0.title, $0) })
-            .accessibilityLabel("Session mode")
+          composer
 
-          VStack(alignment: .leading, spacing: 12) {
-            // ponytail: a `prompt` truncates to one line on a vertical-axis
-            // field, so at accessibility sizes this read "What should i…".
-            // The placeholder is a sibling in the ZStack rather than an
-            // overlay so it contributes height — 116 is a floor, so the box
-            // grows to fit the wrapped text instead of clipping it.
-            ZStack(alignment: .topLeading) {
-              if prompt.isEmpty {
-                Text(sessionMode == .chat ? "Message Vamp…" : "What should Vamp work on?")
-                  .font(.body)
-                  .foregroundStyle(RemoteInstrument.secondaryInk)
-                  .allowsHitTesting(false)
-                  .accessibilityHidden(true)
-              }
-              TextField("", text: $prompt, axis: .vertical)
-                .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 3 : 6))
-                .font(.body)
-                .focused($taskFocused)
-                .accessibilityLabel("Task")
-                .accessibilityIdentifier("remote.start.prompt")
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, minHeight: 116, alignment: .topLeading)
-            .remoteRecess(focused: taskFocused)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: taskFocused)
+          if let hint = startHint {
+            Label(hint, systemImage: "info.circle")
+              .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+              .fixedSize(horizontal: false, vertical: true)
+              .padding(.horizontal, 4)
           }
 
-          if isLoadingModels || store.backgroundNotice != nil {
-            Section {
-              HStack(spacing: 10) {
-                if isLoadingModels {
-                  ProgressView()
-                } else {
-                  Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(RemoteInstrument.orange)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                  Text(isLoadingModels ? "Loading models…" : "Model catalog unavailable")
-                    .font(.subheadline.weight(.semibold))
-                  if let notice = store.backgroundNotice, !isLoadingModels {
-                    Text(notice)
-                      .font(.footnote)
-                      .foregroundStyle(RemoteInstrument.secondaryInk)
-                  }
-                }
-                Spacer()
-                if !isLoadingModels {
-                  Button("Retry") { loadModels() }
-                    .buttonStyle(RemoteSecondaryButtonStyle())
-                }
-              }
-            }
-          }
+          catalogNotice
 
-          VStack(spacing: 0) {
-              Button {
-                showModelPicker = true
-              } label: {
-                RemoteConfigurationRow(title: "Model") {
-                  HStack(spacing: 8) {
-                    Text(selectedModelName)
-                    Image(systemName: "chevron.right").font(.caption.weight(.semibold))
-                  }
-                }
-              }
-              .buttonStyle(RemotePressButtonStyle())
-              .accessibilityIdentifier("remote.start.model")
-              if sessionMode == .code {
-                RemoteStartNavigationRow(
-                  title: "Project folder",
-                  subtitle: selectedWorkspaceTitle,
-                  symbol: "folder"
-                ) {
-                  workspaceSection
-                    .navigationTitle("Project folder")
-                }
-              }
-          }
-
-          DisclosureGroup(isExpanded: $showAdvanced) {
-            VStack(alignment: .leading, spacing: 16) {
-              RemoteStartNavigationRow(
-                title: "Bot", subtitle: botProfile.name, symbol: "person.crop.circle"
-              ) {
-                RemoteBotChooser(selectedBotID: $selectedBotID).navigationTitle("Bot")
-              }
-              RemoteAdvancedAccessBank(autoMode: $autoMode, fullAccess: $fullAccess)
-              if sessionMode == .code { botComputerSection }
-              if source == "api" { apiKeySection }
-              if let selected = models.first(where: { $0.id == selectedModelID }),
-                let efforts = selected.reasoningEfforts, !efforts.isEmpty
-              {
-                RemoteReasoningSelector(
-                  modelName: selected.name,
-                  efforts: efforts,
-                  defaultEffort: selected.defaultReasoningEffort,
-                  selection: $selectedReasoningEffort)
-              }
-            }.padding(.top, 12)
-          } label: {
-            HStack {
-              Text("Options").font(.subheadline.weight(.medium))
-              Spacer(minLength: 8)
-              Text(botProfile.name)
-                .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-                .lineLimit(1)
-            }.frame(minHeight: 44)
-          }
-          .tint(RemoteInstrument.ink)
-          .accessibilityIdentifier("remote.start.options")
+          setupSection
         }
         .padding(.horizontal, horizontalSizeClass == .compact ? 16 : 20)
-        .padding(.vertical, 20)
-        .frame(maxWidth: 720)
+        .padding(.vertical, 16)
+        .frame(maxWidth: RemoteInstrument.contentWidth)
         .frame(maxWidth: .infinity)
       }
       .scrollContentBackground(.hidden)
       .scrollDismissesKeyboard(.interactively)
-      .background(BeetTheme.background(appearance))
-      .safeAreaInset(edge: .bottom, spacing: 0) {
-        startDeck
-      }
+      .background(RemoteInstrument.canvas)
       .navigationTitle(sessionMode == .chat ? "New chat" : "New code session")
       .navigationBarTitleDisplayMode(.inline)
-      .remoteNavigationChrome()
+      .remotePageChrome()
       .toolbar {
         ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
           .vampUtilityAction()
       }
-      .toolbarBackground(BeetTheme.background(appearance), for: .navigationBar)
-      .toolbarBackground(.visible, for: .navigationBar)
+
       .sheet(item: $consoleComputer) { computer in
         RemoteBotConsoleView(store: store, computer: computer)
       }
@@ -422,15 +236,18 @@ struct StartSessionSheet: View {
       .task {
         guard !didRestoreChoices else { return }
         didRestoreChoices = true
-        selectedBotID = initialBotID
+        // Writing is the first step; reviewed quick starts keep the keyboard down.
+        taskFocused = prompt.isEmpty
+        selectedBotID = botsAvailable ? initialBotID : ""
         source = savedSource
         selectedModelID = savedModelID
         selectedReasoningEffort = restoredReasoningEffort
-        sessionMode = restoredSessionMode
+        sessionMode = codeModeAvailable ? restoredSessionMode : .chat
         selectedWorkspacePath = savedWorkspacePath
+        // Unsupported routes answer 403, which would surface as an alert.
         async let models: Void = loadModels()
-        async let computers: Void = loadBotComputers()
-        async let folders: Void = store.loadWorkspaces()
+        async let computers: Void = botsAvailable ? loadBotComputers() : ()
+        async let folders: Void = codeModeAvailable ? store.loadWorkspaces() : ()
         _ = await (models, computers, folders)
         if let initialModelID,
            let model = store.startModels.first(where: { $0.id == initialModelID }) {
@@ -490,33 +307,193 @@ struct StartSessionSheet: View {
       }
       .keyboardDismissToolbar()
     }
+    .remotePageErrors(store: store)
   }
 
-  private var startDeck: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      if let hint = startHint {
-        Text(hint).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-          .fixedSize(horizontal: false, vertical: true)
+  /// The message and the choices that shape it share one surface, so the
+  /// model, folder, and Start stay reachable above the keyboard.
+  private var composer: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      // ponytail: a `prompt` truncates to one line on a vertical-axis
+      // field, so at accessibility sizes this read "What should i…".
+      // The placeholder is a sibling in the ZStack rather than an
+      // overlay so it contributes height — the frame is a floor, so the box
+      // grows to fit the wrapped text instead of clipping it.
+      ZStack(alignment: .topLeading) {
+        if prompt.isEmpty {
+          Text(sessionMode == .chat ? "Message Vamp…" : "What should Vamp work on?")
+            .font(.body)
+            .foregroundStyle(RemoteInstrument.secondaryInk)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        // The field reserves its own lines, so the whole box takes focus.
+        TextField("", text: $prompt, axis: .vertical)
+          .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2...4 : 4...8)
+          .font(.body)
+          .focused($taskFocused)
+          .accessibilityLabel("Task")
+          .accessibilityIdentifier("remote.start.prompt")
       }
-      Button {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        start()
-      } label: {
-        HStack(spacing: 8) {
-          if isStarting { ProgressView() }
-          Text(isStarting ? "Starting…" : sessionMode == .chat ? "Start chat" : "Start session")
-            .font(.subheadline.weight(.semibold))
-          Image(systemName: "arrow.up.right").font(.caption)
-        }.frame(maxWidth: .infinity, minHeight: 44)
-      }.buttonStyle(RemotePrimaryButtonStyle()).disabled(!canStart)
-        .accessibilityLabel("Start session")
-        .accessibilityIdentifier("remote.start.submit")
+      .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
+      .frame(maxWidth: .infinity, alignment: .topLeading)
+
+      RemotePageDivider()
+
+      let layout = dynamicTypeSize.isAccessibilitySize
+        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+        : AnyLayout(HStackLayout(spacing: 8))
+      layout {
+        Button { showModelPicker = true } label: {
+          RemoteStartChip(title: selectedModelName, symbol: sourceIcon)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Model, \(selectedModelName)")
+        .accessibilityHint("Opens the searchable model list")
+        .accessibilityIdentifier("remote.start.model")
+        if sessionMode == .code {
+          NavigationLink {
+            RemotePageScroll { workspaceSection }
+              .remotePageChrome().navigationTitle("Project folder")
+          } label: {
+            RemoteStartChip(
+              title: selectedBotComputerID == nil ? selectedWorkspaceTitle : "Bot computer",
+              symbol: selectedBotComputerID == nil ? "folder" : "square.stack.3d.up")
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Project folder, \(selectedWorkspaceTitle)")
+        }
+        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
+        startButton
+          .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .trailing)
+      }
+      .padding(.horizontal, 10).padding(.vertical, 6)
     }
-    .padding(.horizontal, horizontalSizeClass == .compact ? 16 : 20).padding(.vertical, 10)
-    .frame(maxWidth: 720).frame(maxWidth: .infinity)
-    .background(RemoteInstrument.header)
-    .overlay(alignment: .top) { VampHairline() }
+    .remotePageCard()
+    .overlay {
+      RoundedRectangle(cornerRadius: 17, style: .continuous)
+        .strokeBorder(taskFocused ? BeetTheme.accentBright.opacity(0.7) : .clear, lineWidth: 1)
+        .allowsHitTesting(false)
+    }
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: taskFocused)
+  }
+
+  private var startButton: some View {
+    Button {
+      UIImpactFeedbackGenerator(style: .light).impactOccurred()
+      start()
+    } label: {
+      ZStack {
+        if isStarting {
+          ProgressView().tint(.white)
+        } else {
+          Image(systemName: "arrow.up").font(.body.weight(.bold))
+        }
+      }
+      .foregroundStyle(canStart || isStarting ? Color.white : RemoteInstrument.secondaryInk)
+      .frame(width: 44, height: 44)
+      .background(canStart || isStarting ? BeetTheme.accent : RemoteInstrument.recess, in: Circle())
+      .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .disabled(!canStart)
+    .accessibilityLabel(sessionMode == .chat ? "Start chat" : "Start session")
+    .accessibilityIdentifier("remote.start.submit")
     .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: canStart)
+  }
+
+  @ViewBuilder
+  private var catalogNotice: some View {
+    if isLoadingModels {
+      RemoteNoticeLabel(title: "Loading models…", detail: "Asking your Mac what it can run.", isWorking: true)
+        .remotePageCard()
+    } else if let notice = store.backgroundNotice {
+      Button { loadModels() } label: {
+        RemoteNoticeLabel(title: "Model catalog unavailable", detail: notice, actionTitle: "Retry",
+          symbol: "exclamationmark.triangle.fill")
+      }
+      .buttonStyle(RemotePageRowButtonStyle()).remotePageCard()
+    } else if store.isConnected, store.startModels.isEmpty {
+      RemoteNoticeLabel(title: emptyModelsTitle, detail: emptyModelsDescription, symbol: sourceIcon)
+        .remotePageCard()
+    }
+  }
+
+  /// Every choice shows its current value; the controls open one level down.
+  private var setupSection: some View {
+    RemotePageSection(title: "Setup", padding: 0) {
+      if botsAvailable {
+        NavigationLink {
+          RemoteBotChooser(selectedBotID: $selectedBotID).navigationTitle("Bot")
+        } label: {
+          RemotePageRowLabel(title: "Bot", symbol: "person.crop.circle", subtitle: botProfile.name)
+        }
+        .buttonStyle(RemotePageRowButtonStyle())
+      }
+
+      if !reasoningEfforts.isEmpty {
+        let efforts = reasoningEfforts
+        if botsAvailable { RemotePageDivider().padding(.leading, 66) }
+        Menu {
+          Picker("Reasoning", selection: $selectedReasoningEffort) {
+            Text("Auto").tag(String?.none)
+            ForEach(efforts, id: \.self) { Text($0.capitalized).tag(Optional($0)) }
+          }
+        } label: {
+          RemotePageRowLabel(title: "Reasoning", symbol: "brain.head.profile",
+            subtitle: selectedReasoningEffort?.capitalized ?? "Auto", showsChevron: false)
+            .overlay(alignment: .trailing) {
+              Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.semibold))
+                .foregroundStyle(RemoteInstrument.secondaryInk).padding(.trailing, 14)
+                .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(RemotePageRowButtonStyle())
+        .accessibilityLabel("Reasoning, \(selectedReasoningEffort?.capitalized ?? "Auto")")
+      }
+
+      if botsAvailable || !reasoningEfforts.isEmpty { RemotePageDivider().padding(.leading, 66) }
+      NavigationLink {
+        RemotePageScroll {
+          RemotePageHeading(title: "Permissions", subtitle: "Choose what this run may do without asking you first.")
+          RemotePageSection(title: "Approvals") {
+            RemoteAdvancedAccessBank(autoMode: $autoMode, fullAccess: $fullAccess)
+          }
+        }
+        .remotePageChrome().navigationTitle("Permissions")
+      } label: {
+        RemotePageRowLabel(title: "Permissions",
+          symbol: autoMode || fullAccess ? "bolt.shield" : "checkmark.shield",
+          subtitle: fullAccess ? "Full access · no approval prompts"
+            : autoMode ? "Auto mode · skips approval prompts" : "Asks before changes")
+      }
+      .buttonStyle(RemotePageRowButtonStyle())
+      .accessibilityIdentifier("remote.start.options")
+
+      if sessionMode == .code {
+        RemotePageDivider().padding(.leading, 66)
+        NavigationLink {
+          RemotePageScroll { botComputerSection }
+            .remotePageChrome().navigationTitle("Bot computer")
+        } label: {
+          RemotePageRowLabel(title: "Bot computer", symbol: "square.stack.3d.up",
+            subtitle: botComputers.first(where: { $0.id == selectedBotComputerID })
+              .map { displayName(for: $0) } ?? "None · optional")
+        }
+        .buttonStyle(RemotePageRowButtonStyle())
+      }
+
+      if source == "api" {
+        RemotePageDivider().padding(.leading, 66)
+        NavigationLink {
+          RemotePageScroll { apiKeySection.padding(14).remotePageCard() }
+            .remotePageChrome().navigationTitle("API key")
+        } label: {
+          RemotePageRowLabel(title: "API key", symbol: "key", subtitle: keyMessage ?? "Add or replace a provider key")
+        }
+        .buttonStyle(RemotePageRowButtonStyle())
+      }
+    }
   }
 
   private var startHint: String? {
@@ -587,7 +564,7 @@ struct StartSessionSheet: View {
         }
       }.foregroundStyle(BeetTheme.secondaryText(appearance))
       if !store.workspacesSupported {
-        Text("Update Vamp Assistant on your Mac to open or create a project folder from here.")
+        Text("Update Vamp Companion on your Mac to open or create a project folder from here.")
           .font(.subheadline)
           .foregroundStyle(BeetTheme.secondaryText(appearance))
       } else if selectedBotComputerID != nil {
@@ -631,8 +608,7 @@ struct StartSessionSheet: View {
               }
             }
           }
-          .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 10))
-          .overlay { RoundedRectangle(cornerRadius: 10).stroke(BeetTheme.line(appearance)) }
+          .remotePageCard()
         }
         HStack(spacing: 10) {
           Button {
@@ -642,7 +618,7 @@ struct StartSessionSheet: View {
               .font(.subheadline.weight(.semibold))
               .frame(maxWidth: .infinity, minHeight: 44)
           }
-          .buttonStyle(RemoteSecondaryButtonStyle())
+          .buttonStyle(RemotePageButtonStyle())
           Button {
             showPathEntry = true
           } label: {
@@ -650,7 +626,7 @@ struct StartSessionSheet: View {
               .font(.subheadline.weight(.semibold))
               .frame(maxWidth: .infinity, minHeight: 44)
           }
-          .buttonStyle(RemoteSecondaryButtonStyle())
+          .buttonStyle(RemotePageButtonStyle())
         }
       }
     }
@@ -732,19 +708,19 @@ struct StartSessionSheet: View {
               } label: {
                 Image(systemName: "terminal")
               }
-              .buttonStyle(RemoteSecondaryButtonStyle())
+              .buttonStyle(RemotePageButtonStyle())
               .accessibilityLabel("Open \(displayName(for: computer)) console")
               if computer.state == "running" {
                 Button(botComputerBusyID == computer.id ? "Stopping…" : "Stop") {
                   stopBotComputer(computer)
                 }
-                .buttonStyle(RemoteSecondaryButtonStyle())
+                .buttonStyle(RemotePageButtonStyle())
                 .disabled(botComputerBusyID != nil)
               } else if computer.backend != "isolatedWorkspace" {
                 Button(botComputerBusyID == computer.id ? "Starting…" : "Start") {
                   startBotComputer(computer)
                 }
-                .buttonStyle(RemotePrimaryButtonStyle()).tint(BeetTheme.accentBright)
+                .buttonStyle(RemotePageButtonStyle(primary: true)).tint(BeetTheme.accentBright)
                 .disabled(botComputerBusyID != nil)
               }
             }
@@ -754,8 +730,7 @@ struct StartSessionSheet: View {
             }
           }
         }
-        .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(BeetTheme.line(appearance)) }
+        .remotePageCard()
       }
       if let profileID = RemoteBotProfile.resolvedID(selectedBotID),
         !botComputers.contains(where: { $0.profileID == profileID })
@@ -767,7 +742,7 @@ struct StartSessionSheet: View {
             .font(.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(RemoteSecondaryButtonStyle())
+        .buttonStyle(RemotePageButtonStyle())
         .disabled(botComputerBusyID != nil || !store.isConnected)
       } else if botComputers.isEmpty {
         Button {
@@ -777,7 +752,7 @@ struct StartSessionSheet: View {
             .font(.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(RemoteSecondaryButtonStyle())
+        .buttonStyle(RemotePageButtonStyle())
         .disabled(botComputerBusyID != nil || !store.isConnected)
       }
     }
@@ -815,6 +790,7 @@ struct StartSessionSheet: View {
   }
 
   private func prepareBotComputer(profileID: String?) {
+    guard store.isConnected, botComputerBusyID == nil else { return }
     botComputerBusyID = UUID()
     Task {
       let computers = await store.prepareBotComputers(profileID: profileID)
@@ -858,7 +834,7 @@ struct StartSessionSheet: View {
         SecureField("Paste key", text: $keyDraft)
           .textInputAutocapitalization(.never).autocorrectionDisabled()
         Button(isSavingKey ? "Saving…" : "Save") { saveAPIKey() }
-          .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSavingKey)
+          .disabled(!store.isConnected || keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSavingKey)
       }
       if let keyMessage {
         Text(keyMessage).font(.caption).foregroundStyle(BeetTheme.secondaryText(appearance))
@@ -869,12 +845,15 @@ struct StartSessionSheet: View {
   }
 
   private func saveAPIKey() {
+    guard store.isConnected, !isSavingKey,
+      !keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     isSavingKey = true
     let key = keyDraft
+    let providerID = keyProviderID
     Task {
-      let saved = await store.saveAPIKey(providerID: keyProviderID, key: key)
+      let saved = await store.saveAPIKey(providerID: providerID, key: key)
       if saved {
-        keyDraft = ""
+        if keyDraft == key { keyDraft = "" }
         source = "api"
         await store.loadStartModels()
         selectFirstModel()
@@ -891,6 +870,7 @@ struct StartSessionSheet: View {
   }
 
   private func startBotComputer(_ computer: RemoteBotComputer) {
+    guard store.isConnected, botComputerBusyID == nil else { return }
     botComputerBusyID = computer.id
     Task {
       if await store.startBotComputer(computer.id) {
@@ -903,6 +883,7 @@ struct StartSessionSheet: View {
   }
 
   private func stopBotComputer(_ computer: RemoteBotComputer) {
+    guard store.isConnected, botComputerBusyID == nil else { return }
     botComputerBusyID = computer.id
     Task {
       if await store.stopBotComputer(computer.id) {
@@ -913,7 +894,12 @@ struct StartSessionSheet: View {
     }
   }
   private func start() {
+    guard canStart else { return }
     isStarting = true
+    let selectedModelID = selectedModelID
+    let selectedBotID = selectedBotID
+    let selectedBotComputerID = selectedBotComputerID
+    let selectedWorkspacePath = selectedWorkspacePath
     let firstMessage = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     let selectedReasoningEffort = selectedReasoningEffort
     let autoMode = autoMode

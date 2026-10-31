@@ -40,7 +40,11 @@ enum ComputerPermission {
     }
 
     static func sessionIsLocked(_ session: [String: Any]?) -> Bool {
+        #if VAMP_APP_STORE
+        false
+        #else
         session?["CGSSessionScreenIsLocked"] as? Bool ?? false
+        #endif
     }
 
     /// Triggers the system prompt for Accessibility (shows the Settings pane).

@@ -1,0 +1,90 @@
+{
+  "date_utc": "2026-10-23T16:29:32.130717+00:00",
+  "status": "signed_package_prepared; App Store Connect submission pending",
+  "scheme": "VampCompanionAppStore",
+  "bundle_id": "com.beetcode.companion",
+  "version": "1.0",
+  "build": "1",
+  "architecture": "arm64",
+  "minimum_macos": "15.0",
+  "team_id": "PUH4GMFV56",
+  "app_certificate": "Apple Distribution",
+  "installer_certificate": "3rd Party Mac Developer Installer",
+  "archive": "dist/appstore/Vamp Companion.xcarchive",
+  "package": "dist/appstore/export/Vamp Companion.pkg",
+  "package_sha256": "794c9f860ac4872811017e14e2e128298605318a4b9884d0be3a1e451e76ec78",
+  "verified": {
+    "archive": true,
+    "xcode_export": true,
+    "package_signature": true,
+    "extracted_payload_signature_and_entitlements": true,
+    "sandbox": true,
+    "sparkle_absent": true,
+    "privacy_manifest_bundled": true,
+    "debugger_entitlement_absent": true,
+    "sandbox_temporary_exceptions_absent": true,
+    "website_url_http_200": true,
+    "privacy_url_http_200": true,
+    "ios_preservation_check": true,
+    "promo_light_and_dark_render_inspected": true
+  },
+  "tests": {
+    "macos_backend": {
+      "executed": 1154,
+      "skipped_opt_in": 51,
+      "failures": 0,
+      "note": "Ran copied test products in system temporary storage to avoid protected Downloads launch stalling while desktop was locked"
+    },
+    "ios_regression": {
+      "executed": 57,
+      "failures": 0,
+      "simulator": "Coverline QA, iOS 27.0"
+    },
+    "appstore_security_and_render": {
+      "executed": 5,
+      "failures": 0
+    }
+  },
+  "remaining": [
+    "Full interactive macOS UI QA and full-window App Store screenshots; user chose checks without desktop access",
+    "Real MLX model download/import/inference and paired iPhone checks on Wi-Fi/Tailscale under the distribution signature",
+    "Confirm App Store Connect record ownership; complete privacy questionnaire, age rating, review contact, listing and upload/Apple validation",
+    "Verify public client availability and reviewer access before submission"
+  ],
+  "promo": {
+    "locations": [
+      "Models",
+      "Settings"
+    ],
+    "destination": "https://thevamp.app/companion/",
+    "previews": [
+      "verification/appstore/promo-renders/website-promo-light.png",
+      "verification/appstore/promo-renders/website-promo-dark.png"
+    ],
+    "method": "Offscreen SwiftUI ImageRenderer; not full-window screenshots"
+  },
+  "release_source_sha256": {
+    "App/AgentSessionController.swift": "369b797cb4cb24f57397d8a3fdb8e31a3d9b3dd0d3a9b1bd85c6ae052bc132f4",
+    "App/AppState.swift": "dcf39c0279e76d24a8bdfd5a5f874a55d03455f9388e06beca6b6ddfa6164cb5",
+    "App/AppUpdater.swift": "60a02474e9dc15c8e55106fc51d287e6efc56082902ef10990f44c8d63119808",
+    "App/Companion/CompanionSettings.swift": "2c3f819ffe31f0a4c37300f077645dd99a130ca75287d5a161df972736264642",
+    "App/Companion/CompanionShell.swift": "13b0479d80f0922e8d5ad14450cecced5f8bd9d98a6a00673115a3cf366ce096",
+    "App/Companion/CompanionWebsitePromoCard.swift": "275a6f219f115d072671673080282ec5681a6d0bdb948ffc6bb430f3b078427f",
+    "App/ModelManagerView.swift": "bb13f68387406b6230a0d124511886ba7980f73224f857f1f53c56c6d3ca23c0",
+    "App/RemoteSessionHost.swift": "a57d2d48746e018eb62ea8bd266839bc4413d1ce60416c33789b4c55b0d0dee3",
+    "App/SettingsProvidersTab.swift": "fc2d7b254e058fdde6f943268ad9c74488476edd264dd9df7731edb991a320f3",
+    "Configuration/CompanionAppStore-Info.plist": "56c51eb35f8c88223141dfa27c7abedd05d8be1302a2511d215058acd1d6d708",
+    "Configuration/CompanionAppStore.entitlements": "ef6b39c9f1dde6f6e7aa13f5a5eb6f634caeaeda664f60ea08f8e1b6b314e916",
+    "Configuration/PrivacyInfo.xcprivacy": "1d1d4ecbcffbd8f46f57cfe2a9ad5eb2117c9531514234cb48e855da0cb83b90",
+    "Core/Inference/EnginePool.swift": "5aa50688871a6a812dbaaff7da371f00fac24e4ccb411c2b16c1507844b668ff",
+    "Core/Inference/ManagedInferenceRuntime.swift": "904c9899eff7e7183e34577f9a1c4293ed89e6da936de71975139ed97d08c095",
+    "Core/ModelManager/ModelCatalog.swift": "71a4294820a742566351f982b40fb1601663d0060cc033ca565540cf91a2d9fe",
+    "Core/ModelManager/ModelDownloadManager.swift": "51eb903ef90443382d8915dad7a0d7b87f56127c60e163c6bc4e10183b8fd4a2",
+    "Core/ModelManager/ModelStore.swift": "6f3c4d653557a6fb6dfee221e06db0af20ed3bfb75181799ed21024ec607a9b0",
+    "Core/OpenAI/CodexAppServer.swift": "b1f7ca75f97d8834aad9786a8f0cd622a0a9225edc55c5e68f5a1cfa0f380801",
+    "Core/Persistence/SettingsStore.swift": "262294d7fbdb6fc30a0ad8864055d610638c8f97f9dd728390ccc542187d0689",
+    "Core/Support/CompanionDistribution.swift": "a81dec060581dbece7f108881f6b5ed43a673d33b09ed5a8a60f82df024217d4",
+    "Core/Tools/ComputerTools.swift": "d3cb2a6f467f137d1d4a5f4540c30cea82dbbfaa0c7600ad6f3c24434ba96826",
+    "project.yml": "afa64e97cc95ef5f1d01d34c7015934b05a92249ceb19604f31cda5c3e5b0ff7"
+  }
+}

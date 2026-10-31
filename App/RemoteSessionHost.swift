@@ -458,12 +458,16 @@ final class RemoteSessionHost {
     private func routeRequest(_ request: LocalAPIServer.Request) async -> LocalAPIServer.RouteResult {
         refreshPairingState()
         guard allowedPeer(request.remoteAddress) else {
-            return .response(json(["error": .string("This network path is not allowed for Vamp Assistant remote sessions.")], status: 403))
+            return .response(json(["error": .string("This network path is not allowed for Vamp Companion remote sessions.")], status: 403))
         }
         guard allowedOrigin(request) else {
-            return .response(json(["error": .string("This browser origin is not the Vamp Assistant remote host.")], status: 403))
+            return .response(json(["error": .string("This browser origin is not the Vamp Companion remote host.")], status: 403))
         }
 
+        guard CompanionDistribution.allowsRemotePath(request.path) else {
+            guard authorized(request) else { return unauthorized() }
+            return .response(json(["error": .string(CompanionDistribution.unrestrictedFeaturesMessage)], status: 403))
+        }
         switch (request.method, request.path) {
         case ("OPTIONS", _):
             return .response(securityResponse(status: 204, contentType: "text/plain"))
@@ -480,7 +484,9 @@ final class RemoteSessionHost {
                 "protocolVersion": .number(1),
                 "appVersion": .string(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"),
                 "appBuild": .string(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"),
-                "capabilities": .array(["sessions", "bots", "workspaces", "sharing", "stream-revocation", "chat-images", "connection-routes"].map(LFJSONValue.string)),
+                "capabilities": .array((CompanionDistribution.isAppStore
+                    ? ["sessions", "sharing", "stream-revocation", "chat-images", "connection-routes"]
+                    : ["sessions", "bots", "workspaces", "sharing", "stream-revocation", "chat-images", "connection-routes"]).map(LFJSONValue.string)),
                 "hostID": .string(hostID.uuidString),
                 "connectionEndpoints": connectionEndpointsJSON,
                 "pairedClients": .number(Double(pairedClientCount)),
@@ -497,7 +503,7 @@ final class RemoteSessionHost {
             ]))
         case ("GET", "/api/sessions"):
             guard authorized(request) else { return unauthorized() }
-            return .response(json(["sessions": .array(sessionSummaries())]))
+            return .response(json(["sessions": .array(await sessionSummaries())]))
         case ("GET", "/api/bot-runs"):
             guard authorized(request) else { return unauthorized() }
             return .response(json(["runs": .array((botRunsHandler?() ?? []).map(Self.botRunJSON))]))
@@ -831,11 +837,15 @@ final class RemoteSessionHost {
             let replaceRequested = request.bodyJSON?.objectValue?["replace"]?.boolValue == true
             guard !sessions.isRunning || replaceRequested else {
                 return .response(json([
-                    "error": .string("Vamp Assistant is already working on a task. Wait for it to finish, or send this as a follow-up message."),
+                    "error": .string("Vamp Companion is already working on a task. Wait for it to finish, or send this as a follow-up message."),
                     "busy": .bool(true),
                 ], status: 409))
             }
             var options = runOptions(from: request)
+            if CompanionDistribution.isAppStore,
+               options.resolvedWorkspacePath != nil || options.botProfileID != nil || options.botComputerID != nil {
+                return .response(json(["error": .string(CompanionDistribution.unrestrictedFeaturesMessage)], status: 403))
+            }
             if let botID = options.botComputerID {
                 do {
                     var record = try await botComputers.load().first(where: { $0.id == botID })
@@ -1104,6 +1114,12 @@ final class RemoteSessionHost {
     }
 
     private func macControlStatusFields(request: LocalAPIServer.Request) -> [String: LFJSONValue] {
+        if CompanionDistribution.isAppStore {
+            return ["enabled": .bool(false), "ready": .bool(false),
+                    "screenRecording": .bool(false), "accessibility": .bool(false),
+                    "remoteUnlockEnabled": .bool(false), "remoteUnlockAvailable": .bool(false),
+                    "displays": .array([]), "message": .string(CompanionDistribution.unrestrictedFeaturesMessage)]
+        }
         let enabled = macControlAllowedHandler?() ?? false
         let screen = ComputerPermission.screenRecordingGranted
         let accessibility = ComputerPermission.accessibilityGranted
@@ -1115,11 +1131,11 @@ final class RemoteSessionHost {
         let bounds = ComputerEvents.quartzDisplayUnion()
         let message: String?
         if !enabled {
-            message = "Turn on Mac Control in Vamp Assistant → Remote Sessions."
+            message = "Turn on Mac control from iPhone in Vamp Companion → Settings → Sharing & control."
         } else if locked {
             message = "The Mac is locked. Unlock it to resume Vamp Stream and Remote Control."
         } else if !screen || !accessibility {
-            message = "Grant Screen Recording and Accessibility for Vamp Assistant in System Settings."
+            message = "Grant Screen Recording and Accessibility for Vamp Companion in System Settings."
         } else {
             message = nil
         }
@@ -1164,13 +1180,13 @@ final class RemoteSessionHost {
         securePath: Bool
     ) -> String {
         if !enabled {
-            return "Turn on Mac Control in Vamp Assistant → Remote Sessions."
+            return "Turn on Mac control from iPhone in Vamp Companion → Settings → Sharing & control."
         }
         if !unlockEnabled {
-            return "Turn on Remote Unlock in Vamp Assistant → Remote Sessions."
+            return "Turn on Remote unlock over Tailscale in Vamp Companion → Settings → Sharing & control."
         }
         if !accessibility {
-            return "Grant Accessibility to Vamp Assistant on the Mac."
+            return "Grant Accessibility to Vamp Companion on the Mac."
         }
         if !securePath {
             return "Remote Unlock requires the encrypted Tailscale connection."
@@ -1812,7 +1828,7 @@ final class RemoteSessionHost {
                             "sessionID": .string(record.id.uuidString),
                         ], status: 202))
                     }
-                    return .response(json(["error": .string("Vamp Assistant could not steer this turn. Try again or stop the current task.")], status: 409))
+                    return .response(json(["error": .string("Vamp Companion could not steer this turn. Try again or stop the current task.")], status: 409))
                 }
             }
             if let enqueueTaskHandler {
@@ -1833,7 +1849,7 @@ final class RemoteSessionHost {
                 // An idle session can safely continue directly; only an
                 // already-busy agent still requires the durable queue.
                 guard !sessions.isRunning else {
-                    return .response(json(["error": .string("Vamp Assistant is already working and the task queue is unavailable. Try again when the current task finishes.")], status: 409))
+                    return .response(json(["error": .string("Vamp Companion is already working and the task queue is unavailable. Try again when the current task finishes.")], status: 409))
                 }
                 guard sessions.continuePersistedSession(id: record.id, message: message, images: images) else {
                     return .response(json(["error": .string("That session could not be resumed. Check that its workspace and model are available.")], status: 409))
@@ -1846,7 +1862,7 @@ final class RemoteSessionHost {
                 ], status: 202))
             }
             guard !sessions.isRunning else {
-                return .response(json(["error": .string("Vamp Assistant is already working on another prompt.")], status: 409))
+                return .response(json(["error": .string("Vamp Companion is already working on another prompt.")], status: 409))
             }
             guard sessions.continuePersistedSession(id: record.id, message: message, images: images) else {
                 return .response(json(["error": .string("That session could not be resumed. Check that its workspace still exists.")], status: 409))
@@ -1959,7 +1975,7 @@ final class RemoteSessionHost {
             }
             if action == "send" {
                 guard let sendQueuedTaskHandler else {
-                    return .response(json(["error": .string("Update Vamp Assistant on your Mac to send saved follow-ups.")], status: 409))
+                    return .response(json(["error": .string("Update Vamp Companion on your Mac to send saved follow-ups.")], status: 409))
                 }
                 if let error = sendQueuedTaskHandler(id, taskID) {
                     return .response(json(["error": .string(error)], status: 409))
@@ -1975,14 +1991,19 @@ final class RemoteSessionHost {
         return .response(json(["error": .string("Unknown endpoint.")], status: 404))
     }
 
-    private func sessionSummaries() -> [LFJSONValue] {
+    private func sessionSummaries() async -> [LFJSONValue] {
+        // A cold snapshot decrypts the whole library; keep that off the main
+        // actor so the Mac window and live streams don't hitch.
+        let records = await Task.detached(priority: .userInitiated) {
+            SessionStore.shared.cachedAll(maxAge: 60)
+        }.value
         let activeID = sessions.activeSessionID
         // A long TTL is safe because the snapshot is maintained incrementally:
         // save() folds the saved record in (SessionStore.updateCache) and
         // delete() removes it, so a list served from a warm snapshot is never
         // missing a session the user just created. The previous 2 s TTL meant
         // every other 1.8 s client poll re-decrypted the whole library.
-        return SessionStore.shared.cachedAll(maxAge: 60)
+        return records
             .filter { $0.source == .app }
             .prefix(100)
             .map { record in
@@ -2278,8 +2299,9 @@ final class RemoteSessionHost {
         } else {
             record.modelID = parts.last ?? modelID
         }
-        _ = SessionStore.shared.save(record)
-        SessionStore.shared.invalidateCache()
+        if case .failure(let error) = SessionStore.shared.save(record) {
+            return error.localizedDescription
+        }
         return nil
     }
 
@@ -2384,7 +2406,7 @@ final class RemoteSessionHost {
     }
 
     private func unauthorized() -> LocalAPIServer.RouteResult {
-        .response(json(["error": .string("Pair this browser with the code shown in Vamp Assistant.")], status: 401))
+        .response(json(["error": .string("Pair this browser with the code shown in Vamp Companion.")], status: 401))
     }
 
     private func json(_ fields: [String: LFJSONValue], status: Int = 200) -> LocalAPIServer.Response {

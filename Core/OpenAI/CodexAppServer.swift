@@ -194,6 +194,9 @@ actor CodexAppServerClient {
     // MARK: Lifecycle
 
     func start() async throws {
+        guard !CompanionDistribution.isAppStore else {
+            throw CodexAppServerError.serverError(CompanionDistribution.unrestrictedFeaturesMessage)
+        }
         if isAlive, isInitialized { return }
         await stop()
         guard let executableURL else { throw CodexAppServerError.executableNotFound }
@@ -797,6 +800,7 @@ final class CodexAccountStore: ObservableObject {
     }
 
     func refresh() async {
+        guard !CompanionDistribution.isAppStore else { return }
         if let refreshTask {
             await refreshTask.value
             return

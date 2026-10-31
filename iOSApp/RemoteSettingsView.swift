@@ -38,117 +38,69 @@ struct RemoteSettingsSheet: View {
   var onDiagnostics: () -> Void
 
   @Environment(\.dismiss) private var dismiss
-  @Environment(\.remoteAppearance) private var appearance
   @AppStorage("remoteAppearanceSetting") private var appearanceSetting = RemoteAppearanceSetting
     .dark
   @AppStorage("remoteAccent") private var accent = AccentPalette.beetRed
   @State private var showForgetMac = false
   @State private var showOfflineForget = false
-  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 28) {
-          RemoteConsoleSection(index: "01", title: "Appearance") {
-            VampMicroLabel(title: "THEME")
-            RemoteInstrumentSegments(
-              selection: $appearanceSetting,
-              options: RemoteAppearanceSetting.allCases.map { ($0.label, $0) }
-            )
-            .accessibilityLabel("Appearance")
-
-            VStack(alignment: .leading, spacing: 8) {
-              VampMicroLabel(title: "ACCENT")
-              InstrumentAccentBank(
-                selection: $accent,
-                palettes: AccentPalette.allCases,
-                labels: AccentPalette.allCases.map { "\($0.label) accent" },
-                colors: AccentPalette.allCases.map { palette in
-                  let hex = palette.hexes.accentLight
-                  return Color(
-                    red: Double((hex >> 16) & 0xFF) / 255,
-                    green: Double((hex >> 8) & 0xFF) / 255,
-                    blue: Double(hex & 0xFF) / 255)
-                })
-            }
-
-            Text("Controls appearance and signal accents.")
-              .font(.footnote)
-              .foregroundStyle(RemoteInstrument.secondaryInk)
-          }
-
-          RemoteConsoleSection(index: "02", title: "Paired Mac") {
-            VStack(alignment: .leading, spacing: 6) {
-              RemoteMobileStatus(
-                title: store.isConnected ? "MAC CONNECTED" : "MAC OFFLINE",
-                color: store.isConnected ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
-              Text(store.activeComputerName)
-                .font(.body.weight(.medium)).textSelection(.enabled)
+      RemotePageScroll {
+        RemotePageHeading(title: "Make it yours", subtitle: "Appearance, your paired Mac, and connected accounts.")
+        RemoteSettingsIdentity(version: RemoteAppVersion.current)
+        RemoteSettingsAppearance(appearanceSetting: $appearanceSetting, accent: $accent)
+        RemotePageSection(title: "Paired Mac", padding: 0) {
+          HStack(spacing: 12) {
+            RemotePageSymbol(symbol: "desktopcomputer.and.macbook", active: store.isConnected)
+            VStack(alignment: .leading, spacing: 4) {
+              Text(store.activeComputerName).font(.body.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
               Text(store.isConnected ? store.connectionSubtitle : store.connectionLabel)
-                .font(.caption.monospaced())
-                .foregroundStyle(RemoteInstrument.secondaryInk)
+                .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+              RemotePageBadge(title: store.isConnected ? "Connected" : "Offline",
+                color: store.isConnected ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
             }
-            .padding(.vertical, 10)
-            VStack(spacing: 0) {
-              settingsRow("Switch computer", symbol: "desktopcomputer.and.macbook") {
-                dismiss()
-                onSwitchComputer()
-              }
-              settingsRow("Control diagnostics", symbol: "stethoscope") {
-                dismiss()
-                onDiagnostics()
-              }
-              Button(role: .destructive) {
-                showForgetMac = true
-              } label: {
-                Text("Forget this Mac")
-                  .font(.body).frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(RemotePressButtonStyle())
-              .foregroundStyle(RemoteInstrument.danger)
-            }
-          }
-
-          RemoteConsoleSection(index: "03", title: "Connections") {
-            VStack(spacing: 0) {
-              NavigationLink {
-                RemoteProvidersView(store: store)
-              } label: {
-                settingsRowLabel("API providers", symbol: "key.horizontal")
-              }
-              .buttonStyle(RemotePressButtonStyle())
-            }
-          }
-
-          RemoteConsoleSection(index: "04", title: "About") {
-            VStack(spacing: 0) {
-              RemoteSettingValue(title: "Product", value: "Vamp Companion")
-              RemoteSettingValue(title: "Platform", value: "iPhone and iPad")
-              RemoteSettingValue(title: "Version", value: RemoteAppVersion.current.version)
-              RemoteSettingValue(title: "Build", value: RemoteAppVersion.current.build)
-            }
-          }
-
+          }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+          RemotePageDivider().padding(.leading, 66)
+          Button {
+            dismiss()
+            onSwitchComputer()
+          } label: {
+            RemotePageRowLabel(title: "Switch computer", symbol: "desktopcomputer.and.macbook")
+          }.buttonStyle(RemotePageRowButtonStyle())
+          RemotePageDivider().padding(.leading, 66)
+          Button {
+            dismiss()
+            onDiagnostics()
+          } label: {
+            RemotePageRowLabel(title: "Control diagnostics", symbol: "stethoscope")
+          }.buttonStyle(RemotePageRowButtonStyle())
+          RemotePageDivider().padding(.leading, 66)
+          Button(role: .destructive) { showForgetMac = true } label: {
+            Label("Forget this Mac", systemImage: "trash")
+              .font(.subheadline).foregroundStyle(RemoteInstrument.danger)
+              .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(14)
+          }.buttonStyle(RemotePageRowButtonStyle())
         }
-        .padding(.horizontal, horizontalSizeClass == .compact ? 16 : 20)
-        .padding(.vertical, 28)
-        .frame(maxWidth: 720)
-        .frame(maxWidth: .infinity)
+        RemotePageSection(title: "Connections", padding: 0) {
+          NavigationLink { RemoteProvidersView(store: store) } label: {
+            RemotePageRowLabel(title: "API providers", symbol: "key.horizontal", subtitle: "Keys and model access on your Mac")
+          }.buttonStyle(RemotePageRowButtonStyle())
+        }
+        RemotePageSection(title: "About") {
+          RemoteSettingValue(title: "Product", value: "Vamp Companion")
+          RemoteSettingValue(title: "Platform", value: "iPhone and iPad")
+          RemoteSettingValue(title: "Version", value: RemoteAppVersion.current.version)
+          RemoteSettingValue(title: "Build", value: RemoteAppVersion.current.build)
+        }
       }
-      .scrollContentBackground(.hidden)
-      .background { RemoteBackdrop() }
       .navigationTitle("Settings")
-      .navigationBarTitleDisplayMode(.inline)
-      .remoteNavigationChrome()
+      .remotePageChrome()
       .toolbar {
         ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
           .vampUtilityAction()
       }
-      .toolbarBackground(BeetTheme.background(appearance), for: .navigationBar)
-      .toolbarBackground(.visible, for: .navigationBar)
       .confirmationDialog(
         "Forget this Mac?",
         isPresented: $showForgetMac,
@@ -196,32 +148,82 @@ struct RemoteSettingsSheet: View {
     .presentationCornerRadius(12)
   }
 
-  private func settingsRow(
-    _ title: String,
-    symbol: String,
-    action: @escaping () -> Void
-  ) -> some View {
-    Button(action: action) {
-      settingsRowLabel(title, symbol: symbol)
-    }
-    .buttonStyle(RemotePressButtonStyle())
-  }
+}
 
-  private func settingsRowLabel(_ title: String, symbol: String) -> some View {
-      HStack(spacing: 12) {
-        Image(systemName: symbol)
-          .font(.system(size: 19, weight: .medium))
-          .frame(width: 28).accessibilityHidden(true)
-        Text(title).font(.body).fixedSize(
-          horizontal: false, vertical: true)
-        Spacer(minLength: 8)
-        Image(systemName: "chevron.right")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(RemoteInstrument.secondaryInk)
+private struct RemoteSettingsIdentity: View {
+  let version: RemoteAppVersion
+  var body: some View {
+    HStack(spacing: 13) {
+      RemoteBeaconMark(size: 42)
+        .padding(9).background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 14))
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Vamp Companion").font(.headline)
+        Text("Version \(version.version) · Build \(version.build)")
+          .font(.caption.monospacedDigit()).foregroundStyle(RemoteInstrument.secondaryInk)
       }
-      .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
-      .contentShape(Rectangle())
-      .overlay(alignment: .bottom) { VampHairline() }
+      Spacer(minLength: 0)
+    }
+    .padding(14).remotePageCard()
+    .accessibilityElement(children: .combine)
+  }
+}
+
+private struct RemoteSettingsAppearance: View {
+  @Binding var appearanceSetting: RemoteAppearanceSetting
+  @Binding var accent: AccentPalette
+
+  var body: some View {
+    RemotePageSection(title: "Appearance") {
+      VStack(alignment: .leading, spacing: 14) {
+        RemotePageSegments(selection: $appearanceSetting,
+          options: RemoteAppearanceSetting.allCases.map { ($0.label, $0) })
+          .accessibilityLabel("Appearance")
+        RemotePageDivider()
+        HStack {
+          Text("Accent").font(.subheadline.weight(.medium))
+          Spacer(minLength: 8)
+          Text(accent.label).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+        }
+        RemoteSettingsAccentPicker(selection: $accent)
+        Text("System follows your device’s appearance.")
+          .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+      }
+    }
+  }
+}
+
+private struct RemoteSettingsAccentPicker: View {
+  @Binding var selection: AccentPalette
+  var body: some View {
+    LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 8)], spacing: 8) {
+      ForEach(AccentPalette.allCases) { palette in
+        Button {
+          UISelectionFeedbackGenerator().selectionChanged()
+          selection = palette
+        } label: {
+          let hex = palette.hexes.accentLight
+          ZStack {
+            Circle().fill(Color(red: Double((hex >> 16) & 255) / 255,
+              green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255))
+              .frame(width: 28, height: 28)
+            if palette == selection {
+              Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.white)
+            }
+          }
+          .frame(maxWidth: .infinity, minHeight: 44)
+          .background(palette == selection ? RemoteInstrument.recess : .clear,
+            in: RoundedRectangle(cornerRadius: 11))
+          .overlay {
+            RoundedRectangle(cornerRadius: 11).strokeBorder(
+              palette == selection ? RemoteInstrument.ink.opacity(0.45) : .clear, lineWidth: 1)
+          }
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(palette.label) accent")
+        .accessibilityAddTraits(palette == selection ? .isSelected : [])
+      }
+    }
   }
 }
 
@@ -242,12 +244,13 @@ struct RemoteProvidersView: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
-        Text("Add an API key to use that provider's models in iPhone and Mac conversations.")
-          .font(.subheadline)
-          .foregroundStyle(RemoteInstrument.secondaryInk)
+      VStack(alignment: .leading, spacing: 17) {
+        RemotePageHeading(title: "Connected intelligence", subtitle: "Add a provider to use its models on iPhone and Mac.")
 
-        SearchField(text: $query, placeholder: "Find a provider")
+        if !store.isConnected {
+          RemoteReconnectBanner(store: store).clipShape(RoundedRectangle(cornerRadius: 17))
+        }
+        RemotePageSearchField(text: $query, placeholder: "Find a provider")
           .accessibilityLabel("Find a provider")
 
         if let notice = store.providerNotice {
@@ -259,8 +262,14 @@ struct RemoteProvidersView: View {
           ProgressView("Loading providers")
             .frame(maxWidth: .infinity, minHeight: 120)
         } else if matchingProviders.isEmpty {
-          ContentUnavailableView.search(text: query)
-            .frame(maxWidth: .infinity, minHeight: 200)
+          if query.isEmpty {
+            ContentUnavailableView("No providers available", systemImage: "key.horizontal",
+              description: Text("Reconnect to your Mac and refresh this list."))
+              .frame(maxWidth: .infinity, minHeight: 200)
+          } else {
+            ContentUnavailableView.search(text: query)
+              .frame(maxWidth: .infinity, minHeight: 200)
+          }
         }
 
         let connected = matchingProviders.filter(\.isReady)
@@ -275,14 +284,14 @@ struct RemoteProvidersView: View {
           .foregroundStyle(RemoteInstrument.secondaryInk)
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 24)
-      .frame(maxWidth: 720)
+      .padding(.vertical, 16)
+      .frame(maxWidth: RemoteInstrument.contentWidth)
       .frame(maxWidth: .infinity)
     }
     .background { RemoteBackdrop() }
     .navigationTitle("API providers")
     .navigationBarTitleDisplayMode(.inline)
-    .remoteNavigationChrome()
+    .remotePageChrome()
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
         Button("Refresh", systemImage: "arrow.clockwise") { Task { await load() } }
@@ -295,7 +304,7 @@ struct RemoteProvidersView: View {
   private func providerSection(
     _ index: String, title: String, providers: [RemoteProviderOption]
   ) -> some View {
-    RemoteConsoleSection(index: index, title: "\(title) · \(providers.count)") {
+    RemotePageSection(title: LocalizedStringKey(title), detail: "\(providers.count)", padding: 0) {
       VStack(spacing: 0) {
         ForEach(providers.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { provider in
           NavigationLink {
@@ -318,11 +327,12 @@ struct RemoteProvidersView: View {
                 .foregroundStyle(RemoteInstrument.secondaryInk)
                 .accessibilityHidden(true)
             }
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
             .contentShape(Rectangle())
-            .overlay(alignment: .bottom) { VampHairline() }
+            .overlay(alignment: .bottom) { RemotePageDivider() }
           }
-          .buttonStyle(RemotePressButtonStyle())
+          .buttonStyle(RemotePageRowButtonStyle())
         }
       }
     }
@@ -352,12 +362,16 @@ private struct RemoteProviderDetailView: View {
 
   var body: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 24) {
+      VStack(alignment: .leading, spacing: 17) {
+        if !store.isConnected {
+          Text("Mac offline. Reconnect to update providers.")
+            .font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
+        }
         if let provider {
-          RemoteConsoleSection(index: "01", title: "Connection") {
+          RemotePageSection(title: "Connection", spacing: 12) {
             RemoteMobileStatus(
-              title: provider.isReady ? "READY" : "NOT CONNECTED",
-              color: provider.isReady ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
+              title: !store.isConnected ? "MAC OFFLINE" : provider.isReady ? "READY" : "NOT CONNECTED",
+              color: store.isConnected && provider.isReady ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
             if let baseURL = provider.baseURL {
               Text(baseURL).font(.caption.monospaced())
                 .foregroundStyle(RemoteInstrument.secondaryInk)
@@ -369,20 +383,22 @@ private struct RemoteProviderDetailView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .remotePageField()
+                .disabled(isWorking)
                 .accessibilityLabel("Custom provider base URL")
               Button("Save base URL") {
+                guard store.isConnected, !isWorking else { return }
+                isWorking = true
+                statusMessage = nil
                 Task {
-                  isWorking = true
-                  statusMessage = nil
                   defer { isWorking = false }
                   if await store.saveCustomProviderURL(baseURLDraft) {
                     statusMessage = "Base URL saved on your Mac."
                   }
                 }
               }
-              .buttonStyle(.bordered)
-              .disabled(isWorking || baseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+              .buttonStyle(RemotePageButtonStyle())
+              .disabled(!store.isConnected || isWorking || baseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if !provider.needsMacSetup {
               SecureField(provider.configured ? "New API key" : "API key", text: $keyDraft)
@@ -390,12 +406,14 @@ private struct RemoteProviderDetailView: View {
                 .autocorrectionDisabled()
                 .privacySensitive()
                 .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .remotePageField()
+                .disabled(isWorking)
                 .accessibilityLabel(provider.configured ? "Replacement API key" : "API key")
               Button(provider.configured ? "Replace key" : "Save key") {
+                guard store.isConnected, !isWorking else { return }
+                isWorking = true
+                statusMessage = nil
                 Task {
-                  isWorking = true
-                  statusMessage = nil
                   defer { isWorking = false }
                   if await store.saveAPIKey(providerID: providerID, key: keyDraft) {
                     keyDraft = ""
@@ -403,12 +421,13 @@ private struct RemoteProviderDetailView: View {
                   }
                 }
               }
-              .buttonStyle(.borderedProminent)
-              .disabled(isWorking || keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+              .buttonStyle(RemotePageButtonStyle(primary: true))
+              .disabled(!store.isConnected || isWorking || keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if provider.configured {
               Button("Remove key", role: .destructive) { showRemoveConfirmation = true }
-                .disabled(isWorking)
+                .buttonStyle(RemotePageButtonStyle())
+                .disabled(!store.isConnected || isWorking)
             }
             if isWorking { ProgressView("Updating provider") }
             if let statusMessage {
@@ -416,7 +435,7 @@ private struct RemoteProviderDetailView: View {
             }
           }
           if provider.isReady {
-            RemoteConsoleSection(index: "02", title: "Add model") {
+            RemotePageSection(title: "Add model", spacing: 12) {
               Text("Use a model ID from this provider when it does not appear in the picker.")
                 .font(.footnote)
                 .foregroundStyle(RemoteInstrument.secondaryInk)
@@ -424,11 +443,13 @@ private struct RemoteProviderDetailView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .remotePageField()
+                .disabled(isWorking)
               Button("Add model") {
+                guard store.isConnected, !isWorking else { return }
+                isWorking = true
+                statusMessage = nil
                 Task {
-                  isWorking = true
-                  statusMessage = nil
                   defer { isWorking = false }
                   if await store.addProviderModel(providerID: providerID, modelID: modelDraft) {
                     modelDraft = ""
@@ -436,8 +457,8 @@ private struct RemoteProviderDetailView: View {
                   }
                 }
               }
-              .buttonStyle(.bordered)
-              .disabled(isWorking || modelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+              .buttonStyle(RemotePageButtonStyle())
+              .disabled(!store.isConnected || isWorking || modelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
           }
         } else {
@@ -445,14 +466,14 @@ private struct RemoteProviderDetailView: View {
         }
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 24)
-      .frame(maxWidth: 720)
+      .padding(.vertical, 16)
+      .frame(maxWidth: RemoteInstrument.contentWidth)
       .frame(maxWidth: .infinity)
     }
     .background { RemoteBackdrop() }
     .navigationTitle(provider?.name ?? "API provider")
     .navigationBarTitleDisplayMode(.inline)
-    .remoteNavigationChrome()
+    .remotePageChrome()
     .task(id: provider?.baseURL) {
       if providerID == "custom", baseURLDraft.isEmpty {
         baseURLDraft = provider?.baseURL ?? ""
@@ -460,9 +481,10 @@ private struct RemoteProviderDetailView: View {
     }
     .confirmationDialog("Remove this API key from your Mac?", isPresented: $showRemoveConfirmation) {
       Button("Remove key", role: .destructive) {
+        guard store.isConnected, !isWorking else { return }
+        isWorking = true
+        statusMessage = nil
         Task {
-          isWorking = true
-          statusMessage = nil
           defer { isWorking = false }
           if await store.removeAPIKey(providerID: providerID) {
             keyDraft = ""
@@ -488,7 +510,7 @@ private struct RemoteSettingValue: View {
       ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
       : AnyLayout(HStackLayout(spacing: 12))
     layout {
-      Text(title.uppercased()).font(.caption.monospaced()).foregroundStyle(
+      Text(title).font(.subheadline).foregroundStyle(
         RemoteInstrument.secondaryInk)
       if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
       Text(verbatim: value).font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
@@ -497,7 +519,7 @@ private struct RemoteSettingValue: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .frame(minHeight: 44)
     .padding(.vertical, 4)
-    .overlay(alignment: .bottom) { VampHairline() }
+    .overlay(alignment: .bottom) { RemotePageDivider() }
     .accessibilityElement(children: .combine)
   }
 }

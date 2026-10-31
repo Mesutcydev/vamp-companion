@@ -116,8 +116,8 @@ final class AppPreferencesStore: @unchecked Sendable {
     private var cached: AppPreferences?
 
     private var fileURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("VampCompanion", isDirectory: true)
+        // Tests once cleared the user's last model here, so it stopped reloading.
+        let dir = FileManager.companionSupportDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("preferences.json")
     }

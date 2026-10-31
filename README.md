@@ -86,6 +86,12 @@ Local MLX, GGUF, model import/download logic, inference safeguards, and provider
 versions are inherited from Vamp Assistant. Model IDs and remote protocol
 version 1 remain compatible with the existing iOS app.
 
+GGUF compatibility runtimes can be matched to exact model IDs or GGUF
+architectures. To install the pinned LFM3-compatible runtime, run
+`python3 scripts/install-inference-runtimes.py --runtime llamaCompatibility`.
+Companion selects it automatically for LFM3; unrelated models keep their
+existing runtimes. Experimental acceleration remains separately opt-in.
+
 ## Build and test
 
 Install XcodeGen and a full Xcode installation with Swift 6.
@@ -95,6 +101,7 @@ xcodegen generate
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion \
   -destination 'platform=macOS' -derivedDataPath .derived \
+  -skipPackagePluginValidation -skipMacroValidation \
   CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM="" ENABLE_HARDENED_RUNTIME=NO test
 ```
 
@@ -105,6 +112,12 @@ for iOS regression tests and the Companion hub UI checks. See
 [the iOS design scope](docs/IOS-COMPANION-DESIGN.md).
 Local UI testing requires a signed test runner; the command above uses ad hoc
 signing. Public releases always use Developer ID and hardened runtime.
+
+## Mac App Store edition
+
+The `VampCompanionAppStore` scheme builds the sandboxed MLX/API chat edition.
+It includes a promo card linking to the unrestricted website download.
+See [App Store preparation, signing, and review notes](docs/COMPANION-APP-STORE.md).
 
 ## Public releases
 

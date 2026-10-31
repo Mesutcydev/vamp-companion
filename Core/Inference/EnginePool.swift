@@ -147,6 +147,12 @@ actor EnginePool {
         // runs through llama.cpp's llama-server subprocess (its Metal work is
         // serialized inside that child, not in our process).
         self.engineFactory = { format, sharedGate in
+            if CompanionDistribution.isAppStore {
+                guard format == .mlx else {
+                    return UnsupportedFormatEngine(reason: "This edition supports MLX models. Use the website edition for other runtimes.")
+                }
+                return MLXEngine(gate: sharedGate)
+            }
             switch format {
             case .mlx:
                 return ManagedMLXEngine(fallback: MLXEngine(

@@ -617,7 +617,8 @@ enum ModelCatalog {
     static var all: [CatalogModel] {
         let own = bundled + loadUserModels()
         let ids = Set(own.map(\.id))
-        return own + assistantModels.read().filter { !ids.contains($0.id) }
+        return (own + assistantModels.read().filter { !ids.contains($0.id) })
+            .filter { CompanionDistribution.supports($0) }
     }
 
     private static let assistantModels = AssistantCatalogCache()

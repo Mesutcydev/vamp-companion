@@ -1,74 +1,5 @@
 import SwiftUI
 
-
-// This palette belongs only to the Companion panel. The composer and
-// shared instrument controls retain the current Assistant materials.
-private enum RemoteCompanionPalette {
-    static let canvas = RemoteInstrument.adaptive(0xF4F4F4, 0x181818)
-    static let panel = RemoteInstrument.adaptive(0xFAFAFA, 0x222222)
-    static let recess = RemoteInstrument.adaptive(0xEFEFEF, 0x1C1C1C)
-    static let control = RemoteInstrument.adaptive(0xEEEEEE, 0x303030)
-    static let seam = RemoteInstrument.adaptive(0xD0D0D0, 0x414141)
-    static let ink = RemoteInstrument.adaptive(0x222222, 0xF2F2F2)
-    static let secondaryInk = RemoteInstrument.adaptive(0x555555, 0xBBBBBB)
-    static let accent = RemoteInstrument.adaptive(0xAD2030, 0xF0808D)
-}
-
-private extension View {
-    func companionPanel() -> some View {
-        background(RemoteCompanionPalette.panel, in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(RemoteCompanionPalette.seam, lineWidth: 0.75)
-                    .allowsHitTesting(false)
-            }
-    }
-
-    func companionNavigationChrome() -> some View {
-        foregroundStyle(RemoteCompanionPalette.ink)
-            .tint(RemoteCompanionPalette.accent)
-            .toolbarBackground(RemoteCompanionPalette.canvas, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-    }
-}
-
-private struct RemoteCompanionSection<Content: View>: View {
-    let index: String
-    let title: LocalizedStringKey
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Text(index).font(.caption.monospaced()).foregroundStyle(RemoteCompanionPalette.secondaryInk)
-                Text(title).font(.headline).foregroundStyle(RemoteCompanionPalette.ink)
-            }
-            .accessibilityAddTraits(.isHeader)
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct RemoteCompanionButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(RemoteCompanionPalette.ink)
-            .background(RemoteCompanionPalette.control, in: RoundedRectangle(cornerRadius: 7))
-            .overlay {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(RemoteCompanionPalette.seam, lineWidth: contrast == .increased ? 1.5 : 0.75)
-            }
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
-            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.48)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
 enum RemoteMacHubAction {
     case start(modelID: String)
     case control
@@ -88,48 +19,45 @@ struct RemoteMacHubView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    RemoteMacConnectionSection(
-                        name: store.activeComputerName, product: hostProduct,
-                        connection: store.connectionSubtitle, connected: store.isConnected,
-                        working: store.hostStatus?.isRunning == true,
-                        queued: store.hostStatus?.queuedTasks ?? 0)
-                    if let notice = store.backgroundNotice {
-                        RemoteNoticeLabel(title: "Couldn’t refresh your Mac", detail: notice)
-                    }
-                    RemoteMacModelsSection(
-                        models: store.startModels, loaded: store.loadedLocalModel,
-                        connected: store.isConnected, unloading: store.isUnloadingModel,
-                        onStart: { onAction(.start(modelID: $0)) },
-                        onUnload: { await store.unloadLocalModel() })
-                    RemoteMacAccessSection(
-                        status: store.hostStatus?.macControl,
-                        connected: store.isConnected, product: hostProduct,
-                        onControl: { onAction(.control) })
-                    RemoteCompanionSection(index: "03", title: "Connections") {
-                        NavigationLink {
-                            RemoteProvidersView(store: store)
-                        } label: {
-                            RemoteMacDestinationRow(title: "API providers & accounts", symbol: "key.horizontal")
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        Button { onAction(.switchComputer) } label: {
-                            RemoteMacDestinationRow(title: "Switch or pair a Mac", symbol: "desktopcomputer.and.macbook")
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        Text("Downloads and model imports live on your Mac. Closing the Companion window keeps your sessions running.")
-                            .font(.footnote).foregroundStyle(RemoteCompanionPalette.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            RemotePageScroll {
+                RemotePageHeading(title: "Models & access", subtitle: "Your Mac’s models, accounts, and control in one place.")
+                RemoteMacConnectionSection(
+                    name: store.activeComputerName, product: hostProduct,
+                    connection: store.connectionSubtitle, connected: store.isConnected,
+                    working: store.hostStatus?.isRunning == true,
+                    queued: store.hostStatus?.queuedTasks ?? 0)
+                if let notice = store.backgroundNotice {
+                    RemoteNoticeLabel(title: "Couldn’t refresh your Mac", detail: notice)
                 }
-                .padding(20).frame(maxWidth: RemoteInstrument.contentWidth)
-                .frame(maxWidth: .infinity, alignment: .center)
+                RemoteMacModelsSection(
+                    models: store.startModels, loaded: store.loadedLocalModel,
+                    connected: store.isConnected, unloading: store.isUnloadingModel,
+                    onStart: { onAction(.start(modelID: $0)) },
+                    onUnload: { await store.unloadLocalModel() })
+                RemoteMacAccessSection(
+                    status: store.hostStatus?.macControl,
+                    connected: store.isConnected, product: hostProduct,
+                    onControl: { onAction(.control) })
+                RemotePageSection(title: "Connections", padding: 0) {
+                    NavigationLink {
+                        RemoteProvidersView(store: store)
+                    } label: {
+                        RemoteMacDestinationRow(title: "API providers & accounts", symbol: "key.horizontal")
+                    }
+                    .buttonStyle(RemotePageRowButtonStyle())
+                    RemotePageDivider().padding(.leading, 66)
+                    Button { onAction(.switchComputer) } label: {
+                        RemoteMacDestinationRow(title: "Switch or pair a Mac", symbol: "desktopcomputer.and.macbook")
+                    }
+                    .buttonStyle(RemotePageRowButtonStyle())
+                }
+                    Text("Downloads and model imports live on your Mac. Closing the Companion window keeps your sessions running.")
+                        .font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
             }
-            .background { RemoteCompanionPalette.canvas.ignoresSafeArea() }
             .navigationTitle("Your Mac")
             .navigationBarTitleDisplayMode(.inline)
-            .companionNavigationChrome()
+            .remotePageChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
@@ -148,6 +76,7 @@ struct RemoteMacHubView: View {
             .refreshable { await refresh() }
             .task { await store.loadStartModels() }
         }
+        .remotePageErrors(store: store)
     }
 
     private func refresh() async {
@@ -168,30 +97,30 @@ private struct RemoteMacConnectionSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 14) {
-                RemoteVampMark().fill(RemoteCompanionPalette.ink, style: FillStyle(eoFill: true))
-                    .padding(9).frame(width: 52, height: 52)
-                    .background(RemoteCompanionPalette.recess, in: RoundedRectangle(cornerRadius: 9))
-                    .accessibilityHidden(true)
+                RemoteBeaconMark(ink: .white.opacity(0.9), size: 44, isActive: connected && working)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(name).font(.title2.weight(.semibold))
-                        .foregroundStyle(RemoteCompanionPalette.ink)
-                    Text(product).font(.subheadline).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                        .foregroundStyle(.white)
+                    Text(product).font(.subheadline).foregroundStyle(.white.opacity(0.75))
                 }
             }
             Label(connected ? connection : "Mac offline · refresh to reconnect",
                   systemImage: connected ? "checkmark.circle" : "wifi.slash")
-                .font(.subheadline).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                .font(.subheadline).foregroundStyle(.white.opacity(0.8))
                 .accessibilityIdentifier("remote.mac.connection")
             if connected {
                 HStack(spacing: 10) {
                     Label(working ? "Assistant is working" : "Ready for a session",
                           systemImage: working ? "waveform" : "bolt")
                     if queued > 0 { Text("\(queued) queued").monospacedDigit() }
-                }.font(.footnote).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                }.font(.footnote).foregroundStyle(.white.opacity(0.75))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18).companionPanel()
+        .padding(17)
+        .background(RemoteInstrument.console, in: RoundedRectangle(cornerRadius: 21, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 21).strokeBorder(.white.opacity(0.14), lineWidth: 0.75) }
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 6)
     }
 }
 
@@ -204,12 +133,13 @@ private struct RemoteMacModelsSection: View {
     let onUnload: () async -> Bool
 
     var body: some View {
-        RemoteCompanionSection(index: "01", title: "Models on your Mac") {
+        VStack(alignment: .leading, spacing: 9) {
+            RemotePageSectionHeading(title: "Models on your Mac")
             if let loaded {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
                         Label("Loaded on Mac", systemImage: "cpu").font(.caption)
-                            .foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                            .foregroundStyle(RemoteInstrument.secondaryInk)
                         Text(loaded.name).font(.subheadline.weight(.semibold))
                     }
                     Spacer(minLength: 4)
@@ -221,35 +151,36 @@ private struct RemoteMacModelsSection: View {
                             else { Text("Unload").font(.subheadline.weight(.semibold)) }
                         }.frame(minWidth: 72, minHeight: 44)
                     }
-                    .buttonStyle(RemoteCompanionButtonStyle())
+                    .buttonStyle(RemotePageButtonStyle())
                     .disabled(!connected || !loaded.canUnload || unloading)
                     .accessibilityIdentifier("remote.mac.unload")
                 }
-                .padding(14).companionPanel()
+                .padding(14).remotePageCard()
                 Text(loaded.canUnload ? "Unload to free Mac memory. The download and your chats stay saved."
                      : "Stop the active task before unloading.")
-                    .font(.footnote).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                    .font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
             }
             if models.isEmpty {
                 Text(connected ? "Download a local model in Companion → Models, or add a provider below. Pull to refresh when it’s ready."
                      : "Reconnect to see your Mac’s models. Your conversations stay saved.")
-                    .font(.subheadline).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                    .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(models.prefix(6))) { model in
                         RemoteMacModelRow(model: model, isLoaded: model.id == loaded?.id,
                                           connected: connected, onStart: onStart)
-                        if model.id != models.prefix(6).last?.id { Rectangle().fill(RemoteCompanionPalette.seam).frame(height: 0.75).padding(.leading, 48) }
+                        if model.id != models.prefix(6).last?.id { RemotePageDivider().padding(.leading, 66) }
                     }
-                }.companionPanel()
+                }.remotePageCard()
                 NavigationLink {
                     RemoteMacModelLibraryView(models: models, loadedID: loaded?.id,
                                               connected: connected, onStart: onStart)
                 } label: {
-                    Label("Browse all models (\(models.count))", systemImage: "square.stack.3d.up")
-                        .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                    RemotePageRowLabel(title: "Browse all models (\(models.count))", symbol: "square.stack.3d.up")
                 }
+                .buttonStyle(RemotePageRowButtonStyle())
+                .remotePageCard()
                 .accessibilityIdentifier("remote.mac.browse-models")
             }
         }
@@ -274,32 +205,35 @@ private struct RemoteMacModelLibraryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Picker("Model source", selection: $source) {
-                ForEach(RemoteModelPickerSheet.sources, id: \.self) { value in
-                    Text(RemoteModelPickerSheet.sourceLabel(value)).tag(value)
-                }
+        RemotePageScroll {
+            RemotePageHeading(title: "Model library", subtitle: "Choose a model to prepare a new conversation.")
+            RemotePageSearchField(text: $query, placeholder: "Search name, ID, or provider")
+            RemotePageSegments(selection: $source, options: RemoteModelPickerSheet.sources.map { value in
+                (RemoteModelPickerSheet.sourceLabel(value), value)
+            }).accessibilityLabel("Model source")
+            if !connected {
+                Text("Cached models · reconnect your Mac to start a session.")
+                    .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
             }
-            .pickerStyle(.segmented).padding(.horizontal, 20)
             if filtered.isEmpty {
                 ContentUnavailableView("No matching models", systemImage: "cpu",
                     description: Text("Choose another source or search. Local downloads are managed on your Mac."))
+                    .remotePageCard()
             } else {
-                ScrollView {
+                RemotePageSection(title: "Available models", detail: "\(filtered.count)", padding: 0) {
                     LazyVStack(spacing: 0) {
                         ForEach(filtered) { model in
                             RemoteMacModelRow(model: model, isLoaded: model.id == loadedID,
-                                              connected: connected, onStart: onStart)
-                            Rectangle().fill(RemoteCompanionPalette.seam).frame(height: 0.75).padding(.leading, 48)
+                                connected: connected, onStart: onStart)
+                            if model.id != filtered.last?.id { RemotePageDivider().padding(.leading, 66) }
                         }
-                    }.companionPanel().padding(.horizontal, 20)
+                    }
                 }
             }
         }
-        .padding(.top, 12).background { RemoteCompanionPalette.canvas.ignoresSafeArea() }
-        .navigationTitle("Mac models").navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $query, prompt: "Search name, ID, or provider")
-        .companionNavigationChrome()
+        .navigationTitle("Mac models")
+        .remotePageChrome()
+        .keyboardDismissToolbar()
         .onAppear {
             if !models.contains(where: { $0.source == source }) {
                 source = RemoteModelPickerSheet.sources.first(where: { candidate in
@@ -308,6 +242,7 @@ private struct RemoteMacModelLibraryView: View {
             }
         }
     }
+
 }
 
 private struct RemoteMacModelRow: View {
@@ -319,20 +254,19 @@ private struct RemoteMacModelRow: View {
     var body: some View {
         Button { onStart(model.id) } label: {
             HStack(spacing: 12) {
-                Image(systemName: RemoteModelPickerSheet.sourceIcon(model.source))
-                    .foregroundStyle(RemoteCompanionPalette.secondaryInk).frame(width: 22)
+                RemotePageSymbol(symbol: RemoteModelPickerSheet.sourceIcon(model.source), active: isLoaded)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(model.name).font(.body.weight(.semibold)).foregroundStyle(RemoteCompanionPalette.ink)
+                    Text(model.name).font(.body.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
                     Text(isLoaded ? "Loaded · \(model.detail)" : model.detail)
-                        .font(.caption).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                        .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "plus.bubble").foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                Image(systemName: "plus.bubble").foregroundStyle(RemoteInstrument.secondaryInk)
             }
             .padding(14).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle()).disabled(!connected)
+        .buttonStyle(RemotePageRowButtonStyle()).disabled(!connected)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("remote.mac.model.\(model.id)")
         .accessibilityHint("Opens a new session with this model. You choose the task before starting.")
@@ -350,26 +284,26 @@ private struct RemoteMacAccessSection: View {
     }
 
     var body: some View {
-        RemoteCompanionSection(index: "02", title: "Mac control") {
+        RemotePageSection(title: "Mac control", spacing: 12) {
             Label(ready ? "Ready to control" : !connected ? "Reconnect to check permissions"
                   : status == nil ? "Mac control status unavailable"
                   : status?.locked == true ? "Mac is locked"
                   : status?.enabled == false ? "Disabled on Mac" : "Mac permissions need attention",
                   systemImage: ready ? "checkmark.shield" : "lock.shield")
-                .font(.subheadline.weight(.medium)).foregroundStyle(RemoteCompanionPalette.ink)
+                .font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
                 .accessibilityIdentifier("remote.mac.control-status")
             Text(ready ? "Control your Mac from here. Sharing and control permissions stay managed on your Mac."
                  : product == "Vamp Companion"
                  ? "Enable Mac control in Companion → Settings → Sharing & control. Accessibility and Screen Recording are granted on the Mac."
                  : "Enable Mac control and grant Accessibility and Screen Recording in Vamp Assistant on your Mac.")
-                .font(.footnote).foregroundStyle(RemoteCompanionPalette.secondaryInk)
+                .font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             Button(action: onControl) {
                 Label("Control Mac", systemImage: "display")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
-                .buttonStyle(RemoteCompanionButtonStyle()).disabled(!connected)
+                .buttonStyle(RemotePageButtonStyle()).disabled(!connected)
         }
     }
 }
@@ -378,15 +312,9 @@ private struct RemoteMacDestinationRow: View {
     let title: LocalizedStringKey
     let symbol: String
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol).frame(width: 24)
-            Text(title).font(.body)
-            Spacer(minLength: 8)
-            Image(systemName: "chevron.right").font(.caption)
-                .foregroundStyle(RemoteCompanionPalette.secondaryInk)
-        }
-        .foregroundStyle(RemoteCompanionPalette.ink).frame(minHeight: 52).contentShape(Rectangle())
+        RemotePageRowLabel(title: title, symbol: symbol)
     }
+
 }
 
 struct RemoteVampMark: Shape {
@@ -420,18 +348,16 @@ struct RemoteMacHubFixture: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    RemoteMacConnectionSection(name: "My Mac", product: "Vamp Companion",
-                        connection: "Private over Tailscale", connected: connected, working: false, queued: 0)
-                    RemoteMacModelsSection(models: [model], loaded: nil, connected: connected,
-                        unloading: false, onStart: { selected = $0 }, onUnload: { false })
-                    RemoteMacAccessSection(status: nil, connected: connected, product: "Vamp Companion", onControl: {})
-                    if !selected.isEmpty { Text("New session model: \(selected)").accessibilityIdentifier("remote.mac.fixture-selection") }
-                }.padding(20)
+            RemotePageScroll {
+                RemotePageHeading(title: "Models & access", subtitle: "Your Mac’s models, accounts, and control in one place.")
+                RemoteMacConnectionSection(name: "My Mac", product: "Vamp Companion",
+                    connection: "Private over Tailscale", connected: connected, working: false, queued: 0)
+                RemoteMacModelsSection(models: [model], loaded: nil, connected: connected,
+                    unloading: false, onStart: { selected = $0 }, onUnload: { false })
+                RemoteMacAccessSection(status: nil, connected: connected, product: "Vamp Companion", onControl: {})
+                if !selected.isEmpty { Text("New session model: \(selected)").accessibilityIdentifier("remote.mac.fixture-selection") }
             }
-            .background { RemoteCompanionPalette.canvas.ignoresSafeArea() }.navigationTitle("Your Mac")
-            .navigationBarTitleDisplayMode(.inline).companionNavigationChrome()
+            .navigationTitle("Your Mac").remotePageChrome()
         }
     }
 }

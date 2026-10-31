@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Install pinned optional runtimes without changing Homebrew or the app's MLX ABI.
+"""Install pinned runtimes without changing Homebrew or the app's MLX ABI.
 
-Requires Apple Silicon, Xcode, git, cmake and uv. No model is selected, no service
-is installed, and existing runtime entries/settings are preserved. The Bonsai
-checkpoint is optional and currently needs a Mac with at least 24 GB RAM.
+Requires Apple Silicon. Source-built runtimes also need Xcode, git, cmake and uv.
+No model is selected, no service is installed, and existing runtime entries and
+settings are preserved. Bonsai weights currently need at least 24 GB RAM.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import posixpath
 import shutil
 import subprocess
+import tarfile
+import tempfile
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 DEST = Path.home() / 'Library/Application Support/VampCompanion/Runtimes'
@@ -21,6 +26,10 @@ PINS = {
     'mlxfast': ('https://github.com/Layr-Labs/mlxfast-bonsai2-27b-engine.git', '831fae740de35a106e85768d8b0534b4af422b13', 'mlxfast-831fae7'),
     'llamaMetal': ('https://github.com/ggml-org/llama.cpp.git', '7fe450e19305b828c199d602c23a8337aaa1f03b', 'llama-metal-v0.5.0'),
 }
+LFM3_BUILD = 'b11960'
+LFM3_ARCHIVE = f'llama-{LFM3_BUILD}-bin-macos-arm64.tar.gz'
+LFM3_URL = f'https://github.com/ggml-org/llama.cpp/releases/download/{LFM3_BUILD}/{LFM3_ARCHIVE}'
+LFM3_ARCHIVE_SHA256 = '58e5a5e1d7c2bf66cedd9c29e0323f3e570660a70a1e2156d32eed08f4cc1e3c'
 
 
 def run(args, cwd=None, env=None):
@@ -54,7 +63,84 @@ def copy(source, target):
         temporary.replace(target)
 
 
+def sha256_file(handle):
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_archive_member(member):
+    """Reject paths and links that could escape the expected release folder."""
+    name = member.name.rstrip('/')
+    root = f'llama-{LFM3_BUILD}'
+    if (not name or name.startswith('/') or posixpath.normpath(name) != name
+            or not (name == root or name.startswith(root + '/'))):
+        raise RuntimeError(f'Unsafe runtime archive path: {member.name}')
+    if member.issym():
+        link = posixpath.normpath(posixpath.join(posixpath.dirname(name), member.linkname))
+        if member.linkname.startswith('/') or not link.startswith(root + '/'):
+            raise RuntimeError(f'Unsafe runtime archive link: {member.name}')
+    elif not (member.isfile() or member.isdir()):
+        raise RuntimeError(f'Unsupported runtime archive entry: {member.name}')
+
+
+def verify_runtime_tree(archive, directory):
+    for member in archive.getmembers():
+        validate_archive_member(member)
+        path = directory / member.name
+        if member.isdir():
+            valid = path.is_dir() and not path.is_symlink()
+        elif member.issym():
+            valid = path.is_symlink() and os.readlink(path) == member.linkname
+        else:
+            valid = path.is_file() and not path.is_symlink()
+            if valid:
+                with path.open('rb') as installed, archive.extractfile(member) as original:
+                    valid = sha256_file(installed) == sha256_file(original)
+        if not valid:
+            raise RuntimeError(f'Existing runtime differs from the verified release: {path}')
+
+
+def install_lfm3_compatibility():
+    """Verify the official binary and register it only for LFM3 models."""
+    target = DEST / f'llama-{LFM3_BUILD}'
+    if target.is_symlink():
+        raise RuntimeError(f'Refusing to install through a runtime symlink: {target}')
+    with tempfile.TemporaryDirectory(prefix='.lfm3-install-', dir=DEST) as scratch:
+        scratch = Path(scratch)
+        archive_path = scratch / LFM3_ARCHIVE
+        request = urllib.request.Request(LFM3_URL, headers={'User-Agent': 'VampCompanion-runtime-installer'})
+        with urllib.request.urlopen(request, timeout=60) as response, archive_path.open('wb') as output:
+            shutil.copyfileobj(response, output)
+        with archive_path.open('rb') as handle:
+            if sha256_file(handle) != LFM3_ARCHIVE_SHA256:
+                raise RuntimeError('The LFM3 runtime archive checksum did not match the pinned release.')
+        with tarfile.open(archive_path, 'r:gz') as archive:
+            for member in archive.getmembers():
+                validate_archive_member(member)
+            if target.exists():
+                verify_runtime_tree(archive, target)
+            else:
+                staging = scratch / 'runtime'
+                staging.mkdir()
+                if hasattr(tarfile, 'data_filter'):
+                    archive.extractall(staging, filter='data')
+                else:
+                    archive.extractall(staging)
+                verify_runtime_tree(archive, staging)
+                staging.rename(target)
+    executable = target / f'llama-{LFM3_BUILD}/llama-server'
+    if not os.access(executable, os.X_OK):
+        raise RuntimeError(f'The verified runtime is not executable: {executable}')
+    return dict(kind='llamaCompatibility', revision=LFM3_BUILD,
+                executable=str(executable.relative_to(DEST)), models=[], visionModels=[],
+                architectures=['lfm3'])
+
+
 def install(kind, with_weights):
+    if kind == 'llamaCompatibility':
+        return install_lfm3_compatibility()
     source, target = checkout(kind)
     target.mkdir(parents=True, exist_ok=True)
     if kind == 'omlx':
@@ -102,7 +188,8 @@ def install(kind, with_weights):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--runtime', choices=[*PINS, 'all'], default='all')
+    kinds = [*PINS, 'llamaCompatibility']
+    parser.add_argument('--runtime', choices=[*kinds, 'all'], default='all')
     parser.add_argument('--bonsai-weights', action='store_true', help='Also download the pinned Bonsai pack; requires 24 GB RAM and 22 GiB free disk')
     args = parser.parse_args()
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
@@ -111,12 +198,17 @@ def main():
     path = DEST / 'manifest.json'
     manifest = json.loads(path.read_text()) if path.exists() else {'version': 1, 'runtimes': []}
     if manifest.get('version') != 1: raise RuntimeError('Unknown existing runtime manifest version')
-    for kind in PINS if args.runtime == 'all' else [args.runtime]:
+    for kind in kinds if args.runtime == 'all' else [args.runtime]:
         entry = install(kind, args.bonsai_weights)
-        manifest['runtimes'] = [r for r in manifest['runtimes'] if r['kind'] != kind] + [entry]
+        if kind == 'llamaCompatibility':
+            # Other compatibility rules may target entirely different models.
+            manifest['runtimes'] = [entry] + [r for r in manifest['runtimes']
+                if not (r['kind'] == kind and r['executable'] == entry['executable'])]
+        else:
+            manifest['runtimes'] = [r for r in manifest['runtimes'] if r['kind'] != kind] + [entry]
         temporary = path.with_suffix('.json.pending')
         temporary.write_text(json.dumps(manifest, indent=2) + '\n'); temporary.replace(path)
-    print('Installed. Enable a compatible runtime in Vamp Settings → Agent and reload the model.')
+    print('Installed. Model compatibility runtimes are selected automatically; experimental runtimes can be enabled in Settings → Agent.')
 
 
 if __name__ == '__main__':

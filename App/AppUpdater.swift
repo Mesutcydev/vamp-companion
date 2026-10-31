@@ -1,8 +1,11 @@
 import Combine
 import Observation
+#if !VAMP_APP_STORE
 import Sparkle
+#endif
 import SwiftUI
 
+#if !VAMP_APP_STORE
 /// One updater for every app window. Sparkle owns its preferences and schedule.
 @MainActor
 @Observable
@@ -82,3 +85,26 @@ struct AppUpdateSettings: View {
         }
     }
 }
+
+#else
+/// App Store binaries do not link or initialize Sparkle.
+@MainActor
+final class AppUpdater {
+    static let shared = AppUpdater()
+    func start() {}
+}
+
+struct CheckForUpdatesButton: View {
+    var body: some View { EmptyView() }
+}
+
+struct AppUpdateSettings: View {
+    var body: some View {
+        SettingsCard(title: "App Store edition", icon: "app.badge.checkmark") {
+            Text("Version \(AppIdentity.version)")
+            Text("Updates are delivered by the Mac App Store.")
+                .font(.callout).foregroundStyle(Theme.textSecondary)
+        }
+    }
+}
+#endif

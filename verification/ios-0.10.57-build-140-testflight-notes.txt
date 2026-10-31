@@ -1,0 +1,11 @@
+Vamp Companion 0.10.57 (140)
+
+New chat and new code session have a redesigned screen: write first, then start from the message box.
+
+Please test:
+- Open New chat: the message box is ready to type. Pick a model from the chip under the message, then tap the red arrow to start.
+- Switch to Code: choose the project folder from its chip, then start.
+- Setup shows Bot, Reasoning (for models that support it), and Permissions with their current values; each opens to change it.
+- A rejected start shows the Mac's reason and keeps your message for retry.
+- Chat/Code and model source selections are easier to see in Dark appearance.
+- Check larger text sizes on the new screen.

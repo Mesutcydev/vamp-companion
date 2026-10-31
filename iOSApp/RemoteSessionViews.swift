@@ -56,6 +56,8 @@ private struct RemoteHomeStartRequest: Identifiable {
     let modelID: String?
 }
 
+private enum RemoteSettingsDestination { case computers, diagnostics }
+
 struct SessionListView: View {
     let store: RemoteStore
     let onOpen: (UUID) -> Void
@@ -69,6 +71,7 @@ struct SessionListView: View {
     @State private var showBotRuns = false
     @State private var showDiagnostics = false
     @State private var showSettings = false
+    @State private var deferredSettingsDestination: RemoteSettingsDestination?
     @State private var showMacHub = false
     @State private var deferredMacAction: RemoteMacHubAction?
     @State private var deferredSessionID: UUID?
@@ -144,11 +147,17 @@ struct SessionListView: View {
                 }
             }
             .sheet(isPresented: $showSharing) { RemoteShareSheet(store: store) }
-            .sheet(isPresented: $showSettings) {
+            .sheet(isPresented: $showSettings, onDismiss: openDeferredSettingsDestination) {
                 RemoteSettingsSheet(
                     store: store,
-                    onSwitchComputer: { showComputers = true },
-                    onDiagnostics: { showDiagnostics = true })
+                    onSwitchComputer: {
+                        deferredSettingsDestination = .computers
+                        showSettings = false
+                    },
+                    onDiagnostics: {
+                        deferredSettingsDestination = .diagnostics
+                        showSettings = false
+                    })
             }
             .sheet(isPresented: $showBotRuns, onDismiss: openDeferredSession) {
                 RemoteBotsView(store: store) { sessionID in
@@ -191,6 +200,18 @@ struct SessionListView: View {
             onOpen(sessionID)
         }
     }
+    private func openDeferredSettingsDestination() {
+        guard let destination = deferredSettingsDestination else { return }
+        deferredSettingsDestination = nil
+        Task { @MainActor in
+            await Task.yield()
+            switch destination {
+            case .computers: showComputers = true
+            case .diagnostics: showDiagnostics = true
+            }
+        }
+    }
+
     private func openDeferredMacAction() {
         guard let action = deferredMacAction else { return }
         deferredMacAction = nil

@@ -1,0 +1,147 @@
+{
+  "date": "2026-10-13",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.56",
+    "build": "139",
+    "architectures": "arm64",
+    "minOS": "18.0",
+    "deviceFamilies": [
+      1,
+      2
+    ],
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "keychainIdentityPreserved": true,
+    "profileExpiry": "2027-10-01T13:04:55",
+    "privacyManifest": true,
+    "debugFixturesExcluded": true,
+    "matchingCrashSymbolsIncluded": true,
+    "sourceFilesVerified": 95,
+    "ipaSHA256": "9abcd033f227b08e6c9b70b9326f790f63aafc73818f443036d56e6753143462"
+  },
+  "checks": [
+    {
+      "check": "Full iOS suite",
+      "result": "Passed",
+      "passed": 84,
+      "failed": 0,
+      "skipped": 5
+    },
+    {
+      "check": "Final iPhone menus and navigation",
+      "result": "Passed",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "check": "Final iPhone pending requests, touch targets, and large text",
+      "result": "Passed",
+      "passed": 5,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "check": "Final iPad secondary pages",
+      "result": "Passed",
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "check": "Mac unit and UI regressions",
+      "result": "Passed",
+      "passed": 1096,
+      "failed": 0,
+      "skipped": 51
+    }
+  ],
+  "findings": [
+    {
+      "severity": "P2",
+      "finding": "Repeated taps could schedule multiple bot launches or provider updates.",
+      "resolution": "Pending state is set before creating a task; actions are disabled and checked at entry. Requests capture their reviewed inputs.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P2",
+      "finding": "Cached bot approval/run controls and keyboard console submission stayed available offline.",
+      "resolution": "Execution controls check connection state. Offline keyboard submission preserves the command and explains how to reconnect.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P2",
+      "finding": "Settings requested another sheet during dismissal.",
+      "resolution": "Computer switching and diagnostics open from the dismissal completion; navigation is covered on phone and tablet.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P2",
+      "finding": "Errors could be hidden behind the open menu or full-screen session form.",
+      "resolution": "Bots, sharing, the Mac hub, and session setup present errors in the visible surface. Rejected requests keep the draft.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P2",
+      "finding": "Successful run-control responses could clear text edited while the request was pending.",
+      "resolution": "Answer, steer, launch, and key drafts clear only when the submitted text is still current; provider fields are locked during updates.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P3",
+      "finding": "Cached provider readiness and an empty provider list could imply a live connection or failed search.",
+      "resolution": "Provider detail explicitly reports Mac offline, disables mutations, and uses a useful empty state and reconnect guidance.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P3",
+      "finding": "Some destructive controls had inconsistent disabled feedback and small touch targets.",
+      "resolution": "Bot controls and key removal use the shared style and 44-point targets. Bot action controls stack at accessibility text sizes.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P3",
+      "finding": "A cancelled sharing toast task could clear newer feedback.",
+      "resolution": "Toast lifetime is keyed to its message and cancellation returns without clearing the current notice.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P3",
+      "finding": "The offline bot notice did not match the shared card shape; previous release archives omitted crash symbols.",
+      "resolution": "The notice uses the shared rounded shape. This archive generates matching dSYMs and includes matching symbols in the IPA.",
+      "status": "fixed"
+    }
+  ],
+  "appleBuild": {
+    "id": "cddbbe30-9ce2-420b-9760-0685d72ebcc8",
+    "version": "139",
+    "processingState": "VALID",
+    "uploadedDate": "2026-10-13T11:28:23-07:00",
+    "usesNonExemptEncryption": false,
+    "marketingVersion": "0.10.56"
+  },
+  "betaDetail": {
+    "autoNotifyEnabled": true,
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION"
+  },
+  "testerGroup": "mes",
+  "testerGroupID": "c07a6d5c-dca3-423a-a96c-dd194ee7200a",
+  "baseCommit": "46c1beca0da2607326c4da1417b3544d63fd0216",
+  "sourceSnapshotSHA256": "6b1d10e9f89fa650e1abadd49d9141d2d142517ace41e891232997373ab4e62d",
+  "ipa": "dist/companion-ios-testflight-0.10.56-build-139/export-upload/Vamp Companion.ipa",
+  "scope": "Companion iOS only; no App Store submission or new tester invitations",
+  "limitations": "Physical iPhone/Mac, live Tailscale streaming, and sleep/wake were not exercised in this pass; optional isolated-host and live/expensive tests were skipped.",
+  "groupVisibilityVerified": true,
+  "testFlightNotes": {
+    "verified": true,
+    "locale": "en-GB",
+    "localizationID": "f58272ec-79b8-4831-b162-45ea080d4f21",
+    "sha256": "58bf56cf0f99e33175f062574da0e035c0aa74fa478758bbce7a4337c9128124"
+  },
+  "deliveryUUID": "cddbbe30-9ce2-420b-9760-0685d72ebcc8"
+}

@@ -16,6 +16,7 @@ struct RemoteBotConsoleView: View {
     let computer: RemoteBotComputer
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab: Tab = .shell
     @State private var command = ""
     @State private var transcript: [String] = []
@@ -28,12 +29,18 @@ struct RemoteBotConsoleView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                RemoteInstrumentSegments(selection: $tab,
+                RemotePageSegments(selection: $tab,
                     options: Tab.allCases.map { ($0.rawValue, $0) })
                     .accessibilityLabel("Console view")
-                .padding(.horizontal)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
 
+                if !store.isConnected {
+                    RemoteReconnectBanner(store: store)
+                        .clipShape(RoundedRectangle(cornerRadius: 17))
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                }
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.footnote)
@@ -49,14 +56,17 @@ struct RemoteBotConsoleView: View {
             }
             .navigationTitle(computer.name)
             .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
+            .remotePageChrome()
+            .frame(maxWidth: RemoteInstrument.contentWidth).frame(maxWidth: .infinity)
             .background(RemoteInstrument.canvas)
+            .scrollDismissesKeyboard(.interactively)
+            .keyboardDismissToolbar()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }.vampUtilityAction()
             }
-            .task { await loadFiles() }
+            .task(id: store.isConnected) { await loadFiles() }
         }
     }
 
@@ -74,8 +84,9 @@ struct RemoteBotConsoleView: View {
                         .padding(.horizontal)
                         .id("transcript")
                 }
+                .padding(14).remotePageCard().padding(.horizontal, 16)
                 .onChange(of: transcript.count) { _, _ in
-                    withAnimation { scroll.scrollTo("transcript", anchor: .bottom) }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { scroll.scrollTo("transcript", anchor: .bottom) }
                 }
             }
 
@@ -86,22 +97,25 @@ struct RemoteBotConsoleView: View {
                     .autocorrectionDisabled()
                     .submitLabel(.send)
                     .onSubmit(run)
+                    .accessibilityIdentifier("remote.bot.command")
                 if isBusy {
                     ProgressView()
                 } else {
                     Button("Run", action: run)
-                        .disabled(command.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityIdentifier("remote.bot.runCommand")
+                        .buttonStyle(RemotePageButtonStyle(primary: true))
+                        .disabled(!store.isConnected || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .padding(10)
-            .modifier(RemoteGlassBackdrop(radius: 10, role: .control))
+            .remotePageField()
             .padding(.horizontal)
             .padding(.bottom, 8)
         }
     }
 
     private var files: some View {
-        RemoteInstrumentForm {
+        RemotePageForm {
             if !directory.isEmpty {
                 Button {
                     directory = directory.contains("/")
@@ -110,7 +124,7 @@ struct RemoteBotConsoleView: View {
                     Task { await loadFiles() }
                 } label: {
                     Label("Up a level", systemImage: "arrow.up.left")
-                }
+                }.disabled(!store.isConnected)
             }
             Section("/workspace" + (directory.isEmpty ? "" : "/\(directory)")) {
                 if entries.isEmpty {
@@ -135,6 +149,7 @@ struct RemoteBotConsoleView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .disabled(!store.isConnected)
                 }
             }
             if let preview {
@@ -153,6 +168,10 @@ struct RemoteBotConsoleView: View {
     }
 
     private func run() {
+        guard store.isConnected else {
+            errorMessage = "Reconnect to your Mac before running a command."
+            return
+        }
         let text = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isBusy else { return }
         command = ""
@@ -173,6 +192,7 @@ struct RemoteBotConsoleView: View {
     }
 
     private func open(_ entry: RemoteBotWorkspaceEntry) {
+        guard store.isConnected else { return }
         if entry.isDirectory {
             directory = entry.path
             preview = nil
@@ -189,6 +209,7 @@ struct RemoteBotConsoleView: View {
     }
 
     private func loadFiles() async {
+        guard store.isConnected else { return }
         do {
             entries = try await store.botComputerFiles(computer.id, path: directory)
             errorMessage = nil

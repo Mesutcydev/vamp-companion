@@ -126,108 +126,87 @@ struct RemoteModelPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                RemoteBackdrop()
-                VStack(spacing: 0) {
-                    if let modeName {
-                        Text("Conversation mode: \(modeName)")
-                            .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16).padding(.bottom, 12)
-                    }
-                    SearchField(text: $query, placeholder: "Search name, id, or provider")
-                        .padding(.horizontal, 18)
-                        .padding(.bottom, 12)
-                    RemoteInstrumentSegments(selection: $source, options: Self.sources.map { option in
-                        let count = models.filter { $0.source == option }.count
-                        return (count > 0 ? "\(Self.sourceLabel(option)) \(count)" : Self.sourceLabel(option), option)
-                    })
-                    .accessibilityLabel("Model source")
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 12)
+            RemotePageScroll {
+                RemotePageHeading(title: "Choose a model", subtitle: "Local models and connected providers, ready for your next conversation.")
+                if let modeName {
+                    Text("Conversation mode: \(modeName)")
+                        .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                }
+                RemotePageSearchField(text: $query, placeholder: "Search name, ID, or provider")
+                RemotePageSegments(selection: $source, options: Self.sources.map { option in
+                    let count = models.filter { $0.source == option }.count
+                    return (count > 0 ? "\(Self.sourceLabel(option)) \(count)" : Self.sourceLabel(option), option)
+                })
+                .accessibilityLabel("Model source")
 
-                    if inSource.isEmpty {
-                        ContentUnavailableView(
-                            "No \(Self.sourceLabel(source)) models",
-                            systemImage: Self.sourceIcon(source),
-                            description: Text(emptyDescription))
-                        .frame(maxHeight: .infinity)
-                    } else if filtered.isEmpty {
-                        ContentUnavailableView.search(text: query)
-                            .frame(maxHeight: .infinity)
-                    } else {
-                        RemoteInstrumentForm {
-                            ForEach(groups, id: \.title) { group in
-                                Section {
-                                    ForEach(group.models) { model in
-                                        row(model)
+                if !isConnected {
+                    RemoteNoticeLabel(title: "Mac offline", detail: "Reconnect to refresh models or start a session. Cached models stay visible.", symbol: "wifi.slash")
+                        .clipShape(RoundedRectangle(cornerRadius: 17))
+                }
+                if source == "local", onUnload != nil { unloadControl }
+                if inSource.isEmpty {
+                    ContentUnavailableView(
+                        isConnected ? "No \(Self.sourceLabel(source)) models" : "Models unavailable",
+                        systemImage: Self.sourceIcon(source),
+                        description: Text(isConnected ? emptyDescription : "Reconnect to load the models on your Mac."))
+                        .remotePageCard()
+                } else if filtered.isEmpty {
+                    ContentUnavailableView.search(text: query).remotePageCard()
+                } else {
+                    ForEach(groups, id: \.title) { group in
+                        RemotePageSection(title: LocalizedStringKey(group.title), detail: "\(group.models.count)", padding: 0) {
+                            LazyVStack(spacing: 0) {
+                                ForEach(group.models) { model in
+                                    row(model)
+                                    if model.id != group.models.last?.id {
+                                        RemotePageDivider().padding(.leading, 66)
                                     }
-                                } header: {
-                                    Text("\(group.title.uppercased()) · \(group.models.count)")
-                                        .font(.caption2.bold())
-                                        .tracking(0.8)
-                                        .foregroundStyle(BeetTheme.secondaryText(appearance))
                                 }
-                                .listRowBackground(BeetTheme.surface(appearance))
                             }
                         }
-                        .scrollContentBackground(.hidden)
-                        .refreshable { await onRefresh?() }
-                    }
-                    if source == "local", onUnload != nil {
-                        unloadControl
                     }
                 }
-                .padding(.top, 10)
             }
-            .navigationTitle("Model")
-            .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
+            .refreshable { await onRefresh?() }
+            .navigationTitle("Models")
+            .remotePageChrome()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.vampUtilityAction()
             }
-            .toolbarBackground(BeetTheme.background(appearance).opacity(0.94), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
             .task { await onRefresh?() }
+            .keyboardDismissToolbar()
         }
     }
 
     @ViewBuilder
     private var unloadControl: some View {
         if let loaded = loadedLocalModel {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(loaded.name)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(BeetTheme.secondaryText(appearance))
-                    .lineLimit(2)
-                Button {
-                    Task { didUnload = await onUnload?() ?? false }
-                } label: {
-                    HStack(spacing: 8) {
-                        if isUnloadingModel { ProgressView().controlSize(.small) }
-                        else { Image(systemName: "eject") }
-                        Text(isUnloadingModel ? "Unloading…" : "Unload model")
-                            .font(.subheadline.weight(.semibold))
+            RemotePageSection(title: "Loaded on Mac") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(loaded.name).font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(loaded.canUnload
+                         ? "Free Mac memory. Your download and conversations stay saved."
+                         : "Stop the active task to unload this model.")
+                        .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                    Button {
+                        Task { didUnload = await onUnload?() ?? false }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isUnloadingModel { ProgressView().controlSize(.small) }
+                            else { Image(systemName: "eject") }
+                            Text(isUnloadingModel ? "Unloading…" : "Unload model")
+                        }.frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity, minHeight: RemoteInstrument.controlHeight)
+                    .buttonStyle(RemotePageButtonStyle())
+                    .disabled(!isConnected || !loaded.canUnload || isUnloadingModel)
+                    .accessibilityIdentifier("remote.model.unload")
+                    .accessibilityHint("Frees memory on your Mac. Keeps the downloaded model and your conversations.")
                 }
-                .buttonStyle(RemoteKeyButtonStyle())
-                .disabled(!isConnected || !loaded.canUnload || isUnloadingModel)
-                .accessibilityIdentifier("remote.model.unload")
-                .accessibilityHint("Frees memory on your Mac. Keeps the downloaded model and your conversations.")
-                Text(loaded.canUnload
-                     ? "Frees Mac memory. Keeps the model downloaded."
-                     : "Stop the active task to unload this model.")
-                    .font(.caption)
-                    .foregroundStyle(BeetTheme.secondaryText(appearance))
             }
-            .padding(18)
-            .background(BeetTheme.surface(appearance))
-            .overlay(alignment: .top) { Rectangle().fill(BeetTheme.line(appearance)).frame(height: 0.75) }
         } else if didUnload {
             Label("Model unloaded", systemImage: "checkmark.circle")
-                .font(.caption).foregroundStyle(RemoteInstrument.green)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(18)
+                .font(.subheadline).foregroundStyle(RemoteInstrument.green)
                 .accessibilityIdentifier("remote.model.unloaded")
         }
     }
@@ -239,37 +218,28 @@ struct RemoteModelPickerSheet: View {
             dismiss()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: selectedModelID == model.id
-                      ? "checkmark.circle.fill" : Self.sourceIcon(model.source))
-                    .foregroundStyle(selectedModelID == model.id
-                                     ? RemoteInstrument.green : BeetTheme.secondaryText(appearance))
-                    .frame(width: 24)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(model.name).font(.body.weight(.semibold))
-                        if model.isLatest {
-                            Text("LATEST")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(BeetTheme.accentBright)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(BeetTheme.accentBright.opacity(0.14), in: Capsule())
-                                .accessibilityLabel("Latest model")
-                        }
-                    }
-                    Text(model.detail)
-                        .font(.caption)
-                        .foregroundStyle(BeetTheme.secondaryText(appearance))
+                RemotePageSymbol(symbol: Self.sourceIcon(model.source), active: selectedModelID == model.id)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.name).font(.body.weight(.medium))
+                        .foregroundStyle(RemoteInstrument.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(model.detail).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if model.isLatest { RemotePageBadge(title: "Latest", color: BeetTheme.accentBright) }
                 }
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
+                if selectedModelID == model.id {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(BeetTheme.accentBright)
+                        .accessibilityHidden(true)
+                }
             }
-            .frame(minHeight: RemoteInstrument.controlHeight)
+            .padding(14).frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
             .contentShape(Rectangle())
-            .accessibilityAddTraits(selectedModelID == model.id ? .isSelected : [])
         }
-        .buttonStyle(RemotePressButtonStyle())
+        .buttonStyle(RemotePageRowButtonStyle())
+        .accessibilityAddTraits(selectedModelID == model.id ? .isSelected : [])
     }
+
 }
 
 /// The summary row that opens the picker. Shows the current model, its source,

@@ -136,12 +136,14 @@ struct RemoteDiagnosticsSettingsView: View {
     @ObservedObject private var diagnostics = RemoteControlDiagnostics.shared
     @Environment(\.remoteAppearance) private var appearance
     @State private var copied = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         ZStack {
             RemoteBackdrop()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    RemotePageHeading(title: "Control diagnostics", subtitle: "Live stream state and recent connection events.")
                     summaryCard
                     if let lastError = diagnostics.lastError {
                         errorCard(lastError)
@@ -150,21 +152,19 @@ struct RemoteDiagnosticsSettingsView: View {
                     actions
                 }
                 .padding(16)
-                .frame(maxWidth: 560)
+                .frame(maxWidth: RemoteInstrument.contentWidth)
                 .frame(maxWidth: .infinity)
             }
         }
         .navigationTitle("Control Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(BeetTheme.background(appearance).opacity(0.94), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+.remotePageChrome()
     }
 
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("LIVE STATE")
-                .font(.caption2.bold())
-                .tracking(0.8)
+            Text("Live state")
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
             labeled("Phase", diagnostics.phase)
             labeled("Frames received", "\(diagnostics.framesReceived)")
@@ -176,15 +176,13 @@ struct RemoteDiagnosticsSettingsView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(BeetTheme.line(appearance)) }
+.remotePageCard()
     }
 
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("LAST ERROR")
-                .font(.caption2.bold())
-                .tracking(0.8)
+            Text("Last error")
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
             Text(message)
                 .font(.subheadline.weight(.semibold))
@@ -193,15 +191,13 @@ struct RemoteDiagnosticsSettingsView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(BeetTheme.line(appearance)) }
+.remotePageCard()
     }
 
     private var breadcrumbsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("BREADCRUMBS")
-                .font(.caption2.bold())
-                .tracking(0.8)
+            Text("Recent events")
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
             if diagnostics.crumbs.isEmpty {
                 Text("Open Mac Control once to start collecting breadcrumbs.")
@@ -227,8 +223,7 @@ struct RemoteDiagnosticsSettingsView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(BeetTheme.line(appearance)) }
+.remotePageCard()
     }
 
     private var actions: some View {
@@ -241,7 +236,7 @@ struct RemoteDiagnosticsSettingsView: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 50)
             }
-            .buttonStyle(RemotePrimaryButtonStyle())
+            .buttonStyle(RemotePageButtonStyle(primary: true))
 
             Button(role: .destructive) {
                 diagnostics.clear()
@@ -251,16 +246,17 @@ struct RemoteDiagnosticsSettingsView: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 48)
             }
-            .buttonStyle(RemoteSecondaryButtonStyle())
+            .buttonStyle(RemotePageButtonStyle())
         }
     }
 
     private func labeled(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+        return layout {
             Text(title)
                 .font(.subheadline)
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
-            Spacer()
+            if !typeSize.isAccessibilitySize { Spacer() }
             Text(value)
                 .font(.subheadline.weight(.semibold).monospaced())
                 .foregroundStyle(appearance == .light ? Color.primary : Color.white)

@@ -155,6 +155,10 @@ final class ModelDownloadManager: ObservableObject {
     // MARK: Control
 
     func start(model: CatalogModel, into directory: URL) {
+        guard CompanionDistribution.supports(model) else {
+            states[model.id] = .failed("This edition supports MLX models. Other runtimes are available in the website edition.")
+            return
+        }
         guard state(for: model.id).isActive == false else { return }
         cancelledModelIDs.remove(model.id)
         pauseRequestedModelIDs.remove(model.id)

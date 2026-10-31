@@ -33,7 +33,7 @@ struct ProvidersTab: View {
                 .font(.callout)
                 .foregroundStyle(Theme.textSecondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 12)], spacing: 12) {
-                if matches("ChatGPT", connected: codex.isSignedIn) {
+                if !CompanionDistribution.isAppStore, matches("ChatGPT", connected: codex.isSignedIn) {
                     ProviderDirectoryTile(name: "ChatGPT", subtitle: codex.isSignedIn ? "Connected account" : "Use your subscription", icon: "person.crop.circle", connected: codex.isSignedIn) { selectedID = "account" }
                 }
                 ForEach(LLMProvider.allCases.sorted { left, right in
@@ -98,7 +98,7 @@ struct ProvidersTab: View {
             .environmentObject(appState)
         }
         .task { pendingRestore = LegacyMigration.needsInteractiveKeyMigration() }
-        .task { await codex.refresh() }
+        .task { if !CompanionDistribution.isAppStore { await codex.refresh() } }
     }
 
     private func matches(_ name: String, connected: Bool) -> Bool {

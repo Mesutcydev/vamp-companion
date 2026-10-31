@@ -10,6 +10,27 @@ struct CompanionShell: View {
             CompanionHeader(selection: $navigation.destination,
                             hostRunning: appState.remoteSessionRunning)
             Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
+            if appState.sessionStorageLocked {
+                HStack(spacing: 12) {
+                    Image(systemName: "lock.fill").foregroundStyle(CompanionBrand.accentInk)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Conversations are locked").font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(CompanionBrand.ink)
+                        Text("iPhone can't start sessions until macOS allows the session key. Choose Always Allow when asked.")
+                            .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
+                    }
+                    Spacer()
+                    Button("Unlock") {
+                        appState.sessionStorageLocked = !SessionCrypto.unlockInteractively()
+                    }
+                    .buttonStyle(CompanionArcadeButtonStyle(primary: true))
+                    .accessibilityIdentifier("companion-unlock-sessions")
+                }
+                .padding(.horizontal, CompanionBrand.pageInset).padding(.vertical, 10)
+                .background(CompanionBrand.surface)
+                Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
+            }
             Group {
                 switch navigation.destination {
                 case .models:
@@ -17,6 +38,7 @@ struct CompanionShell: View {
                         VStack(alignment: .leading, spacing: 24) {
                             CompanionPageHeading(eyebrow: "Model library", title: "Your models. Your Mac.",
                                                  subtitle: "Download a local model or connect a provider. Run it from your iPhone.")
+                            if CompanionDistribution.isAppStore { CompanionWebsitePromoCard() }
                             ModelManagerView(embedded: true)
                         }
                         .padding(CompanionBrand.pageInset)
@@ -38,6 +60,7 @@ struct CompanionShell: View {
         }
         .frame(minWidth: 600, minHeight: 520)
         .background(CompanionBrand.canvas)
+        .task { appState.sessionStorageLocked = !SessionCrypto.isAvailable }
         .sheet(isPresented: $navigation.showsProviders) {
             CompanionProviderSheet()
                 .environmentObject(appState)
@@ -208,7 +231,9 @@ struct CompanionDevicesView: View {
                 }
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "lock.shield").foregroundStyle(CompanionBrand.accentInk)
-                    Text("Your assistant keeps running when this window is closed. Choose clipboard, file sharing, and Mac control access in Settings.")
+                    Text(CompanionDistribution.isAppStore
+                         ? "Your assistant keeps running when this window is closed. Choose clipboard and file sharing access in Settings."
+                         : "Your assistant keeps running when this window is closed. Choose clipboard, file sharing, and Mac control access in Settings.")
                         .font(.system(size: 13)).foregroundStyle(CompanionBrand.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }

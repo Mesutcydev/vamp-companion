@@ -1,11 +1,20 @@
 {
-  "authorization": "User selected the Assistant iOS client, requested Companion cooperation, then explicitly requested a modern, compact, detailed homepage with motion and depth, better buttons, and removal of chat-header thumbnails. Preserve the composer and shared style. User then requested overall chat UI and motion improvements using Desktop/SiteAgent as a read-only reference.",
+  "authorization": "User selected the Assistant iOS client, requested Companion cooperation, then explicitly requested a modern, compact, detailed homepage with motion and depth, better buttons, and removal of chat-header thumbnails. Preserve the composer and shared style. User then requested overall chat UI and motion improvements using Desktop/SiteAgent as a read-only reference. User requested Models, Settings, Bots, and the remaining iOS menus to match the new homepage design on 2026-10-13. This includes their provider, sharing, computer, console, diagnostic, and session-setup detail pages. Preserve app identity, assets, transport, pairing, and the existing composer. User then requested a release audit, fixing its findings, and uploading the new iOS build to TestFlight. Related UI fixes cover pending actions, offline controls, visible errors, safe sheet routing, draft preservation, and accessible touch targets.",
   "files": [
     "iOSApp/RemoteViews.swift",
     "iOSApp/RemoteSessionViews.swift",
     "iOSApp/RemoteSettingsView.swift",
     "iOSApp/RemoteStartSessionView.swift",
     "iOSApp/RemoteTranscriptViews.swift",
-    "iOSApp/RemoteConversationView.swift"
+    "iOSApp/RemoteConversationView.swift",
+    "iOSApp/RemoteBotConsoleView.swift",
+    "iOSApp/RemoteBotViews.swift",
+    "iOSApp/RemoteControlDiagnostics.swift",
+    "iOSApp/RemoteDiagnosticsView.swift",
+    "iOSApp/RemoteMacHubView.swift",
+    "iOSApp/RemoteModelPicker.swift",
+    "iOSApp/RemotePageDesign.swift",
+    "iOSApp/RemotePairingViews.swift",
+    "iOSApp/RemoteSharingViews.swift"
   ]
 }

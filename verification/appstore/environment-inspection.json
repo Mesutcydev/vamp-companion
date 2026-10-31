@@ -1,0 +1,16 @@
+{
+  "workspace": "/Users/m/Downloads/beetcode/VampCompanion",
+  "inspection": {"date": "2026-10-23", "agent": "argent-environment-inspector", "read_only": true, "argent_available": true, "gather_workspace_data_completed": true},
+  "project": {
+    "is_react_native": false, "is_native_ios": true, "is_native_android": false, "is_native_macos": true,
+    "ui": "SwiftUI", "language": "Swift 6", "project_generator": "XcodeGen 2.46.0", "project": "BeetCode.xcodeproj",
+    "source_of_truth": "project.yml", "package_manager": "Swift Package Manager", "dependencies_cached": true, "metro_port": null,
+    "baseline_schemes": ["VampCompanion", "BeetCodeCLI", "BeetCodeRemoteIOS"],
+    "baseline_macos": {"target": "VampCompanion", "product_name": "Vamp Companion", "module_name": "BeetCode", "bundle_identifier": "com.beetcode.companion", "deployment_target": "15.0", "architectures": ["arm64"], "version": "0.1.7", "build": "11", "sandbox_enabled": false, "hardened_runtime_enabled": true, "signing_team": "FUWJ2T4SG7", "signing_identity": "Apple Development", "sparkle_enabled": true, "existing_app_store_configuration": false},
+    "ios": {"target": "BeetCodeRemoteIOS", "deployment_target": "18.0", "bundle_identifier": "com.beetcode.remote.ios", "preserve_identity_and_protocol": true}
+  },
+  "toolchain": {"active_developer_directory": "/Applications/Xcode-beta.app/Contents/Developer", "active_xcode_version": "27.0", "active_xcode_build": "27A5218g", "recommended_developer_directory": "/Applications/Xcode.app/Contents/Developer", "recommended_xcode_version": "27.1", "recommended_xcode_build": "27A9275", "test_runner_environment": "Forward DEVELOPER_DIR as TEST_RUNNER_DEVELOPER_DIR for nested xcodebuild tests"},
+  "commands": {"generate": "xcodegen generate", "macos_tests": "xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion -destination platform=macOS -derivedDataPath .derived -clonedSourcePackagesDirPath .spm test", "ios_preservation_check": "python3 scripts/verify-ios-unchanged.py", "ios_regression_scheme": "BeetCodeRemoteIOS", "developer_id_release": "scripts/release-vamp-companion.sh --submit"},
+  "qa": {"backend_tests": "Tests/", "macos_ui_tests": "CompanionUITests/CompanionUITests.swift", "ios_unit_tests": "iOSTests/", "ios_ui_tests": "iOSUITests/", "ci": ".github/workflows/macos.yml", "ci_runner": "macos-26", "ci_xcode": "/Applications/Xcode_26.6.app/Contents/Developer", "fixtures": ["FakeLLMEngine", "FixtureHub", "TempWorkspace"], "isolation_environment": ["VAMP_COMPANION_UI_TESTING", "VAMP_COMPANION_UI_MODEL_ROOT", "VAMP_COMPANION_UI_ASSISTANT_ROOT"]},
+  "constraints": ["Work only in this isolated repository", "Preserve Developer ID capabilities and iOS identity/protocol", "Generate only while no builds are running", "Never mutate original Assistant storage or signing keys", "Publish only to Mesutcydev/vamp-companion"]
+}

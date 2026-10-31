@@ -1,0 +1,82 @@
+{
+  "updated_at": "2026-10-24T18:04:54.912481+00:00",
+  "bundle_id": "com.beetcode.companion",
+  "registered_bundle_id_resource": "8X823U6595",
+  "team_id": "PUH4GMFV56",
+  "requested_platform": "MAC_OS",
+  "apple_bundle_id_platform": "UNIVERSAL",
+  "app_record_created": false,
+  "package_uploaded": false,
+  "next_step": "Resolve Apple web-session login; CLI still reports authenticated=false after user sign-in.",
+  "package": "dist/appstore/export/Vamp Companion.pkg",
+  "version": "1.0",
+  "build": "1",
+  "offline_package_verification": {
+    "signatureVerification": "valid",
+    "signatureVerificationDetail": "table of contents checksum and RSA signature verified and 5 file payload checksums recomputed; leaf is a Mac Installer Distribution certificate; chain to Apple Root CA verified at current time 2026-10-23T16:38:15Z; the CMS x-signature and revocation were not checked",
+    "path": "dist/appstore/export/Vamp Companion.pkg",
+    "productId": "com.beetcode.companion",
+    "version": "1.0",
+    "installLocation": "/Applications",
+    "bundleIds": [
+      "com.beetcode.companion"
+    ],
+    "bundleId": "com.beetcode.companion",
+    "buildNumber": "1",
+    "minimumOSVersion": "15.0",
+    "platforms": [
+      "MacOSX"
+    ],
+    "hostArchitectures": [
+      "arm64"
+    ],
+    "signerCommonName": "3rd Party Mac Developer Installer: MESUT CAN YAGCI (PUH4GMFV56)",
+    "teamId": "PUH4GMFV56",
+    "status": "readable",
+    "packageSignature": "signed",
+    "signer": {
+      "commonName": "3rd Party Mac Developer Installer: MESUT CAN YAGCI (PUH4GMFV56)",
+      "teamId": "PUH4GMFV56",
+      "organization": "MESUT CAN YAGCI",
+      "issuerCommonName": "Apple Worldwide Developer Relations Certification Authority",
+      "serialNumber": "54D6AFBE7987B84A75DB1E8828590298",
+      "notBefore": "2026-10-05T14:07:12Z",
+      "notAfter": "2027-10-05T14:07:11Z",
+      "sha1Fingerprint": "DE82F09A6D44F1CFE2FD2450A600185E933A37FB",
+      "sha256Fingerprint": "C5666A18AAC5B908163162E019F19FBDB01FEF01A7EB6B4F86316FB26C4DE834"
+    },
+    "components": [
+      {
+        "path": "com.beetcode.companion.pkg",
+        "identifier": "com.beetcode.companion",
+        "version": "1.0.0",
+        "installLocation": "/Applications",
+        "installKBytes": 35032,
+        "bundleIds": [
+          "com.beetcode.companion"
+        ],
+        "primary": true,
+        "app": {
+          "path": "Vamp Companion.app",
+          "bundleId": "com.beetcode.companion",
+          "name": "Vamp Companion",
+          "version": "1.0",
+          "buildNumber": "1",
+          "minimumOSVersion": "15.0",
+          "platforms": [
+            "MacOSX"
+          ]
+        }
+      }
+    ]
+  },
+  "latest_attempt": {
+    "action": "Create MAC_OS app record",
+    "name": "Vamp Companion",
+    "sku": "vamp-companion-macos",
+    "locale": "en-US",
+    "result": "No usable Apple web session; Session expired",
+    "app_record_created": false,
+    "package_uploaded": false
+  }
+}

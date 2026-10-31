@@ -90,6 +90,9 @@ final class AppState: ObservableObject {
     @Published var apiServerError: String?
     @Published var remoteSessionRunning = false
     @Published var remoteSessionError: String?
+    /// The session key needs a visible Keychain prompt (a rebuilt binary
+    /// re-prompts). Until then no conversation can be saved or started.
+    @Published var sessionStorageLocked = false
     @Published var remotePairingCode = ""
     @Published var remotePairingURL: String?
     @Published var remoteSessionURL: String?
@@ -183,13 +186,13 @@ final class AppState: ObservableObject {
         remoteSessionHost.remoteMacUnlockAllowedHandler = {
             SettingsStore.shared.remoteMacUnlockEnabled
         }
-        RemoteMacControl.prepareLoginWindowInput()
+        if !CompanionDistribution.isAppStore { RemoteMacControl.prepareLoginWindowInput() }
         remoteSessionHost.remoteMacUnlockHandler = { password in
             try await RemoteMacControl.unlockLoginWindow(password: password)
         }
         remoteSessionHost.botRunsHandler = { [weak self] in self?.botRuns.runs ?? [] }
         remoteSessionHost.startBotRunHandler = { [weak self] profileID, modelID, prompt in
-            guard let self else { return (nil, "Vamp Assistant is no longer available.") }
+            guard let self else { return (nil, "Vamp Companion is no longer available.") }
             guard let specialist = BotComputerService.specialists.first(where: { $0.id == profileID }) else {
                 return (nil, BotComputerError.unknownProfile.localizedDescription)
             }
@@ -217,7 +220,7 @@ final class AppState: ObservableObject {
             self?.botRuns.stop(runID: id) ?? false
         }
         remoteSessionHost.orchestrateBotRunsHandler = { [weak self] modelID, prompt in
-            guard let self else { return (nil, "Vamp Assistant is no longer available.") }
+            guard let self else { return (nil, "Vamp Companion is no longer available.") }
             let models = self.remoteStartModels()
             let resolved = modelID.flatMap { requested in models.first(where: { $0.id == requested })?.id }
                 ?? self.defaultBotModelID(in: models)
@@ -244,14 +247,14 @@ final class AppState: ObservableObject {
             self?.applyRemoteReasoningEffort(options.reasoningEffort)
         }
         remoteSessionHost.startSessionHandler = { [weak self] modelID, message, options in
-            guard let self else { return .rejected("Vamp Assistant is no longer available.") }
+            guard let self else { return .rejected("Vamp Companion is no longer available.") }
             return await self.startRemoteSession(modelID: modelID, message: message, options: options)
         }
         remoteSessionHost.applyModelHandler = { [weak self] modelID, effort in
             await self?.activateRemoteStartModel(modelID: modelID, reasoningEffort: effort)
         }
         botRuns.startHandler = { [weak self] run in
-            guard let self else { return .rejected("Vamp Assistant is no longer available.") }
+            guard let self else { return .rejected("Vamp Companion is no longer available.") }
             return await self.startBotRun(run)
         }
         botRuns.steerHandler = { [weak self] runID, message in
@@ -284,7 +287,7 @@ final class AppState: ObservableObject {
         }
         Task { [weak self] in
             await BotRunToolBridge.shared.configure { [weak self] command in
-                guard let self else { return "Vamp Assistant is no longer available." }
+                guard let self else { return "Vamp Companion is no longer available." }
                 return await self.handleBotRunCommand(command)
             }
         }
@@ -563,8 +566,10 @@ final class AppState: ObservableObject {
                 modelID: Self.persistedRemoteModelID(from: run.modelID),
                 messages: [], checkpoints: [], source: .app,
                 schemaVersion: SessionRecord.currentSchemaVersion)
-            _ = SessionStore.shared.save(session)
-            SessionStore.shared.invalidateCache()
+            if case .failure(let error) = SessionStore.shared.save(session) {
+                sessionStorageLocked = SessionCrypto.needsInteractiveUnlock
+                return .rejected(error.localizedDescription)
+            }
 
             let runtime = BotRunRuntimeHandle(controller: controller)
             runtime.bind(runID: run.id, coordinator: botRuns) { [weak self] id in
@@ -779,8 +784,17 @@ final class AppState: ObservableObject {
         options: RemoteRunOptions
     ) async -> RemoteSessionStartOutcome {
         let sessionID = UUID()
+        // Fail before loading a model: nothing started here could be saved.
+        guard SessionCrypto.isAvailable else {
+            sessionStorageLocked = true
+            return .rejected(SessionStore.SaveError.encryptionUnavailable.localizedDescription)
+        }
         if let error = await activateRemoteStartModel(modelID: modelID, reasoningEffort: options.reasoningEffort) {
             return failedRemoteSession(id: sessionID, modelID: modelID, message: message, error: error)
+        }
+        if CompanionDistribution.isAppStore,
+           options.resolvedWorkspacePath != nil || options.botProfileID != nil || options.linuxContainer != nil {
+            return .rejected(CompanionDistribution.unrestrictedFeaturesMessage)
         }
         if let path = options.resolvedWorkspacePath, !path.isEmpty {
             let url = URL(fileURLWithPath: path, isDirectory: true)
@@ -809,8 +823,12 @@ final class AppState: ObservableObject {
             checkpoints: [],
             source: .app,
             schemaVersion: SessionRecord.currentSchemaVersion)
-        _ = SessionStore.shared.save(record)
-        SessionStore.shared.invalidateCache()
+        // The phone opens this id next; an unsaved record reads as
+        // "Session not found" there, so refuse with the real reason instead.
+        if case .failure(let error) = SessionStore.shared.save(record) {
+            sessionStorageLocked = SessionCrypto.needsInteractiveUnlock
+            return .rejected(error.localizedDescription)
+        }
         sessions.send(
             message,
             seed: record,
@@ -862,8 +880,10 @@ final class AppState: ObservableObject {
             checkpoints: [],
             source: .app,
             schemaVersion: SessionRecord.currentSchemaVersion)
-        _ = SessionStore.shared.save(record)
-        SessionStore.shared.invalidateCache()
+        guard case .success = SessionStore.shared.save(record) else {
+            sessionStorageLocked = SessionCrypto.needsInteractiveUnlock
+            return .rejected(error)
+        }
         return .accepted(id)
     }
 
@@ -1106,7 +1126,7 @@ final class AppState: ObservableObject {
     }
 
     private func refreshOpenCodeCatalog(workspace: URL?) {
-        openCodeCatalog = OpenCodeCompatibility.load(workspace: workspace)
+        openCodeCatalog = CompanionDistribution.isAppStore ? .empty : OpenCodeCompatibility.load(workspace: workspace)
     }
 
     // MARK: Launch restore (Phase 3.1)
@@ -1118,7 +1138,7 @@ final class AppState: ObservableObject {
     /// thread; matching is by pinned tree, so legacy refs whose session still
     /// exists survive even though their names were never recorded.
     private func sweepOrphanedCheckpointRefs() {
-        guard !Self.isTestHost else { return }
+        guard !Self.isTestHost, !CompanionDistribution.isAppStore else { return }
         Task { @MainActor [weak self] in
             while let self, self.sessions.isRunning {
                 try? await Task.sleep(for: .seconds(5))
@@ -1311,6 +1331,10 @@ final class AppState: ObservableObject {
     }
 
     func activate(model: CatalogModel) async {
+        guard CompanionDistribution.supports(model) else {
+            enginePhase = .failed("This edition supports MLX models. Other runtimes are available in the website edition.")
+            return
+        }
         guard !isUnloadingModel else { return }
         // iOS includes its selection with every follow-up. Reusing the live
         // model must not cancel the active turn or strand its queue reservation.
@@ -1479,6 +1503,7 @@ final class AppState: ObservableObject {
     /// harness is the only owner of the next run's tools and permissions.
     @discardableResult
     func activateCodex(model: CodexModelProfile) async -> Bool {
+        guard !CompanionDistribution.isAppStore else { return false }
         guard !isUnloadingModel else { return false }
         if activeCodexModelID == model.id, isCodexActive, case .ready = enginePhase { return true }
         clearStaleLoadError()
@@ -1665,7 +1690,7 @@ final class AppState: ObservableObject {
                 port: port,
                 allowLAN: allowLAN ?? settings.remoteSessionAllowLAN)
             guard !Task.isCancelled else { return }
-            if codexAccount.models.isEmpty {
+            if !CompanionDistribution.isAppStore, codexAccount.models.isEmpty {
                 await codexAccount.refresh()
             }
             remoteSessionRunning = remoteSessionHost.isRunning
@@ -1731,6 +1756,7 @@ final class AppState: ObservableObject {
     private func restoreLastEngine(_ preferences: AppPreferences) {
         switch preferences.lastEngineKind {
         case "chatgpt":
+            guard !CompanionDistribution.isAppStore else { return }
             if let modelID = preferences.lastCodexModelID, !modelID.isEmpty {
                 Task { await self.restoreCodex(modelID: modelID) }
                 Log.app.info("Auto-reloading ChatGPT account model \(modelID, privacy: .public)")

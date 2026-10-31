@@ -2,12 +2,12 @@ import SwiftUI
 
 struct RemoteDiagnosticsView: View {
     let store: RemoteStore
-    @Environment(\.remoteAppearance) private var appearance
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
-            RemoteInstrumentForm {
-                Section("Connection") {
+            RemotePageScroll {
+                RemotePageHeading(title: "Connection details", subtitle: "Check your Mac’s status and share a private diagnostic report.")
+                RemotePageSection(title: "Connection", spacing: 14) {
                     LabeledContent("Status", value: store.isConnected ? "Connected" : "Disconnected")
                     LabeledContent("Mac version", value: store.hostStatus?.appVersion ?? "Not reported")
                     LabeledContent("Mac build", value: store.hostStatus?.appBuild ?? "Not reported")
@@ -16,21 +16,22 @@ struct RemoteDiagnosticsView: View {
                         LabeledContent("Last connected") { Text(last, style: .relative) }
                     }
                     Button("Check connection") { Task { await store.connectSaved() } }
+                        .frame(maxWidth: .infinity)
+                        .buttonStyle(RemotePageButtonStyle())
                         .disabled(store.isConnecting || !store.hasSavedConnection)
                 }
-                Section {
+                RemotePageSection(title: "Report", spacing: 12) {
                     ShareLink(item: store.connectionDiagnostics) {
                         Label("Share diagnostics", systemImage: "square.and.arrow.up")
-                    }
-                } footer: {
+                            .frame(maxWidth: .infinity)
+                    }.buttonStyle(RemotePageButtonStyle())
                     Text("The report excludes addresses, access tokens, computer names, files, and conversation text.")
+                        .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background { RemoteBackdrop() }
-            .navigationTitle("Connection details")
-            .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
+            .navigationTitle("Diagnostics")
+            .remotePageChrome()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.vampUtilityAction() }
         }
     }

@@ -6,29 +6,22 @@ struct RemoteShareSheet: View {
     let store: RemoteStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.remoteAppearance) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showFileImporter = false
     @State private var downloadedFile: DownloadedRemoteFile?
     @State private var confirmation: String?
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                RemoteBackdrop()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        ShareSheetHeader()
-                        ClipboardSharingSection(store: store, confirmation: $confirmation)
-                        FileSharingSection(
-                            store: store,
-                            onChooseFile: { showFileImporter = true },
-                            onDownload: download
-                        )
-                    }
-                    .frame(maxWidth: 620).padding(.horizontal, 18).padding(.bottom, 30).frame(maxWidth: .infinity)
-                }
+            RemotePageScroll {
+                RemotePageHeading(title: "Clipboard & files", subtitle: "Move work directly between this device and your paired Mac.")
+                if !store.isConnected { RemoteReconnectBanner(store: store).clipShape(RoundedRectangle(cornerRadius: 17)) }
+                ClipboardSharingSection(store: store, confirmation: $confirmation)
+                    .disabled(!store.isConnected)
+                FileSharingSection(store: store, onChooseFile: { showFileImporter = true }, onDownload: download)
             }
             .navigationTitle("Share with Mac").navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
+            .remotePageChrome()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.vampUtilityAction() }
             .task { await store.loadSharing() }
             .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
@@ -43,15 +36,17 @@ struct RemoteShareSheet: View {
                     Text(confirmation).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                         .padding(.horizontal, 15).padding(.vertical, 10)
                         .background(Color.black.opacity(0.82), in: Capsule())
-                        .padding(.bottom, 18).transition(.move(edge: .bottom).combined(with: .opacity))
-                        .task {
-                            try? await Task.sleep(for: .seconds(3))
-                            withAnimation(.easeOut(duration: 0.18)) { self.confirmation = nil }
+                        .padding(.bottom, 18).transition(reduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
+                        .task(id: confirmation) {
+                            do { try await Task.sleep(for: .seconds(3)) }
+                            catch { return }
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) { self.confirmation = nil }
                         }
                 }
             }
-            .toolbarBackground(BeetTheme.background(appearance).opacity(0.92), for: .navigationBar)
+            .refreshable { await store.loadSharing() }
         }
+        .remotePageErrors(store: store)
     }
 
     private func download(_ file: RemoteSharedFileItem) {
@@ -83,9 +78,8 @@ struct ClipboardSharingSection: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            RemoteSectionLabel(title: "CLIPBOARD")
-            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 1)) : AnyLayout(HStackLayout(spacing: 1))) {
+        RemotePageSection(title: "Clipboard") {
+            (typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))) {
                 ShareActionButton(title: "Paste from Mac", symbol: "arrow.down.doc", appearance: appearance) {
                     Task {
                         if let text = await store.copyMacClipboard() {
@@ -114,16 +108,16 @@ struct ShareActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: symbol).font(.title3.weight(.semibold)).foregroundStyle(BeetTheme.accentBright)
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(RemoteInstrument.ink)
+            VStack(spacing: 8) {
+                Image(systemName: symbol).font(.title3.weight(.medium))
+                Text(title).font(.subheadline.weight(.medium))
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).padding(.horizontal, 13)
-            .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay { RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(BeetTheme.line(appearance).opacity(0.8), lineWidth: 0.75) }
+            .padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 72)
         }
-        .buttonStyle(RemotePressButtonStyle())
+        .buttonStyle(RemotePageButtonStyle())
     }
+
 }
 
 struct FileSharingSection: View {
@@ -133,33 +127,29 @@ struct FileSharingSection: View {
     @Environment(\.remoteAppearance) private var appearance
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                RemoteSectionLabel(title: "SHARED FILES")
-                Spacer()
-                if store.isSharing { ProgressView().controlSize(.small) }
-            }
+        RemotePageSection(title: "Shared files", spacing: 12) {
+            if store.isSharing { ProgressView("Transferring file").font(.caption) }
             Button(action: onChooseFile) {
                 Label("Send a file to Mac", systemImage: "plus")
-                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(RemoteSecondaryButtonStyle())
-
+            .buttonStyle(RemotePageButtonStyle(primary: true)).disabled(!store.isConnected || store.isSharing)
             if store.sharedFiles.isEmpty {
-                Text("Files shared through Vamp Companion appear in Downloads › BeetCode Remote on your Mac (legacy storage name).")
-                    .font(.subheadline).foregroundStyle(BeetTheme.secondaryText(appearance)).lineSpacing(2).padding(.vertical, 10)
+                Text("Files shared with your Mac appear in Downloads › BeetCode Remote.")
+                    .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(spacing: 0) {
                     ForEach(store.sharedFiles) { file in
                         Button { onDownload(file) } label: { RemoteSharedFileRow(file: file) }
-                            .buttonStyle(RemotePressButtonStyle())
-                        if file.id != store.sharedFiles.last?.id { Divider().overlay(BeetTheme.line(appearance)).padding(.leading, 48) }
+                            .buttonStyle(RemotePageRowButtonStyle()).disabled(!store.isConnected || store.isSharing)
+                        if file.id != store.sharedFiles.last?.id { RemotePageDivider().padding(.leading, 52) }
                     }
                 }
-
             }
         }
     }
+
 }
 
 struct RemoteSharedFileRow: View {
@@ -167,8 +157,7 @@ struct RemoteSharedFileRow: View {
     @Environment(\.remoteAppearance) private var appearance
     var body: some View {
         HStack(spacing: 11) {
-            Image(systemName: "doc.fill").foregroundStyle(BeetTheme.accentBright).frame(width: 36, height: 36)
-                .background(BeetTheme.surfaceStrong(appearance).opacity(0.72), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            RemotePageSymbol(symbol: "doc")
             VStack(alignment: .leading, spacing: 3) {
                 Text(file.name).font(.subheadline.weight(.semibold)).lineLimit(1)
                 Text(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
@@ -177,7 +166,7 @@ struct RemoteSharedFileRow: View {
             Spacer()
             Image(systemName: "square.and.arrow.down").font(.subheadline.weight(.semibold)).foregroundStyle(BeetTheme.secondaryText(appearance))
         }
-        .padding(.horizontal, 11).padding(.vertical, 9).contentShape(Rectangle())
+        .padding(.vertical, 10).frame(minHeight: 60).contentShape(Rectangle())
     }
 }
 

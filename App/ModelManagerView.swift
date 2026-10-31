@@ -166,14 +166,26 @@ struct ModelManagerView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.folder, UTType(filenameExtension: "gguf") ?? .data]
-        panel.message = "Select an MLX folder, a .gguf model, or a Core AI pack (metadata.json + .aimodel)."
+        panel.allowedContentTypes = CompanionDistribution.isAppStore ? [.folder] : [.folder, UTType(filenameExtension: "gguf") ?? .data]
+        panel.message = CompanionDistribution.isAppStore ? "Select an MLX model folder containing config.json and safetensors weights." : "Select an MLX folder, a .gguf model, or a Core AI pack (metadata.json + .aimodel)."
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
+        let scoped = url.startAccessingSecurityScopedResource()
+        if CompanionDistribution.isAppStore {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: url.path)) ?? []
+            guard names.contains("config.json"), names.contains(where: { $0.hasSuffix(".safetensors") }) else {
+                if scoped { url.stopAccessingSecurityScopedResource() }
+                presentImportError("Choose an MLX model folder. Other formats are supported by the website edition.")
+                return
+            }
+        }
         let base = appState.modelStore.modelsBaseURL
         importInProgress = true
         Task {
-            defer { importInProgress = false }
+            defer {
+                importInProgress = false
+                if scoped { url.stopAccessingSecurityScopedResource() }
+            }
             do {
                 // Validation and the (possibly multi-GB) copy run off-main.
                 let catalog = try await Task.detached(priority: .userInitiated) {

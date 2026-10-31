@@ -302,8 +302,7 @@ enum SessionCrypto {
         // both the xcodebuild test host (XCTest injected via the bundle) and
         // the standalone `xcrun xctest` runner (no configuration-file env
         // var there, but XCTest.framework is always loaded when tests run).
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || NSClassFromString("XCTestCase") != nil {
+        if Keychain.runningUnderXCTest {
             let testKey = SymmetricKey(size: .bits256)
             overrideKey = testKey
             return testKey
@@ -357,6 +356,11 @@ enum SessionCrypto {
             if hasExistingSessionFiles() {
                 // A missing key with existing ciphertext means the designated
                 // requirement changed. Minting a new key would orphan every chat.
+                // Remember the miss: every decrypt otherwise re-queried
+                // securityd on the main thread. Unlock retries interactively.
+                keyCacheLock.lock()
+                nonInteractiveReadFailed = true
+                keyCacheLock.unlock()
                 setNeedsInteractiveUnlock(true)
                 throw SessionCryptoError.keyStorageFailed(status)
             }
@@ -393,8 +397,7 @@ enum SessionCrypto {
     }
 
     private static func hasExistingSessionFiles() -> Bool {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("VampCompanion/Sessions", isDirectory: true)
+        let dir = SessionStore.defaultSessionsDirectory
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.contains { $0.hasSuffix(".session") }
     }
@@ -410,6 +413,18 @@ enum SessionCrypto {
     enum SessionCryptoError: Error {
         case keyGenerationFailed
         case keyStorageFailed(OSStatus)
+    }
+}
+
+extension FileManager {
+    /// `Application Support/VampCompanion`, or a per-process temp folder under
+    /// tests so test data never lands in the user's real library.
+    static var companionSupportDirectory: URL {
+        Keychain.runningUnderXCTest
+            ? FileManager.default.temporaryDirectory.appendingPathComponent(
+                "VampCompanionTests-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+            : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("VampCompanion", isDirectory: true)
     }
 }
 
@@ -429,7 +444,7 @@ final class SessionStore: @unchecked Sendable {
             case .encodingFailed(let detail):
                 "The conversation could not be encoded: \(detail)"
             case .encryptionUnavailable:
-                "The conversation encryption key is unavailable. Unlock Vamp Assistant's Keychain item and retry."
+                "The conversation encryption key is unavailable. Open Vamp Companion on your Mac, choose Unlock, and retry."
             case .writeFailed(let detail):
                 "The encrypted conversation could not be written: \(detail)"
             case .permissionsFailed(let detail):
@@ -452,13 +467,19 @@ final class SessionStore: @unchecked Sendable {
     /// Application Support folder.
     var overrideSessionsDir: URL?
 
+    /// Tests encrypt with a throwaway in-process key, so their files must
+    /// never land in the real folder: once ciphertext exists there, the app
+    /// refuses to mint its own key and every remote session fails to save.
+    static var defaultSessionsDirectory: URL {
+        FileManager.companionSupportDirectory.appendingPathComponent("Sessions", isDirectory: true)
+    }
+
     private var sessionsDir: URL {
         if let override = overrideSessionsDir {
             try? FileManager.default.createDirectory(at: override, withIntermediateDirectories: true)
             return override
         }
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("VampCompanion/Sessions", isDirectory: true)
+        let dir = Self.defaultSessionsDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try? FileManager.default.setAttributes(
             [.posixPermissions: 0o700], ofItemAtPath: dir.path)

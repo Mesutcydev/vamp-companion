@@ -31,6 +31,7 @@ struct RemoteBotsView: View {
     @State private var path: [String] = []
     @State private var selectedBotID: String?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var isOrchestrating = false
     @State private var workflowPrompt = ""
     @State private var selectedModelID = ""
 
@@ -60,78 +61,60 @@ struct RemoteBotsView: View {
             }
         }
         .presentationDetents([.large])
+        .remotePageErrors(store: store)
     }
 
     private var library: some View {
-            RemoteInstrumentForm {
-                if !store.isConnected {
-                    Section {
-                        RemoteInlineNotice(
-                            title: "Mac unreachable",
-                            detail: "Bots run on your Mac. Reconnect to start or steer a run.",
-                            actionTitle: "Retry",
-                            action: { Task { await store.connectSaved() } })
-                            .listRowInsets(EdgeInsets())
-                    }
-                } else if let notice = store.backgroundNotice {
-                    Section {
-                        RemoteInlineNotice(
-                            title: "Some bot data didn't load",
-                            detail: notice,
-                            actionTitle: "Retry",
-                            action: { Task { try? await store.refresh() } })
-                            .listRowInsets(EdgeInsets())
-                    }
-                }
-                Section {
-                    workflowPanel
-                } header: {
-                    Text("Delegate")
-                }
-                Section("Specialists") {
-                    ForEach(RemoteBotProfile.profiles) { profile in
-                        if horizontalSizeClass == .regular {
-                            Button { selectedBotID = profile.id } label: {
-                                RemoteBotIndexRow(profile: profile, run: run(for: profile.id))
-                                    .background(selectedBotID == profile.id ? RemoteInstrument.recess : .clear)
-                            }
-                            .buttonStyle(RemotePressButtonStyle())
-                            .accessibilityAddTraits(selectedBotID == profile.id ? .isSelected : [])
-                        } else {
-                            NavigationLink(value: profile.id) {
-                                RemoteBotIndexRow(profile: profile, run: run(for: profile.id))
-                            }
+        RemotePageScroll {
+            RemotePageHeading(title: "Your team", subtitle: "Five perspectives. Choose a specialist or give the team one outcome.")
+            if !store.isConnected {
+                RemoteInlineNotice(title: "Mac unreachable",
+                    detail: "Bots run on your Mac. Reconnect to start or steer a run.",
+                    actionTitle: "Retry", action: { Task { await store.connectSaved() } })
+                    .clipShape(RoundedRectangle(cornerRadius: 17))
+            } else if let notice = store.backgroundNotice {
+                RemoteInlineNotice(title: "Some bot data didn't load", detail: notice,
+                    actionTitle: "Retry", action: { Task { try? await store.refresh() } })
+                    .clipShape(RoundedRectangle(cornerRadius: 17))
+            }
+            RemotePageSection(title: "Specialists", detail: "\(RemoteBotProfile.profiles.count)", padding: 0) {
+                ForEach(RemoteBotProfile.profiles) { profile in
+                    if horizontalSizeClass == .regular {
+                        Button { selectedBotID = profile.id } label: {
+                            RemoteBotIndexRow(profile: profile, run: run(for: profile.id))
+                                .background(selectedBotID == profile.id ? RemoteInstrument.recess : .clear,
+                                    in: RoundedRectangle(cornerRadius: 12))
                         }
+                        .buttonStyle(RemotePageRowButtonStyle())
+                        .accessibilityAddTraits(selectedBotID == profile.id ? .isSelected : [])
+                    } else {
+                        NavigationLink(value: profile.id) {
+                            RemoteBotIndexRow(profile: profile, run: run(for: profile.id))
+                        }.buttonStyle(RemotePageRowButtonStyle())
+                    }
+                    if profile.id != RemoteBotProfile.profiles.last?.id {
+                        RemotePageDivider().padding(.leading, 66)
                     }
                 }
             }
-            .scrollContentBackground(.hidden)
-            .background(BeetTheme.background(appearance))
-            .refreshable { try? await store.refresh() }
-            .navigationTitle("Bots")
-            .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
-            .navigationDestination(for: String.self) { id in
-                RemoteBotDetailView(
-                    store: store,
-                    profile: RemoteBotProfile.profile(id: id),
-                    selectedModelID: $selectedModelID,
-                    onOpen: onOpen)
-            }
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.vampUtilityAction()
-            }
-            .toolbarBackground(BeetTheme.background(appearance).opacity(0.94), for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                Color.clear.frame(height: 10)
-                    .allowsHitTesting(false)
-            }
-            .task {
-                if store.startModels.isEmpty { await store.loadStartModels() }
-                if selectedModelID.isEmpty { selectedModelID = store.startModels.first?.id ?? "" }
-                try? await store.refresh()
-            }
+            RemotePageSection(title: "Work together") { workflowPanel }
+        }
+        .refreshable { try? await store.refresh() }
+        .navigationTitle("Bots")
+        .remotePageChrome()
+        .navigationDestination(for: String.self) { id in
+            RemoteBotDetailView(store: store, profile: RemoteBotProfile.profile(id: id),
+                selectedModelID: $selectedModelID, onOpen: onOpen)
+        }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.vampUtilityAction()
+        }
+        .keyboardDismissToolbar()
+        .task {
+            if store.startModels.isEmpty { await store.loadStartModels() }
+            if selectedModelID.isEmpty { selectedModelID = store.startModels.first?.id ?? "" }
+            try? await store.refresh()
+        }
     }
 
     private func run(for profileID: String) -> RemoteBotRun? {
@@ -140,22 +123,15 @@ struct RemoteBotsView: View {
     }
 
     private var canOrchestrate: Bool {
-        store.isConnected && !selectedModelID.isEmpty
+        store.isConnected && !isOrchestrating && !selectedModelID.isEmpty
             && !workflowPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var workflowPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Rectangle().fill(RemoteInstrument.orange).frame(width: 3, height: 12)
-                    .accessibilityHidden(true)
-                VampMicroLabel(title: "Adaptive workflow")
-            }
-            .padding(.leading, 12)
             Text("Describe an outcome and the bots divide the work between them.")
-                .font(.caption)
-                .foregroundStyle(BeetTheme.secondaryText(appearance))
-                .padding(.leading, 12)
+                .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
             if !store.startModels.isEmpty {
                 Picker("Model", selection: $selectedModelID) {
                     if selectedModelID.isEmpty { Text("Choose model").tag("") }
@@ -169,27 +145,37 @@ struct RemoteBotsView: View {
                 .lineLimit(2...4)
                 .textFieldStyle(.plain)
                 .padding(12)
-                .remoteRecess()
+                .remotePageField()
+                .accessibilityIdentifier("remote.bot.workflowPrompt")
             Button {
-                let prompt = workflowPrompt
+                guard canOrchestrate else { return }
+                let prompt = workflowPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                let modelID = selectedModelID
+                isOrchestrating = true
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 Task {
-                    if await store.orchestrateBots(modelID: selectedModelID, prompt: prompt) {
-                        workflowPrompt = ""
+                    defer { isOrchestrating = false }
+                    if await store.orchestrateBots(modelID: modelID, prompt: prompt) {
+                        if workflowPrompt.trimmingCharacters(in: .whitespacesAndNewlines) == prompt {
+                            workflowPrompt = ""
+                        }
                         UINotificationFeedbackGenerator().notificationOccurred(.success)
                     }
                 }
             } label: {
-                Text("Orchestrate")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    if isOrchestrating { ProgressView().tint(.white) }
+                    Text("Orchestrate")
+                }.frame(maxWidth: .infinity)
             }
-            .buttonStyle(RemotePrimaryButtonStyle(alignment: .leading))
+            .buttonStyle(RemotePageButtonStyle(primary: true))
             .controlSize(.large)
             .disabled(!canOrchestrate)
+            .accessibilityLabel("Orchestrate")
+            .accessibilityValue(isOrchestrating ? "Starting workflow" : "")
             .accessibilityHint(store.isConnected ? "" : "Connect to your Mac first")
         }
-        .padding(12)
-        .remoteFaceplate()
+
     }
 }
 
@@ -210,31 +196,30 @@ private struct RemoteBotIndexRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            SpecialistIndexMark(profile: profile)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(profile.name).font(.body.weight(.semibold))
-                    if !dynamicTypeSize.isAccessibilitySize {
-                        Spacer(minLength: 4)
-                        RemoteMobileStatus(title: status, color: stateColor, isActive: run.map { !$0.isTerminal } ?? false)
-                            .frame(width: 96, alignment: .leading)
-                    }
-                }
-                Text(profile.subtitle).font(.subheadline)
-                    .foregroundStyle(RemoteInstrument.secondaryInk)
+        HStack(spacing: 12) {
+            RemotePageSymbol(symbol: profile.symbol, active: run.map { !$0.isTerminal } ?? false)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(profile.name).font(.body.weight(.medium))
+                Text(profile.subtitle).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
                 if dynamicTypeSize.isAccessibilitySize {
-                    RemoteMobileStatus(title: status, color: stateColor, isActive: run.map { !$0.isTerminal } ?? false)
+                    RemotePageBadge(title: status.capitalized, color: stateColor)
                 }
             }
+            Spacer(minLength: 4)
+            if !dynamicTypeSize.isAccessibilitySize {
+                RemotePageBadge(title: status.capitalized, color: stateColor)
+            }
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                .foregroundStyle(RemoteInstrument.secondaryInk).accessibilityHidden(true)
         }
         .foregroundStyle(RemoteInstrument.ink)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
+
 }
 
 /// The page for one bot: what it does, what it is running, and the two ways to
@@ -245,6 +230,7 @@ struct RemoteBotDetailView: View {
     @Binding var selectedModelID: String
     let onOpen: (UUID) -> Void
     @Environment(\.remoteAppearance) private var appearance
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var prompt = ""
     @State private var detailMode = "chat"
     @State private var steerDraft = ""
@@ -268,7 +254,7 @@ struct RemoteBotDetailView: View {
     }
 
     private var canStartRun: Bool {
-        store.isConnected && !selectedModelID.isEmpty
+        store.isConnected && !mutationInFlight && !selectedModelID.isEmpty
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -284,25 +270,27 @@ struct RemoteBotDetailView: View {
                             detail: "Reconnect to start a chat or a run with \(profile.name).",
                             actionTitle: "Retry",
                             action: { Task { await store.connectSaved() } })
+                            .clipShape(RoundedRectangle(cornerRadius: 17))
                     }
                     if let run, !run.isTerminal { activeRunCard(run) }
                     if profile.isSpecialist {
-                        RemoteInstrumentSegments(selection: $detailMode, options: [("Chat", "chat"), ("Run", "run")])
+                        RemotePageSegments(selection: $detailMode, options: [("Chat", "chat"), ("Run", "run")])
                         if detailMode == "chat" { chatCard } else { newRunCard }
                     } else { chatCard }
                     if let run, run.isTerminal { lastRunCard(run) }
                 }
                 .padding(16)
-                .frame(maxWidth: 760)
+                .frame(maxWidth: RemoteInstrument.contentWidth)
                 .frame(maxWidth: .infinity)
             }
             .refreshable { try? await store.refresh() }
+            .scrollDismissesKeyboard(.interactively)
         }
+        .keyboardDismissToolbar()
         .navigationTitle(profile.name)
         .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
-        .toolbarBackground(BeetTheme.background(appearance).opacity(0.94), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+            .remotePageChrome()
+
         .fullScreenCover(isPresented: $showStartChat, onDismiss: openDeferredChat) {
             StartSessionSheet(store: store, initialBotID: RemoteBotProfile.resolvedID(profile.id) ?? "") { sessionID in
                 deferredChatSessionID = sessionID
@@ -323,7 +311,7 @@ struct RemoteBotDetailView: View {
     private var hero: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {
-                SpecialistIndexMark(profile: profile)
+                RemotePageSymbol(symbol: profile.symbol, active: true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(profile.name).font(.title3.weight(.semibold))
                     Text(profile.subtitle)
@@ -341,14 +329,14 @@ struct RemoteBotDetailView: View {
             .font(.footnote)
             .frame(minHeight: 44)
         }
-        .padding(.vertical, 12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .bottom) { VampHairline() }
+        .remotePageCard()
     }
 
     private var chatCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Chat with \(profile.name)", systemImage: "bubble.left.and.bubble.right.fill")
+            Label("Chat with \(profile.name)", systemImage: "bubble.left.and.bubble.right")
                 .font(.headline)
             Text("A normal conversation, with this bot's brief applied.")
                 .font(.caption)
@@ -367,17 +355,17 @@ struct RemoteBotDetailView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 showStartChat = true
             } label: {
-                Label("Start a chat", systemImage: "plus.bubble.fill")
+                Label("Start a chat", systemImage: "plus.bubble")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity, minHeight: 46)
             }
-            .buttonStyle(RemotePrimaryButtonStyle())
+            .buttonStyle(RemotePageButtonStyle(primary: true))
             .disabled(!store.isConnected)
             .accessibilityHint(store.isConnected ? "" : "Connect to your Mac first")
         }
-        .padding(.vertical, 12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .bottom) { VampHairline() }
+        .remotePageCard()
     }
 
     private func activeRunCard(_ run: RemoteBotRun) -> some View {
@@ -407,18 +395,24 @@ struct RemoteBotDetailView: View {
             }
             runControls(run)
         }
-        .padding(.vertical, 12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .bottom) { VampHairline() }
+        .remotePageCard()
     }
 
     private func performMutation(_ operation: @escaping () async -> Bool) {
-        guard !mutationInFlight else { return }
+        guard store.isConnected, !mutationInFlight else { return }
         mutationInFlight = true
         Task {
+            defer { mutationInFlight = false }
             _ = await operation()
-            mutationInFlight = false
         }
+    }
+
+    private var runControlLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
     }
 
     @ViewBuilder
@@ -426,59 +420,59 @@ struct RemoteBotDetailView: View {
         switch run.state {
         case "recoverable":
             Button("Resume from checkpoint") { performMutation { await store.resumeBotRun(run.id) } }
-                .buttonStyle(RemotePrimaryButtonStyle())
+                .buttonStyle(RemotePageButtonStyle(primary: true))
                 .controlSize(.large)
-                .disabled(mutationInFlight)
+                .disabled(!store.isConnected || mutationInFlight)
         case "needsApproval":
-            HStack(spacing: 10) {
+            runControlLayout {
                 Button("Approve") { performMutation { await store.approveBotRun(run.id, approved: true) } }
-                    .buttonStyle(RemotePrimaryButtonStyle())
+                    .buttonStyle(RemotePageButtonStyle(primary: true))
                 Button("Decline", role: .destructive) { performMutation { await store.approveBotRun(run.id, approved: false) } }
+                    .buttonStyle(RemotePageButtonStyle())
             }
             .controlSize(.large)
-            .disabled(mutationInFlight)
+            .disabled(!store.isConnected || mutationInFlight)
         case "needsInput":
             TextField("Answer \(profile.name)", text: $answerDraft, prompt: Text("Answer \(profile.name)").foregroundStyle(RemoteInstrument.secondaryInk), axis: .vertical)
                 .lineLimit(1...4)
                 .textFieldStyle(.plain)
                 .padding(12)
-                .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 6))
-                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(RemoteInstrument.seam, lineWidth: 0.75) }
+                .remotePageField()
             Button("Send answer") {
                 let answer = answerDraft
                 performMutation {
                     let success = await store.answerBotRun(run.id, answer: answer)
-                    if success { answerDraft = "" }
+                    if success && answerDraft == answer { answerDraft = "" }
                     return success
                 }
             }
-            .buttonStyle(RemotePrimaryButtonStyle())
+            .buttonStyle(RemotePageButtonStyle(primary: true))
             .controlSize(.large)
-            .disabled(answerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
+            .disabled(!store.isConnected || answerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
         default:
             TextField("Steer this run", text: $steerDraft, prompt: Text("Steer this run").foregroundStyle(RemoteInstrument.secondaryInk), axis: .vertical)
                 .lineLimit(1...4)
                 .textFieldStyle(.plain)
                 .padding(12)
-                .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 6))
-                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(RemoteInstrument.seam, lineWidth: 0.75) }
-            HStack(spacing: 10) {
+                .remotePageField()
+            runControlLayout {
                 Button("Steer") {
                     let message = steerDraft
                     performMutation {
                         let success = await store.steerBotRun(run.id, message: message)
-                        if success { steerDraft = "" }
+                        if success && steerDraft == message { steerDraft = "" }
                         return success
                     }
                 }
-                .disabled(steerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
+                .disabled(!store.isConnected || steerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
                 if let sessionID = run.sessionID {
                     Button("Inspect") { onOpen(sessionID) }
                 }
-                Spacer()
+                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                 Button("Stop", role: .destructive) { performMutation { await store.stopBotRun(run.id) } }
-                    .disabled(mutationInFlight)
+                    .disabled(!store.isConnected || mutationInFlight)
             }
+            .buttonStyle(RemotePageButtonStyle())
             .controlSize(.large)
         }
     }
@@ -502,7 +496,7 @@ struct RemoteBotDetailView: View {
 
     private var newRunCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Run autonomously", systemImage: "play.circle.fill")
+            Label("Run autonomously", systemImage: "play.circle")
                 .font(.headline)
             Text("\(profile.name) works the task on its own and reports back.")
                 .font(.caption)
@@ -517,26 +511,37 @@ struct RemoteBotDetailView: View {
                 .lineLimit(2...5)
                 .textFieldStyle(.plain)
                 .padding(12)
-                .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 6))
-                .overlay { RoundedRectangle(cornerRadius: 6).strokeBorder(RemoteInstrument.seam, lineWidth: 0.75) }
-            Button("Start run") {
-                let text = prompt
+                .remotePageField()
+                .accessibilityIdentifier("remote.bot.runPrompt")
+            Button {
+                guard canStartRun else { return }
+                let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                let modelID = selectedModelID
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                Task {
-                    if await store.startBotRun(profileID: profile.id, modelID: selectedModelID, prompt: text) {
-                        prompt = ""
+                performMutation {
+                    let success = await store.startBotRun(profileID: profile.id, modelID: modelID, prompt: text)
+                    if success {
+                        if prompt.trimmingCharacters(in: .whitespacesAndNewlines) == text { prompt = "" }
                         UINotificationFeedbackGenerator().notificationOccurred(.success)
                     }
+                    return success
                 }
+            } label: {
+                HStack {
+                    if mutationInFlight { ProgressView().tint(.white) }
+                    Text("Start run")
+                }.frame(maxWidth: .infinity)
             }
-            .buttonStyle(RemotePrimaryButtonStyle())
+            .buttonStyle(RemotePageButtonStyle(primary: true))
             .controlSize(.large)
             .disabled(!canStartRun)
+            .accessibilityLabel("Start run")
+            .accessibilityValue(mutationInFlight ? "Starting run" : "")
             .accessibilityHint(store.isConnected ? "" : "Connect to your Mac first")
         }
-        .padding(.vertical, 12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .bottom) { VampHairline() }
+        .remotePageCard()
     }
 
     private func lastRunCard(_ run: RemoteBotRun) -> some View {
@@ -554,13 +559,13 @@ struct RemoteBotDetailView: View {
             if let sessionID = run.sessionID {
                 Button("Open the transcript") { onOpen(sessionID) }
                     .font(.subheadline.weight(.semibold))
-                    .buttonStyle(RemoteSecondaryButtonStyle())
+                    .buttonStyle(RemotePageButtonStyle())
                     .controlSize(.large)
             }
         }
-        .padding(.vertical, 12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .bottom) { VampHairline() }
+        .remotePageCard()
     }
 }
 
@@ -604,6 +609,16 @@ struct RemoteBotProfile: Identifiable, Hashable {
         BeetTheme.accentBright
     }
 
+    var symbol: String {
+        switch id {
+        case "builder": "hammer"
+        case "reviewer": "checkmark.shield"
+        case "navigator": "safari"
+        case "researcher": "text.book.closed"
+        default: "sparkles"
+        }
+    }
+
     /// Only the specialists have an autonomous-run backend; the general
     /// assistant is chat-only.
     var isSpecialist: Bool { id != RemoteBotProfile.general.id }
@@ -629,26 +644,28 @@ struct RemoteBotChooser: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(RemoteBotProfile.profiles) { profile in
-                Button {
-                    selectedBotID = RemoteBotProfile.resolvedID(profile.id) ?? ""
-                    UISelectionFeedbackGenerator().selectionChanged()
-                } label: {
-                    RemoteBotIndexRow(profile: profile, run: nil)
-                        .padding(.horizontal, 12)
-                        .background(effectiveID == profile.id ? RemoteInstrument.recess : .clear)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(RemoteInstrument.orange).frame(width: 2)
-                                .padding(.vertical, 14)
-                                .opacity(effectiveID == profile.id ? 1 : 0)
-                        }
+        RemotePageScroll {
+            RemotePageHeading(title: "Choose a bot", subtitle: "A different perspective for your conversation.")
+            VStack(spacing: 0) {
+                ForEach(RemoteBotProfile.profiles) { profile in
+                    Button {
+                        selectedBotID = RemoteBotProfile.resolvedID(profile.id) ?? ""
+                        UISelectionFeedbackGenerator().selectionChanged()
+                    } label: {
+                        RemoteBotIndexRow(profile: profile, run: nil)
+                            .background(effectiveID == profile.id ? RemoteInstrument.recess : .clear,
+                                in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(RemotePageRowButtonStyle())
+                    .accessibilityAddTraits(effectiveID == profile.id ? .isSelected : [])
+                    if profile.id != RemoteBotProfile.profiles.last?.id {
+                        RemotePageDivider().padding(.leading, 66)
+                    }
                 }
-                .buttonStyle(RemoteSessionButtonStyle())
-                .accessibilityAddTraits(effectiveID == profile.id ? .isSelected : [])
-            }
-        }
+            }.remotePageCard()
+        }.remotePageChrome()
     }
+
 }
 
 struct RemoteBotStarters: View {

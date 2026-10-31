@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-13",
+  "scope": "Companion iOS secondary screens aligned with the existing homepage",
+  "screens": [
+    "Models and model library",
+    "Settings",
+    "API providers and provider setup",
+    "Bots and bot details",
+    "Sharing",
+    "Computers",
+    "Console",
+    "Diagnostics",
+    "New session and options"
+  ],
+  "validation": {
+    "ios_unit_tests": {
+      "passed": 57,
+      "failed": 0
+    },
+    "affected_iphone_ui_tests": {
+      "passed": 14,
+      "failed": 0
+    },
+    "ipad_bot_chat_run_flow": {
+      "passed": 1,
+      "failed": 0
+    },
+    "mac_regression_tests": {
+      "passed": 1096,
+      "failed": 0,
+      "skipped": 51
+    },
+    "ios_device_release_build": {
+      "status": "passed",
+      "signing": "disabled"
+    },
+    "preservation_guard": {
+      "status": "passed",
+      "unchanged_inherited_files": 76,
+      "shared_palette": "preserved",
+      "composer_surfaces": "preserved"
+    }
+  },
+  "previews_directory": "/Users/m/.codex/visualizations/2026/10/13/01a13608-7b3c-7630-b0a1-8cc599fbee45/companion-design"
+}

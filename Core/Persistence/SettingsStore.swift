@@ -656,7 +656,7 @@ final class SettingsStore: ObservableObject {
     /// agent registry. Accessibility and Screen Recording grants still sit
     /// behind this switch so a coding session never drives other Mac apps.
     var computerControlEnabled: Bool {
-        get { defaults.bool(forKey: DefaultsKeys.computerControlEnabled) }
+        get { !CompanionDistribution.isAppStore && defaults.bool(forKey: DefaultsKeys.computerControlEnabled) }
         set {
             defaults.set(newValue, forKey: DefaultsKeys.computerControlEnabled)
             objectWillChange.send()
@@ -714,7 +714,7 @@ final class SettingsStore: ObservableObject {
     /// Off by default. Paired phones can stream the Mac screen and send
     /// clicks, keys, and scrolls only after this switch and TCC grants.
     var remoteMacControlEnabled: Bool {
-        get { defaults.bool(forKey: DefaultsKeys.remoteMacControlEnabled) }
+        get { !CompanionDistribution.isAppStore && defaults.bool(forKey: DefaultsKeys.remoteMacControlEnabled) }
         set {
             defaults.set(newValue, forKey: DefaultsKeys.remoteMacControlEnabled)
             objectWillChange.send()
@@ -725,7 +725,7 @@ final class SettingsStore: ObservableObject {
     /// over the encrypted Tailscale path, while the Mac is actually locked.
     /// The password remains request-scoped and is never persisted.
     var remoteMacUnlockEnabled: Bool {
-        get { defaults.bool(forKey: DefaultsKeys.remoteMacUnlockEnabled) }
+        get { !CompanionDistribution.isAppStore && defaults.bool(forKey: DefaultsKeys.remoteMacUnlockEnabled) }
         set {
             defaults.set(newValue, forKey: DefaultsKeys.remoteMacUnlockEnabled)
             objectWillChange.send()

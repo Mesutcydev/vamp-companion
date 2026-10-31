@@ -1,17 +1,18 @@
 import Foundation
 
-/// Optional, independently installed runtimes. Only checkpoint IDs verified by
-/// the installer are eligible; a newer binary never replaces the Prism GGUF
-/// runtime globally. The manifest contains no credentials or prompts.
+/// Independently installed runtimes. Compatibility runtimes are selected by
+/// model ID or GGUF architecture; experimental runtimes remain opt-in. A newer
+/// binary never replaces the Prism GGUF runtime globally.
 struct ManagedInferenceRuntime: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
-        case omlx, mlxfast, llamaMetal
+        case omlx, mlxfast, llamaMetal, llamaCompatibility
 
         var label: String {
             switch self {
             case .omlx: "oMLX"
             case .mlxfast: "MLXFast Bonsai"
             case .llamaMetal: "llama.cpp Metal"
+            case .llamaCompatibility: "llama.cpp (model compatibility)"
             }
         }
 
@@ -19,11 +20,13 @@ struct ManagedInferenceRuntime: Codable, Sendable, Equatable {
         var supportedOnThisMac: Bool {
             // Both 27B experiments exceeded the tested 16 GB device's
             // memory budget on longer replies. oMLX uses small checkpoints.
-            self == .omlx || ProcessInfo.processInfo.physicalMemory >= 24 * 1024 * 1024 * 1024
+            self == .omlx || self == .llamaCompatibility
+                || ProcessInfo.processInfo.physicalMemory >= 24 * 1024 * 1024 * 1024
         }
         var enabled: Bool {
             guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return false }
-            return supportedOnThisMac && UserDefaults.standard.bool(forKey: preferenceKey)
+            guard !CompanionDistribution.isAppStore && supportedOnThisMac else { return false }
+            return self == .llamaCompatibility || UserDefaults.standard.bool(forKey: preferenceKey)
         }
     }
 
@@ -32,11 +35,27 @@ struct ManagedInferenceRuntime: Codable, Sendable, Equatable {
         var runtimes: [ManagedInferenceRuntime]
     }
 
+    /// Ignore unsupported or malformed entries without hiding the other
+    /// installed runtimes when a newer app adds another kind.
+    private struct ReadableManifest: Decodable {
+        struct Entry: Decodable {
+            let runtime: ManagedInferenceRuntime?
+            init(from decoder: Decoder) throws {
+                runtime = try? ManagedInferenceRuntime(from: decoder)
+            }
+        }
+        let version: Int
+        let runtimes: [Entry]
+    }
+
     var kind: Kind
     var revision: String
     var executable: String
     var models: [String]
     var visionModels: [String]
+    /// Architecture rules let imported models use a compatible runtime even
+    /// when their catalog IDs differ from the installer's examples.
+    var architectures: [String]? = nil
 
     static var root: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -54,13 +73,34 @@ struct ManagedInferenceRuntime: Codable, Sendable, Equatable {
 
     static func installed(root: URL = Self.root) -> [Self] {
         guard let data = try? Data(contentsOf: root.appendingPathComponent("manifest.json")),
-              let manifest = try? JSONDecoder().decode(Manifest.self, from: data),
+              let manifest = try? JSONDecoder().decode(ReadableManifest.self, from: data),
               manifest.version == 1 else { return [] }
-        return manifest.runtimes.filter { $0.executableURL(root: root) != nil }
+        return manifest.runtimes.compactMap(\.runtime).filter { $0.executableURL(root: root) != nil }
     }
 
     static func resolve(kind: Kind, modelID: String) -> Self? {
         guard kind.enabled else { return nil }
         return installed().first { $0.kind == kind && $0.models.contains(modelID) }
+    }
+
+    /// Exact checkpoint rules take precedence over architecture rules. The
+    /// manifest order breaks ties, so an installer can choose a preferred
+    /// version without affecting unrelated models or experimental runtimes.
+    static func selectGGUFCompatibility(
+        modelID: String, architecture: String?, runtimes: [Self]
+    ) -> Self? {
+        let candidates = runtimes.filter { $0.kind == .llamaCompatibility }
+        if let exact = candidates.first(where: { $0.models.contains(modelID) }) { return exact }
+        guard let architecture, !architecture.isEmpty else { return nil }
+        return candidates.first { runtime in
+            runtime.architectures?.contains {
+                $0.caseInsensitiveCompare(architecture) == .orderedSame
+            } == true
+        }
+    }
+
+    static func resolveGGUFCompatibility(modelID: String, architecture: String?) -> Self? {
+        guard Kind.llamaCompatibility.enabled else { return nil }
+        return selectGGUFCompatibility(modelID: modelID, architecture: architecture, runtimes: installed())
     }
 }

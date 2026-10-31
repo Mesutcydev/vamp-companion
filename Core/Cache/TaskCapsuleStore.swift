@@ -33,8 +33,7 @@ final class TaskCapsuleStore: @unchecked Sendable {
 
     private var directory: URL {
         if let overrideDirectory { return overrideDirectory }
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("VampCompanion/AgentTasks", isDirectory: true)
+        return FileManager.companionSupportDirectory.appendingPathComponent("AgentTasks", isDirectory: true)
     }
 
     func save(_ capsule: AgentTaskCapsule) {

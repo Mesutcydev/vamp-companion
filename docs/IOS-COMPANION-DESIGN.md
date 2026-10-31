@@ -58,6 +58,28 @@ existing protocol-v1 APIs. Routes, authentication, model identifiers, session
 behavior, approvals, bots, sharing, tools, and provider behavior are preserved.
 Older Vamp Assistant hosts remain supported.
 
+## Consistent secondary pages
+
+Models, Settings, Bots, API providers, sharing, paired computers, console files,
+connection diagnostics, and session setup use the homepage’s warm canvas and
+charcoal/white reading surfaces. `RemotePageDesign.swift` supplies the shared
+17-point cards, compact section headings, soft icon wells, dividers, fields,
+source controls, and press feedback. The Mac hub no longer owns a separate
+neutral palette. Model search, source groups, latest labels, loaded state,
+unloading, and the existing reviewed-session flow remain available.
+
+The bot roster comes before delegation. Each role has a distinct line glyph
+and a readable state. Bot details, run inputs, and bot selection share the same
+cards. Settings uses compact appearance controls and accessible accent swatches;
+provider credentials still travel once to the Mac’s Keychain. Sharing and
+new-work controls show connection state and are disabled while offline.
+
+Accessibility text stacks source controls, status badges, and metadata where
+needed. Every new action has a minimum 44-point target. Reduce Motion disables
+press scaling and console scroll movement; the new cards are opaque under all
+transparency preferences and strengthen their borders with Increase Contrast.
+The existing homepage, transcript, composer, palette, and app assets are retained.
+
 ## Source and release identity
 
 The newer working iOS client used for TestFlight 0.10.54 (134) was imported
@@ -65,8 +87,8 @@ read-only on 2026-10-13 before this pass, including its current branding, icon,
 privacy manifest, and client fixes. The initial baseline remains in
 `verification/ios-source-sha256.json`; the current baseline is in
 `ios-current-source-sha256.json` and `ios-current-project-sha256.json`.
-Six inherited UI files have authorized exceptions. New homepage and Mac-hub
-files are isolated additions. The guard verifies the other 88 inherited files,
+The authorized secondary UI files have explicit exceptions. New homepage and Mac-hub
+files are isolated additions. The guard verifies all inherited files outside those exceptions,
 iOS target identity and scheme, shared palette, and composer button surfaces.
 
 The current display name and App Store Connect record are **Vamp Companion**
@@ -89,3 +111,7 @@ live hardware and must not be inferred from simulator results.
 
 Chat-specific UI coverage checks both appearances and code copy, draft-safe reuse,
 incoming-message/composer behavior, and tool/reasoning disclosures.
+
+The secondary-page pass on 2026-10-13 passes 57 iOS unit tests, 14 affected iPhone UI checks, and the iPad bot Chat/Run flow. The Mac regression run passes 1,096 tests with 51 opt-in skips. The unsigned iPhone/iPad Release build and the 76-file source preservation guard also pass.
+
+The secondary-page release audit and its fixes are recorded in [IOS-RELEASE-AUDIT-2026-10-13.md](IOS-RELEASE-AUDIT-2026-10-13.md). The signed release is 0.10.56 (139), using the existing Companion app record and internal mes group.

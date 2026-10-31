@@ -368,7 +368,7 @@ final class AgentSessionController: ObservableObject {
             publishFailure(failure)
             return
         }
-        let projectWorkspace = workspaceURL
+        let projectWorkspace = CompanionDistribution.isAppStore ? nil : workspaceURL
         let chatOnly = projectWorkspace == nil || qwenTextOnly
         let workspace: URL
         do {
@@ -411,7 +411,7 @@ final class AgentSessionController: ObservableObject {
 
         // The harness says whether it takes images once it has started, so it
         // prepares the turn itself.
-        if let harness = settings.selectedHarness {
+        if !CompanionDistribution.isAppStore, let harness = settings.selectedHarness {
             await startHarnessRun(
                 harness,
                 workspace: workspace,
@@ -438,7 +438,7 @@ final class AgentSessionController: ObservableObject {
         // Account-backed OpenAI runs use Codex's own agent harness. It owns
         // command execution, file changes, MCP, and sandbox decisions; Beet
         // Code only renders the resulting events and forwards user approvals.
-        if let codexModelID = activeCodexModelIDHandler() {
+        if !CompanionDistribution.isAppStore, let codexModelID = activeCodexModelIDHandler() {
             await startCodexRun(
                 modelID: codexModelID,
                 workspace: workspace,
@@ -483,7 +483,7 @@ final class AgentSessionController: ObservableObject {
             }
             mcpTools = mcpResult.tools
         }
-        let tools: [any AgentTool] = qwenTextOnly ? [] : chatOnly
+        let tools: [any AgentTool] = CompanionDistribution.isAppStore || qwenTextOnly ? [] : chatOnly
             ? Self.sessionTools(
                 computerControlEnabled: effectiveComputerControl,
                 chatOnly: true,
@@ -2263,7 +2263,6 @@ final class AgentSessionController: ObservableObject {
         }
         record.updatedAt = Date()
         _ = persistSessionRecord(record)
-        SessionStore.shared.invalidateCache()
     }
 
     @discardableResult
@@ -2831,6 +2830,7 @@ final class AgentSessionController: ObservableObject {
         linuxGuest: Bool = false,
         botRun: Bool = false
     ) -> [any AgentTool] {
+        if CompanionDistribution.isAppStore { return [] }
         // Bots don't drive other bots: delegation stays one level deep, under the Assistant.
         let botControlTools = botRun ? [] : Self.botControlTools
         if chatOnly {

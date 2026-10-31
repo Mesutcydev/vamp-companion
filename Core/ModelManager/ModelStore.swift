@@ -230,8 +230,8 @@ final class ModelStore: ObservableObject {
                 }
             }
         }
-        self.assistantSupportDirectory = assistantRoot
-            ?? (!isTestHost && overrideModelsDir == nil ? Self.defaultAssistantSupportDirectory : nil)
+        self.assistantSupportDirectory = CompanionDistribution.isAppStore ? nil : (assistantRoot
+            ?? (!isTestHost && overrideModelsDir == nil ? Self.defaultAssistantSupportDirectory : nil))
         loadRegistry()
         hiddenAssistantModels = Set(AssistantModelLibrary.readJSON(
             [String].self, at: hiddenModelsURL) ?? [])

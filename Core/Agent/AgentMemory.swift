@@ -51,8 +51,7 @@ final class AgentMemory: @unchecked Sendable {
     private var summaries: [MemorySummary] = []
 
     private var fileURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("VampCompanion/Memory", isDirectory: true)
+        let dir = FileManager.companionSupportDirectory.appendingPathComponent("Memory", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("\(workspaceKey).json")
     }

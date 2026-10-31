@@ -438,17 +438,22 @@ final class GGUFEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
     /// adapter without deleting it.
     private let loraScale: Double
     private let preferredRuntime: ManagedInferenceRuntime?
+    private let resolveCompatibilityRuntime: @Sendable (String, String?) -> ManagedInferenceRuntime?
 
     init(
         experimentalDFlashEnabled: Bool = false,
         experimentalNGramEnabled: Bool = false,
         loraScale: Double = 1.0,
-        preferredRuntime: ManagedInferenceRuntime? = nil
+        preferredRuntime: ManagedInferenceRuntime? = nil,
+        resolveCompatibilityRuntime: @escaping @Sendable (String, String?) -> ManagedInferenceRuntime? = {
+            ManagedInferenceRuntime.resolveGGUFCompatibility(modelID: $0, architecture: $1)
+        }
     ) {
         self.experimentalDFlashEnabled = experimentalDFlashEnabled
         self.experimentalNGramEnabled = experimentalNGramEnabled
         self.loraScale = loraScale
         self.preferredRuntime = preferredRuntime
+        self.resolveCompatibilityRuntime = resolveCompatibilityRuntime
     }
 
     var loadedModelID: String? {
@@ -513,14 +518,21 @@ final class GGUFEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
             ? Planner.loraFile(named: fileNames, modelID: modelID)
                 .map { directory.appendingPathComponent($0).path }
             : nil
-        let stableBinary = try Self.resolveServerBinary()
-        let updatedRuntime = preferredRuntime ?? ManagedInferenceRuntime.resolve(kind: .llamaMetal, modelID: modelID)
-        let binary = updatedRuntime?.executableURL() ?? stableBinary
-
         // RAM-honest context sizing: sniff the transformer dims from the GGUF
         // header and buy as many KV tokens as the budget left over after the
         // weights affords. Unsniffable headers keep the conservative 32 K cap.
         let sniffed = GGUFMetadata.read(from: URL(fileURLWithPath: modelPath))
+        // Compatibility rules are independent of opt-in acceleration and
+        // apply to imported checkpoints as well as the built-in catalog.
+        let updatedRuntime = preferredRuntime
+            ?? resolveCompatibilityRuntime(modelID, sniffed?.architecture)
+            ?? ManagedInferenceRuntime.resolve(kind: .llamaMetal, modelID: modelID)
+        let updatedBinary = updatedRuntime?.executableURL()
+        let stableBinary = try? Self.resolveServerBinary()
+        guard let binary = updatedBinary ?? stableBinary else {
+            throw GGUFError.serverBinaryMissing(
+                "llama-server not found. Install a compatible runtime or llama.cpp to run GGUF models.")
+        }
         let candidateDraft = experimentalDFlashEnabled
             ? Planner.dflashDraft(modelID: modelID, metadata: sniffed)
             : nil
@@ -608,9 +620,9 @@ final class GGUFEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
                 mmprojPath: mmprojPath,
                 loraPath: loraPath)
         }
-        var usedUpdatedRuntime = binary != stableBinary
-        if attempt == nil, usedUpdatedRuntime {
-            Log.engine.warning("Updated Metal runtime could not load this checkpoint; retrying the existing GGUF runtime")
+        var usedUpdatedRuntime = updatedBinary != nil && binary == updatedBinary
+        if attempt == nil, usedUpdatedRuntime, let stableBinary, stableBinary != binary {
+            Log.engine.warning("Model-specific runtime could not load this checkpoint; retrying the existing GGUF runtime")
             usedUpdatedRuntime = false
             usedSpeculation = .none
             attempt = try await launchServer(
@@ -630,7 +642,7 @@ final class GGUFEngine: LLMEngine, NativeToolConfigurable, @unchecked Sendable {
             self.loadedID = modelID
             self.launchedContextSize = chosenContext
             self.statsState = EngineStats(acceleration: usedSpeculation.acceleration)
-            self.statsState.runtimeName = usedUpdatedRuntime ? "llama.cpp Metal" : nil
+            self.statsState.runtimeName = usedUpdatedRuntime ? updatedRuntime?.kind.label : nil
             self.hasProjector = mmprojPath != nil
             self.projectorPath = mmprojPath
             self.appliedLoraPath = loraPath

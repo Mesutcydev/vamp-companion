@@ -1060,7 +1060,8 @@ final class RemoteSessionTests: XCTestCase {
         let url = try XCTUnwrap(components?.url)
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = 5
+        // A loaded machine (parallel builds) can exceed 5 s on loopback/LAN.
+        request.timeoutInterval = 15
         for (key, value) in headers {
             request.setValue(value, forHTTPHeaderField: key)
         }

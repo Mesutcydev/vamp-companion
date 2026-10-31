@@ -1,0 +1,9 @@
+{
+  "method": "SwiftUI ImageRenderer at the minimum 600-point window width",
+  "test": "AppStoreDistributionTests/testWebsitePromoRendersAtMinimumWindowWidthInBothAppearances",
+  "images": [
+    "website-promo-light.png",
+    "website-promo-dark.png"
+  ],
+  "full_window_ui_validation": false
+}

@@ -248,7 +248,7 @@ struct PairingActions: View {
                         .onSubmit { focusedField.wrappedValue = .code }
                     RemoteField(title: "Pairing code", placeholder: "Six-digit code", text: $code, field: .code, focusedField: focusedField)
                         .submitLabel(.go)
-                        .onSubmit { if !address.isEmpty && !code.isEmpty { onConnect() } }
+                        .onSubmit { if !address.isEmpty && code.count == 6 && !isConnecting { onConnect() } }
                     Button(action: onConnect) {
                         HStack { if isConnecting { ProgressView().tint(.white) }; Label(isConnecting ? "Connecting…" : "Connect to Mac", systemImage: "link") }
                             .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
@@ -426,41 +426,31 @@ struct ComputerSwitcherSheet: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                RemoteBackdrop()
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ComputerSwitcherIntro()
-                        Button { showDiagnostics = true } label: {
-                            Label("Connection details", systemImage: "network")
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        ForEach(store.pairedComputers) { computer in
-                            ComputerChoiceCard(
-                                computer: computer,
-                                isActive: computer.id == store.activeComputerID,
-                                isConnected: computer.id == store.activeComputerID && store.isConnected,
-                                onSelect: {
-                                    Task {
-                                        await store.switchComputer(to: computer.id)
-                                        if store.isConnected { dismiss() }
-                                    }
-                                },
-                                onRemove: { store.removeComputer(computer.id) })
-                        }
-                        Button { showPairing = true } label: {
-                            Label("Pair another computer", systemImage: "plus")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, minHeight: 52)
-                        }
-                        .buttonStyle(RemotePrimaryButtonStyle())
+            RemotePageScroll {
+                RemotePageHeading(title: "Your Macs", subtitle: "Switch computers without pairing again.")
+                RemotePageSection(title: "Paired computers", detail: "\(store.pairedComputers.count)", padding: 0) {
+                    ForEach(store.pairedComputers) { computer in
+                        ComputerChoiceCard(computer: computer,
+                            isActive: computer.id == store.activeComputerID,
+                            isConnected: computer.id == store.activeComputerID && store.isConnected,
+                            onSelect: {
+                                Task {
+                                    await store.switchComputer(to: computer.id)
+                                    if store.isConnected { dismiss() }
+                                }
+                            }, onRemove: { store.removeComputer(computer.id) })
                     }
-                    .padding(18)
                 }
+                Button { showPairing = true } label: {
+                    Label("Pair another computer", systemImage: "plus").frame(maxWidth: .infinity)
+                }.buttonStyle(RemotePageButtonStyle(primary: true))
+                Button { showDiagnostics = true } label: {
+                    RemotePageRowLabel(title: "Connection details", symbol: "network")
+                }.buttonStyle(RemotePageRowButtonStyle()).remotePageCard()
             }
             .navigationTitle("Your computers")
             .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
+            .remotePageChrome()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
@@ -511,12 +501,12 @@ struct PairAnotherMacSheet: View {
                                 }
                             })
                     }
-                    .padding(18)
+                    .padding(16).frame(maxWidth: RemoteInstrument.contentWidth).frame(maxWidth: .infinity)
                 }
             }
             .navigationTitle("Pair another Mac")
             .navigationBarTitleDisplayMode(.inline)
-            .remoteNavigationChrome()
+            .remotePageChrome()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -591,50 +581,40 @@ struct ComputerChoiceCard: View {
     var body: some View {
         HStack(spacing: 0) {
             Button(action: onSelect) {
-                HStack(spacing: 13) {
-                    Image(systemName: "macmini")
-                        .accessibilityHidden(true)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(isActive ? Color.white : BeetTheme.accentBright)
-                        .frame(width: 44, height: 44)
-                        .background(isActive ? BeetTheme.accent : BeetTheme.surfaceStrong(appearance),
-                                    in: RoundedRectangle(cornerRadius: RemoteInstrument.controlRadius))
+                HStack(spacing: 12) {
+                    RemotePageSymbol(symbol: "macmini", active: isActive)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(computer.name)
-                            .font(.headline)
-                            .lineLimit(1)
+                        Text(computer.name).font(.body.weight(.medium))
+                            .fixedSize(horizontal: false, vertical: true)
                         Text(computer.baseURL.host ?? computer.baseURL.absoluteString)
-                            .font(.caption)
-                            .foregroundStyle(BeetTheme.secondaryText(appearance))
-                            .lineLimit(1)
+                            .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                            .lineLimit(1).truncationMode(.middle)
+                        if isActive {
+                            RemotePageBadge(title: isConnected ? "Connected" : "Selected · offline",
+                                color: isConnected ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
+                        }
                     }
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 4)
                     if isConnected {
-                        Label("Connected", systemImage: "checkmark.circle.fill")
-                            .labelStyle(.iconOnly)
-                            .foregroundStyle(BeetTheme.accentBright)
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(BeetTheme.secondaryText(appearance))
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(BeetTheme.accentBright)
                             .accessibilityHidden(true)
                     }
                 }
+                .padding(.leading, 14).padding(.vertical, 14)
+                .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .buttonStyle(RemotePressButtonStyle())
+            .buttonStyle(RemotePageRowButtonStyle())
+            .accessibilityAddTraits(isActive ? .isSelected : [])
             Menu {
                 Button("Remove computer", systemImage: "trash", role: .destructive) { showRemove = true }
             } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 44, height: 44)
+                Image(systemName: "ellipsis").frame(width: 44, height: 44)
             }
-            .foregroundStyle(BeetTheme.secondaryText(appearance))
+            .foregroundStyle(RemoteInstrument.secondaryInk)
             .accessibilityLabel("Options for \(computer.name)")
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 4)
-        .background(isActive ? RemoteInstrument.recess : Color.clear)
-        .overlay(alignment: .bottom) { VampHairline() }
+        .padding(.trailing, 4)
         .confirmationDialog(
             "Remove \(computer.name)?",
             isPresented: $showRemove,

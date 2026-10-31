@@ -40,6 +40,45 @@ final class ManagedInferenceTests: XCTestCase {
         XCTAssertTrue(ManagedInferenceRuntime.installed(root: root).isEmpty)
     }
 
+    func testGGUFCompatibilityPrefersExactModelBeforeArchitecture() {
+        let architecture = ManagedInferenceRuntime(kind: .llamaCompatibility, revision: "architecture",
+            executable: "architecture-server", models: [], visionModels: [], architectures: ["LFM3"])
+        let exact = ManagedInferenceRuntime(kind: .llamaCompatibility, revision: "exact",
+            executable: "exact-server", models: ["specific-model"], visionModels: [], architectures: [])
+        let experimental = ManagedInferenceRuntime(kind: .llamaMetal, revision: "experimental",
+            executable: "experimental-server", models: ["specific-model"], visionModels: [], architectures: ["lfm3"])
+        let runtimes = [experimental, architecture, exact]
+
+        XCTAssertEqual(ManagedInferenceRuntime.selectGGUFCompatibility(
+            modelID: "specific-model", architecture: "lfm3", runtimes: runtimes), exact)
+        XCTAssertEqual(ManagedInferenceRuntime.selectGGUFCompatibility(
+            modelID: "imported-model", architecture: "lfm3", runtimes: runtimes), architecture)
+        XCTAssertNil(ManagedInferenceRuntime.selectGGUFCompatibility(
+            modelID: "other-model", architecture: "qwen", runtimes: runtimes))
+        XCTAssertNil(ManagedInferenceRuntime.selectGGUFCompatibility(
+            modelID: "other-model", architecture: nil, runtimes: runtimes))
+    }
+
+    func testCompatibilityManifestRemainsCompatibleWithOlderEntries() throws {
+        let root = try directory()
+        _ = try executable(in: root, name: "old-server")
+        _ = try executable(in: root, name: "new-server")
+        // Older manifests do not have the optional architectures field.
+        let json = """
+        {"version":1,"runtimes":[
+          {"kind":"omlx","revision":"old","executable":"old-server","models":["qwen"],"visionModels":[]},
+          {"kind":"llamaCompatibility","revision":"new","executable":"new-server","models":[],"visionModels":[],"architectures":["lfm3"]},
+          {"kind":"futureRuntime","revision":"future","executable":"new-server","models":[],"visionModels":[]}
+        ]}
+        """
+        try Data(json.utf8).write(to: root.appendingPathComponent("manifest.json"))
+        let installed = ManagedInferenceRuntime.installed(root: root)
+        XCTAssertEqual(installed.count, 2)
+        XCTAssertNil(installed[0].architectures)
+        XCTAssertEqual(ManagedInferenceRuntime.selectGGUFCompatibility(
+            modelID: "any-import", architecture: "lfm3", runtimes: installed)?.executable, "new-server")
+    }
+
     func testFallbackPreservesImagesContextAndUnload() async throws {
         let root = try directory()
         let fallback = FakeLLMEngine(supportsImageInput: true)
@@ -96,6 +135,38 @@ final class ManagedInferenceTests: XCTestCase {
 
 /// Explicit live gates exercise the same managed process lifecycle as the app.
 final class LiveManagedInferenceTests: XCTestCase {
+    func testLFM3RoutesByArchitectureAndReplies() async throws {
+        guard ProcessInfo.processInfo.environment["BEETCODE_LIVE_MANAGED_INFERENCE"] == "lfm3" else {
+            throw XCTSkip("Managed LFM3 smoke is opt-in")
+        }
+        let runtimes = ManagedInferenceRuntime.installed()
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(
+            "Library/Application Support/VampCompanion/Models")
+        let models: [(String, Int64)] = [
+            ("lfm3-1.7b-liquid-bf16", 3_466_626_336),
+            ("lfm3-1.7b-atomic-uncensored-ad-q6k", 1_587_969_920),
+        ]
+        for (modelID, size) in models {
+            let engine = GGUFEngine(resolveCompatibilityRuntime: { id, architecture in
+                ManagedInferenceRuntime.selectGGUFCompatibility(
+                    modelID: id, architecture: architecture, runtimes: runtimes)
+            })
+            try await engine.load(directory: root.appendingPathComponent(modelID),
+                                  modelID: modelID, diskBytes: size, contextSize: 8_192)
+            var answer = ""
+            for try await chunk in engine.stream(
+                adding: [.init(role: .user, content: "Say hello in one short sentence.")],
+                maxTokens: 128, temperature: 0.1
+            ) { answer += chunk }
+            XCTAssertFalse(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, modelID)
+            let stats = await engine.stats
+            XCTAssertEqual(stats.runtimeName, "llama.cpp (model compatibility)")
+            await engine.unload()
+            let loaded = await engine.loadedModelID
+            XCTAssertNil(loaded)
+        }
+    }
+
     func testOMLXChatVisionAndUnload() async throws {
         guard ProcessInfo.processInfo.environment["BEETCODE_LIVE_MANAGED_INFERENCE"] == "omlx" else {
             throw XCTSkip("Managed oMLX smoke is opt-in")

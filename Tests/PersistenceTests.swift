@@ -12,6 +12,15 @@ final class SessionStoreTests: XCTestCase {
         return (store, temp)
     }
 
+    /// Test-key ciphertext in the real folder blocked the app from ever
+    /// minting its own session key, so every iPhone session 404'd. Memory and
+    /// task capsules share the same root.
+    func testTestDataStaysOutOfRealApplicationSupport() {
+        let real = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        XCTAssertFalse(FileManager.companionSupportDirectory.path.hasPrefix(real.path))
+        XCTAssertTrue(SessionStore.defaultSessionsDirectory.path.hasPrefix(FileManager.companionSupportDirectory.path))
+    }
+
     func testSaveLoadRoundTrip() throws {
         let (store, temp) = isolatedStore()
         defer { try? FileManager.default.removeItem(at: temp) }

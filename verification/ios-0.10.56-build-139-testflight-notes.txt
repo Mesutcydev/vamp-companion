@@ -1,0 +1,11 @@
+Vamp Companion 0.10.56 (139)
+
+Models, Settings, Bots, API providers, sharing, paired computers, diagnostics, and session setup now use the same design as Home.
+
+Please test:
+- Light and Dark appearance, accent choices, and larger text across the updated menus.
+- Model search, loaded-model state, and the reviewed new-chat flow.
+- Bot Chat and Run navigation; launch a task once and check pending feedback.
+- Rejected requests show an error and keep the task or chat draft for retry.
+- With the Mac offline, approval, console, provider, and file-transfer actions stay disabled; reconnect and try again.
+- Switch computer and open Control Diagnostics from Settings.

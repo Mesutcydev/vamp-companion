@@ -102,6 +102,78 @@ targets:
         Release:
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 
+  VampCompanionAppStore:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+      - Core
+      - path: Configuration/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    dependencies:
+      - package: MLX
+        products: [MLX]
+      - package: MLXLM
+        products: [MLXLLM, MLXLMCommon, MLXVLM]
+      - package: SwiftTransformers
+        products: [Tokenizers]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.companion
+        PRODUCT_NAME: "Vamp Companion"
+        PRODUCT_MODULE_NAME: BeetCode
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Configuration/CompanionAppStore-Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_ENTITLEMENTS: Configuration/CompanionAppStore.entitlements
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: "FUWJ2T4SG7"
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_USER_SELECTED_FILES: readwrite
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) VAMP_APP_STORE"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: CompanionIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  VampCompanionAppStoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - AppStoreTests
+      - Tests/TestSupport/FakeLLMEngine.swift
+    dependencies:
+      - target: VampCompanionAppStore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.companion.storetests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Vamp Companion.app/Contents/MacOS/Vamp Companion"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: "FUWJ2T4SG7"
+
+  VampCompanionAppStoreUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - AppStoreUITests
+    dependencies:
+      - target: VampCompanionAppStore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beetcode.companion.storeuitests
+        TEST_TARGET_NAME: VampCompanionAppStore
+        GENERATE_INFOPLIST_FILE: YES
+
   BeetCodeCLI:
     type: tool
     platform: macOS
@@ -274,6 +346,19 @@ targets:
         SWIFT_APPROACHABLE_CONCURRENCY: YES
 
 schemes:
+  VampCompanionAppStore:
+    build:
+      targets:
+        VampCompanionAppStore: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+    test:
+      config: Debug
+      targets:
+        - VampCompanionAppStoreTests
+        - VampCompanionAppStoreUITests
   VampCompanion:
     build:
       targets:
