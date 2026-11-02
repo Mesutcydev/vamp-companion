@@ -1,0 +1,27 @@
+{
+  "date": "2026-11-02",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.58",
+    "build": "142",
+    "sourceCommit": "bf5a6b4",
+    "toolchain": "Xcode 27.1 (27A9275), iphoneos27.1 SDK, same as build 140",
+    "buildID": "0a342510-b5aa-4ebe-b7e5-242a1dcb2a16",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "testerGroup": "mes (internal, access to all builds)",
+    "minOS": "18.0",
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "weakImportsMatchBuild140": true,
+    "dateLessEqualSymbolImported": false,
+    "ipaSHA256": "1817b399e3da315d28833795bf22c2e78ae3682087313d0d15bfa8b0904b1336",
+    "testNotes": "verification/ios-0.10.58-build-142-testflight-notes.txt (en-US and en-GB, read back)"
+  },
+  "notVerified": [
+    "Launch on the iPhone 27.2 beta after installing 142 from TestFlight (pending tester update)"
+  ]
+}
