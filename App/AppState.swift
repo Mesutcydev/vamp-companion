@@ -242,6 +242,9 @@ final class AppState: ObservableObject {
         remoteSessionHost.resumeBotRunHandler = { [weak self] id in
             self?.botRuns.resume(runID: id) ?? false
         }
+        remoteSessionHost.applyBotRunHandler = { [weak self] id in
+            await self?.applyBotRun(id) ?? (false, "Vamp Companion is no longer available.")
+        }
         remoteSessionHost.configureRunHandler = { [weak self] options in
             self?.sessions.applyRemoteRunOptions(autoMode: options.autoMode, fullAccess: options.fullAccess)
             self?.applyRemoteReasoningEffort(options.reasoningEffort)
@@ -332,27 +335,13 @@ final class AppState: ObservableObject {
                 self?.updateQueuedTaskPhase(phase)
             }
             .store(in: &cancellables)
+        // Bot runs sync from their own runtime (BotRunRuntimeHandle). Syncing the foreground
+        // controller too let an opened bot transcript ("Inspect") overwrite the run: its idle
+        // phase cleared a pending approval, so Approve was refused and the run hung.
         sessions.$finishReason
             .sink { [weak self] reason in
                 guard let reason else { return }
                 self?.finishQueuedTask(reason)
-                guard let self else { return }
-                self.botRuns.sync(
-                    sessionID: self.sessions.activeSessionID,
-                    phase: self.sessions.currentPhase,
-                    finish: reason,
-                    output: self.sessions.streamingText,
-                    trace: self.sessions.botToolTrace)
-            }
-            .store(in: &cancellables)
-        sessions.$currentPhase
-            .sink { [weak self] phase in
-                guard let self else { return }
-                self.botRuns.sync(
-                    sessionID: self.sessions.activeSessionID,
-                    phase: phase,
-                    finish: nil,
-                    output: self.sessions.streamingText)
             }
             .store(in: &cancellables)
         // `/model <id>` slash command: resolve against the catalog and
@@ -656,18 +645,23 @@ final class AppState: ObservableObject {
     }
 
     /// Applies a finished run's changes to the project it was delegated on.
-    func applyBotChanges(runID: UUID) async -> String {
+    func applyBotChanges(runID: UUID) async -> String { await applyBotRun(runID).message }
+
+    func applyBotRun(_ runID: UUID) async -> (applied: Bool, message: String) {
         guard let run = botRuns.runs.first(where: { $0.id == runID }), run.state == .completed else {
-            return "Only a completed run's changes can be applied."
+            return (false, "Only a completed run's changes can be applied.")
         }
+        guard run.appliedAt == nil else { return (false, "These changes were already applied.") }
         guard let project = run.projectPath, let work = run.workPath, let base = run.baseTree else {
-            return "This run has no changes to apply: it did not work on a Git project."
+            return (false, "This run has no changes to apply: it did not work on a Git project.")
         }
         do {
-            return try await BotComputerService().applyChanges(
+            let summary = try await BotComputerService().applyChanges(
                 workPath: work, baseTree: base, projectPath: project)
+            botRuns.markApplied(runID: runID)
+            return (true, summary)
         } catch {
-            return error.localizedDescription
+            return (false, error.localizedDescription)
         }
     }
 

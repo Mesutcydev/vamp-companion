@@ -475,6 +475,31 @@ final class BotComputerServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testResumingAWorkflowStepResumesTheStepsItWaitsOn() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = BotRunStore(root: root)
+        var builder = BotRunRecord.queued(
+            profileID: "builder", profileName: "Builder", modelID: "api|test", prompt: "Build")
+        builder.state = .recoverable
+        var reviewer = BotRunRecord.queued(
+            profileID: "reviewer", profileName: "Reviewer", modelID: "api|test", prompt: "Review")
+        reviewer.state = .recoverable
+        reviewer.dependencyRunIDs = [builder.id]
+        try await store.save([builder, reviewer])
+        let coordinator = BotRunCoordinator(store: store)
+        var started: [String] = []
+        coordinator.startHandler = { run in started.append(run.profileID); return .accepted(UUID()) }
+        await waitUntil { coordinator.runs.count == 2 }
+
+        XCTAssertTrue(coordinator.resume(runID: reviewer.id))
+        await waitUntil { started == ["builder"] }
+
+        XCTAssertEqual(started, ["builder"], "the step the Reviewer waits on must start")
+        XCTAssertEqual(coordinator.runs.first { $0.id == reviewer.id }?.state, .queued)
+    }
+
+    @MainActor
     func testStopWhileStartingStaysStopped() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

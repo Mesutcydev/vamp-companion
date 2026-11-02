@@ -681,6 +681,7 @@ final class RemoteSessionTests: XCTestCase {
         host.approveBotRunHandler = { id, approved in id == botRun.id && approved }
         host.answerBotRunHandler = { id, answer in id == botRun.id && answer == "Use option A" }
         host.resumeBotRunHandler = { id in id == botRun.id }
+        host.applyBotRunHandler = { id in id == botRun.id ? (true, "Merged 1 file(s)") : (false, "Conflict") }
         host.stopBotRunHandler = { id in id == botRun.id }
         // A locked/unavailable encrypted queue must not turn a successfully
         // paired idle remote session into a read-only surface.
@@ -874,6 +875,16 @@ final class RemoteSessionTests: XCTestCase {
             baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/resume", method: "POST", token: token,
             body: Data("{}".utf8))
         XCTAssertEqual(resumedBot.status, 202)
+        let appliedBot = try await request(
+            baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/apply", method: "POST", token: token,
+            body: Data("{}".utf8))
+        XCTAssertEqual(appliedBot.status, 200)
+        XCTAssertEqual(appliedBot.json.objectValue?["summary"]?.stringValue, "Merged 1 file(s)")
+        let conflictedBot = try await request(
+            baseURL, path: "/api/bot-runs/\(UUID().uuidString)/apply", method: "POST", token: token,
+            body: Data("{}".utf8))
+        XCTAssertEqual(conflictedBot.status, 409)
+        XCTAssertEqual(conflictedBot.json.objectValue?["error"]?.stringValue, "Conflict")
         let stoppedBot = try await request(
             baseURL, path: "/api/bot-runs/\(botRun.id.uuidString)/stop", method: "POST", token: token,
             body: Data("{}".utf8))

@@ -244,8 +244,18 @@ struct RemoteBotRun: Decodable, Identifiable, Hashable {
     let dependencyRunIDs: [UUID]?
     let traceID: String?
     let artifacts: [Artifact]?
+    // Optional: older Companion hosts don't send these.
+    let evidence: String?
+    let criteriaMet: Int?
+    let criteriaTotal: Int?
+    let canApply: Bool?
+    let appliedAt: Double?
 
     var isTerminal: Bool { ["completed", "failed", "stopped", "interrupted"].contains(state) }
+    /// The final answer when the run produced one, else its last streamed text.
+    var finalOutput: String {
+        artifacts?.last(where: { $0.kind == "summary" })?.value ?? latestOutput
+    }
 }
 struct RemoteBotWorkspaceEntry: Decodable, Identifiable, Hashable {
     var id: String { path }
@@ -461,6 +471,7 @@ struct RemoteAcceptedResponse: Decodable {
     let sessionID: UUID?
     let taskID: UUID?
     let runID: UUID?
+    let summary: String?
 }
 
 struct RemoteErrorBody: Decodable {

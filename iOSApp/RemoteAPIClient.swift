@@ -173,6 +173,9 @@ struct RemoteAPIClient {
     func resumeBotRun(_ id: UUID) async throws -> RemoteAcceptedResponse {
         try await request("api/bot-runs/\(id.uuidString)/resume", method: "POST", body: [:])
     }
+    func applyBotRun(_ id: UUID) async throws -> RemoteAcceptedResponse {
+        try await request("api/bot-runs/\(id.uuidString)/apply", method: "POST", body: [:], timeout: 60)
+    }
     func refreshBotComputers() async throws -> RemoteBotComputerEnvelope { try await request("api/bot-computers/refresh", method: "POST", body: [:]) }
     func startBotComputer(_ id: UUID) async throws -> RemoteAcceptedResponse { try await request("api/bot-computers/\(id.uuidString)/start", method: "POST", body: [:]) }
     func stopBotComputer(_ id: UUID) async throws -> RemoteAcceptedResponse { try await request("api/bot-computers/\(id.uuidString)/stop", method: "POST", body: [:]) }

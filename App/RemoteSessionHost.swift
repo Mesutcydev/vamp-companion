@@ -198,6 +198,7 @@ final class RemoteSessionHost {
     var approveBotRunHandler: ((UUID, Bool) async -> Bool)?
     var answerBotRunHandler: ((UUID, String) async -> Bool)?
     var resumeBotRunHandler: ((UUID) -> Bool)?
+    var applyBotRunHandler: ((UUID) async -> (applied: Bool, message: String))?
     /// Returns nil on success, or a user-facing error string.
     var startSessionHandler: ((String, String, RemoteRunOptions) async -> RemoteSessionStartOutcome)?
     /// Activates a start-model id for the next remote turn. Returns an error string, or nil.
@@ -965,6 +966,15 @@ final class RemoteSessionHost {
                 return .response(json(["error": .string("That run is not recoverable.")], status: 409))
             }
             return .response(json(["accepted": .bool(true)], status: 202))
+        case "apply":
+            // Checked before writing: a conflict leaves the project untouched.
+            guard let result = await applyBotRunHandler?(id) else {
+                return .response(json(["error": .string("Applying bot changes is unavailable.")], status: 409))
+            }
+            guard result.applied else {
+                return .response(json(["error": .string(result.message)], status: 409))
+            }
+            return .response(json(["accepted": .bool(true), "summary": .string(result.message)]))
         default:
             return .response(json(["error": .string("Unknown bot run action.")], status: 404))
         }
@@ -1078,6 +1088,11 @@ final class RemoteSessionHost {
             "workflowID": run.workflowID.map { .string($0.uuidString) } ?? .null,
             "dependencyRunIDs": .array((run.dependencyRunIDs ?? []).map { .string($0.uuidString) }),
             "traceID": run.traceID.map { .string($0) } ?? .null,
+            "evidence": run.evidence.map { .string($0.label) } ?? .null,
+            "criteriaMet": .number(Double((run.acceptanceCriteria ?? []).filter(\.satisfied).count)),
+            "criteriaTotal": .number(Double(run.acceptanceCriteria?.count ?? 0)),
+            "canApply": .bool(run.canApply),
+            "appliedAt": run.appliedAt.map { .number($0.timeIntervalSince1970) } ?? .null,
             "checkpoint": run.checkpoint.map { checkpoint in .object([
                 "phase": .string(checkpoint.phase),
                 "sequence": .number(Double(checkpoint.sequence)),

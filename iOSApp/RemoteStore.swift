@@ -646,6 +646,13 @@ final class RemoteStore {
         await performMutation("Couldn't resume bot") { _ = try await $0.resumeBotRun(id) }
     }
 
+    /// The Mac's merge summary, or nil when it refused (the error is presented).
+    func applyBotRun(_ id: UUID) async -> String? {
+        var summary: String?
+        let applied = await performMutation("Couldn't apply changes") { summary = try await $0.applyBotRun(id).summary }
+        return applied ? summary ?? "Changes applied." : nil
+    }
+
     private func performMutation(
         _ errorTitle: String,
         action: (RemoteAPIClient) async throws -> Void

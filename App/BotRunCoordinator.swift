@@ -258,9 +258,11 @@ final class BotRunCoordinator: ObservableObject {
     }
 
     func resume(runID: UUID) -> Bool {
-        guard let run = record(runID), run.state == .recoverable || run.state == .interrupted else {
-            return false
-        }
+        let resumable: (BotRunRecord?) -> Bool = { $0?.state == .recoverable || $0?.state == .interrupted }
+        guard let run = record(runID), resumable(run) else { return false }
+        // A restart leaves a whole workflow recoverable. Resuming only the Reviewer queued it
+        // behind a Builder nothing would ever start, so it sat "Queued" forever.
+        for id in run.dependencyRunIDs ?? [] where resumable(record(id)) { _ = resume(runID: id) }
         update(runID) {
             $0.state = .queued
             $0.phase = "Queued for recovery"
@@ -275,15 +277,6 @@ final class BotRunCoordinator: ObservableObject {
         refreshQueuePositions()
         drain()
         return true
-    }
-
-    func sync(
-        sessionID: UUID?, phase: AgentPhase, finish: AgentFinish?, output: String,
-        trace: [BotToolTrace] = []
-    ) {
-        guard let sessionID,
-              let run = runs.first(where: { $0.sessionID == sessionID }) else { return }
-        sync(runID: run.id, phase: phase, finish: finish, output: output, trace: trace)
     }
 
     /// `trace` is the finished run's tool record; evidence comes from it, not from the answer.
@@ -377,6 +370,10 @@ final class BotRunCoordinator: ObservableObject {
             if shouldRetry { scheduleRetry(runID: run.id) }
             finishScheduling(run.id)
         }
+    }
+
+    func markApplied(runID: UUID) {
+        update(runID) { $0.appliedAt = Date(); $0.updatedAt = Date() }
     }
 
     /// Records a run's private project copy once its computer has prepared it.
@@ -522,9 +519,8 @@ final class BotRunCoordinator: ObservableObject {
                         $0.errorMessage = message
                         $0.updatedAt = Date()
                     }
-                    activeRunIDs.remove(id)
-                    if activeLocalRunID == id { activeLocalRunID = nil }
-                    drain()
+                    // Also cancels the budget timer the dispatch armed.
+                    finishScheduling(id)
                 }
             }
         }

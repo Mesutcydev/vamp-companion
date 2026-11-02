@@ -212,6 +212,8 @@ struct BotRunRecord: Codable, Identifiable, Equatable, Sendable {
     var workPath: String? = nil
     /// Git tree `workPath` was seeded with; the run's changes are the diff against it.
     var baseTree: String? = nil
+    /// Set once the run's changes were applied to `projectPath`.
+    var appliedAt: Date? = nil
     var dependencyRunIDs: [UUID]? = nil
     var dependencyContextAttached: Bool? = nil
     var traceID: String? = nil
@@ -234,6 +236,10 @@ struct BotRunRecord: Codable, Identifiable, Equatable, Sendable {
                 phase: .route, confidence: .notRun,
                 required: [.execution], observed: []),
             acceptanceCriteria: [])
+    }
+
+    var canApply: Bool {
+        state == .completed && appliedAt == nil && projectPath != nil && workPath != nil && baseTree != nil
     }
 
     /// Verified only when every required kind was observed and every criterion reported met.

@@ -238,6 +238,9 @@ struct RemoteBotDetailView: View {
     @State private var showStartChat = false
     @State private var deferredChatSessionID: UUID?
     @State private var mutationInFlight = false
+    @State private var confirmApply = false
+    @State private var applySummaries: [UUID: String] = [:]
+    @State private var outputExpanded = false
 
     init(store: RemoteStore, profile: RemoteBotProfile, selectedModelID: Binding<String>,
          initialMode: String = "chat", onOpen: @escaping (UUID) -> Void) {
@@ -253,8 +256,11 @@ struct RemoteBotDetailView: View {
             ?? store.botRuns.first { $0.profileID == profile.id }
     }
 
+    /// The Mac allows one live run per specialist; a restored run counts until resumed or discarded.
+    private var isBusy: Bool { run.map { !$0.isTerminal } ?? false }
+
     private var canStartRun: Bool {
-        store.isConnected && !mutationInFlight && !selectedModelID.isEmpty
+        store.isConnected && !mutationInFlight && !selectedModelID.isEmpty && !isBusy
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -419,10 +425,15 @@ struct RemoteBotDetailView: View {
     private func runControls(_ run: RemoteBotRun) -> some View {
         switch run.state {
         case "recoverable":
-            Button("Resume from checkpoint") { performMutation { await store.resumeBotRun(run.id) } }
-                .buttonStyle(RemotePageButtonStyle(primary: true))
-                .controlSize(.large)
-                .disabled(!store.isConnected || mutationInFlight)
+            // Discard matters: until it is resumed or discarded, this run blocks new work for the bot.
+            runControlLayout {
+                Button("Resume") { performMutation { await store.resumeBotRun(run.id) } }
+                    .buttonStyle(RemotePageButtonStyle(primary: true))
+                Button("Discard", role: .destructive) { performMutation { await store.stopBotRun(run.id) } }
+                    .buttonStyle(RemotePageButtonStyle())
+            }
+            .controlSize(.large)
+            .disabled(!store.isConnected || mutationInFlight)
         case "needsApproval":
             runControlLayout {
                 Button("Approve") { performMutation { await store.approveBotRun(run.id, approved: true) } }
@@ -450,22 +461,25 @@ struct RemoteBotDetailView: View {
             .controlSize(.large)
             .disabled(!store.isConnected || answerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
         default:
-            TextField("Steer this run", text: $steerDraft, prompt: Text("Steer this run").foregroundStyle(RemoteInstrument.secondaryInk), axis: .vertical)
-                .lineLimit(1...4)
-                .textFieldStyle(.plain)
-                .padding(12)
-                .remotePageField()
+            // A queued or starting run has no session yet, and the Mac refuses to steer it.
+            if run.sessionID != nil {
+                TextField("Steer this run", text: $steerDraft, prompt: Text("Steer this run").foregroundStyle(RemoteInstrument.secondaryInk), axis: .vertical)
+                    .lineLimit(1...4)
+                    .textFieldStyle(.plain)
+                    .padding(12)
+                    .remotePageField()
+            }
             runControlLayout {
-                Button("Steer") {
-                    let message = steerDraft
-                    performMutation {
-                        let success = await store.steerBotRun(run.id, message: message)
-                        if success && steerDraft == message { steerDraft = "" }
-                        return success
-                    }
-                }
-                .disabled(!store.isConnected || steerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
                 if let sessionID = run.sessionID {
+                    Button("Steer") {
+                        let message = steerDraft
+                        performMutation {
+                            let success = await store.steerBotRun(run.id, message: message)
+                            if success && steerDraft == message { steerDraft = "" }
+                            return success
+                        }
+                    }
+                    .disabled(!store.isConnected || steerDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mutationInFlight)
                     Button("Inspect") { onOpen(sessionID) }
                 }
                 if !dynamicTypeSize.isAccessibilitySize { Spacer() }
@@ -538,6 +552,12 @@ struct RemoteBotDetailView: View {
             .accessibilityLabel("Start run")
             .accessibilityValue(mutationInFlight ? "Starting run" : "")
             .accessibilityHint(store.isConnected ? "" : "Connect to your Mac first")
+            if isBusy {
+                Text("\(profile.name) is already on a run. Finish, stop, or discard it to start another.")
+                    .font(.caption)
+                    .foregroundStyle(BeetTheme.secondaryText(appearance))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -548,13 +568,62 @@ struct RemoteBotDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("LAST RUN").font(.system(.caption2, design: .monospaced, weight: .medium)).tracking(0.8)
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
-            Text(run.phase.capitalized).font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                Text(run.phase.capitalized).font(.subheadline.weight(.semibold))
+                Spacer(minLength: 4)
+                RemotePageBadge(title: run.state.capitalized,
+                    color: run.state == "completed" ? RemoteInstrument.green
+                        : run.state == "failed" ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
+            }
             Text(run.prompt).font(.caption).foregroundStyle(BeetTheme.secondaryText(appearance))
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            if let error = run.errorMessage {
+                Text(error).font(.caption.weight(.semibold)).foregroundStyle(RemoteInstrument.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let evidence = run.evidence {
+                let criteria = (run.criteriaTotal ?? 0) > 0
+                    ? " · \(run.criteriaMet ?? 0)/\(run.criteriaTotal ?? 0) criteria met" : ""
+                Label(evidence.capitalized + criteria, systemImage: "checkmark.seal")
+                    .font(.caption2)
+                    .foregroundStyle(BeetTheme.secondaryText(appearance))
+            }
+            if !run.finalOutput.isEmpty {
+                Text(run.finalOutput)
+                    .font(.caption)
+                    .lineLimit(outputExpanded ? nil : 8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .remotePageField()
+                Button(outputExpanded ? "Show less" : "Show full result") { outputExpanded.toggle() }
+                    .font(.caption.weight(.semibold))
+                    .frame(minHeight: 44)
+            }
             if let trace = run.traceID {
                 Text("Trace \(trace.suffix(10)) · \(run.artifacts?.count ?? 0) artifacts")
                     .font(.caption2.monospaced())
                     .foregroundStyle(BeetTheme.secondaryText(appearance))
+            }
+            if let summary = applySummaries[run.id] ?? (run.appliedAt != nil ? "Applied to your project." : nil) {
+                Label(summary, systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(RemoteInstrument.green)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if run.canApply == true {
+                Button {
+                    confirmApply = true
+                } label: {
+                    HStack {
+                        if mutationInFlight { ProgressView().tint(.white) }
+                        Label("Apply changes to project", systemImage: "square.and.arrow.down.on.square")
+                    }.frame(maxWidth: .infinity)
+                }
+                .buttonStyle(RemotePageButtonStyle(primary: true))
+                .controlSize(.large)
+                .disabled(!store.isConnected || mutationInFlight)
+                .accessibilityHint(store.isConnected ? "Merges this run's private copy into your project" : "Connect to your Mac first")
             }
             if let sessionID = run.sessionID {
                 Button("Open the transcript") { onOpen(sessionID) }
@@ -566,6 +635,18 @@ struct RemoteBotDetailView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .remotePageCard()
+        .confirmationDialog("Apply \(profile.name)'s changes?", isPresented: $confirmApply, titleVisibility: .visible) {
+            Button("Apply to project") {
+                performMutation {
+                    guard let summary = await store.applyBotRun(run.id) else { return false }
+                    applySummaries[run.id] = summary
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    return true
+                }
+            }
+        } message: {
+            Text("\(profile.name) worked on a private copy. The Mac checks the patch first; if it conflicts, your project is left untouched.")
+        }
     }
 }
 

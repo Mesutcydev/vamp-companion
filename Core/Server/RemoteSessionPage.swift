@@ -1280,6 +1280,16 @@ async function loadBotRuns() {
         inspect.onclick = async () => { await setBotsPanel(false); await selectSession(run.sessionID); };
         actions.append(inspect);
       }
+      if (run.canApply) {
+        const apply = document.createElement('button'); apply.className = 'button primary'; apply.type = 'button'; apply.textContent = 'Apply changes';
+        apply.onclick = async () => {
+          if (!window.confirm('Apply ' + text(run.profileName) + "'s changes to your project?")) return;
+          try { const result = await api('/api/bot-runs/' + run.id + '/apply', { method:'POST', body:'{}' }); window.alert(text(result.summary)); }
+          catch (error) { window.alert(error.message || 'The changes could not be applied.'); }
+          await loadBotRuns();
+        };
+        actions.append(apply);
+      }
       if (!['completed','failed','stopped','interrupted'].includes(run.state)) {
         if (run.state === 'recoverable') {
           const resume = document.createElement('button'); resume.className = 'button primary'; resume.type = 'button'; resume.textContent = 'Resume';
