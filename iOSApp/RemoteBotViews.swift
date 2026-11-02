@@ -261,15 +261,7 @@ struct RemoteBotsView: View {
             Text("Describe an outcome. Your Mac splits it into research, browsing, building, and review steps.")
                 .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
                 .fixedSize(horizontal: false, vertical: true)
-            if !store.startModels.isEmpty {
-                Picker("Model", selection: $selectedModelID) {
-                    if selectedModelID.isEmpty { Text("Choose model").tag("") }
-                    ForEach(store.startModels) { Text($0.name).tag($0.id) }
-                }
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .contentShape(Rectangle())
-                .accessibilityLabel("Model for the workflow")
-            }
+            RemoteBotModelRow(store: store, selectedModelID: $selectedModelID, label: "Model for the workflow")
             RemoteBotStarters(
                 starters: ["Research and implement a feature", "Fix a bug and review it", "Review my changes"],
                 tint: BeetTheme.accentBright, appearance: appearance, prompt: $workflowPrompt)
@@ -306,6 +298,67 @@ struct RemoteBotsView: View {
             .accessibilityLabel("Orchestrate")
             .accessibilityValue(isOrchestrating ? "Starting workflow" : "")
             .accessibilityHint(store.isConnected ? "" : "Connect to your Mac first")
+        }
+    }
+}
+
+/// The model a run or workflow uses, and where it runs. Opens the same picker as a new chat:
+/// local models, the ChatGPT account, and every configured API provider, with search.
+private struct RemoteBotModelRow: View {
+    let store: RemoteStore
+    @Binding var selectedModelID: String
+    let label: String
+    @Environment(\.remoteAppearance) private var appearance
+    @State private var showPicker = false
+    @State private var source = "local"
+
+    private var selected: RemoteStartModelOption? { store.startModels.first { $0.id == selectedModelID } }
+
+    var body: some View {
+        Button {
+            source = selected?.source ?? RemoteModelPickerSheet.sources.first { option in
+                store.startModels.contains { $0.source == option }
+            } ?? "local"
+            showPicker = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: RemoteModelPickerSheet.sourceIcon(selected?.source ?? "local"))
+                    .font(.body)
+                    .foregroundStyle(RemoteInstrument.secondaryInk)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selected?.name ?? "Choose a model").font(.subheadline.weight(.medium))
+                    if let selected {
+                        Text("\(RemoteModelPickerSheet.sourceLabel(selected.source)) · \(selected.detail)")
+                            .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.semibold))
+                    .foregroundStyle(RemoteInstrument.secondaryInk)
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(RemoteInstrument.ink)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .remotePageField()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RemotePressButtonStyle())
+        .accessibilityLabel(label)
+        .accessibilityValue(selected.map { "\($0.name), \(RemoteModelPickerSheet.sourceLabel($0.source))" } ?? "None chosen")
+        .sheet(isPresented: $showPicker) {
+            RemoteModelPickerSheet(
+                models: store.startModels,
+                source: $source,
+                selectedModelID: $selectedModelID,
+                onRefresh: { await store.loadStartModels() },
+                loadedLocalModel: store.loadedLocalModel,
+                isUnloadingModel: store.isUnloadingModel,
+                isConnected: store.isConnected,
+                onUnload: { await store.unloadLocalModel() })
+                .environment(\.remoteAppearance, appearance)
         }
     }
 }
@@ -826,12 +879,7 @@ struct RemoteBotDetailView: View {
                 .font(.caption)
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
                 .fixedSize(horizontal: false, vertical: true)
-            if !store.startModels.isEmpty {
-                Picker("Model", selection: $selectedModelID) {
-                    ForEach(store.startModels) { Text($0.name).tag($0.id) }
-                }
-                .accessibilityLabel("Model for this run")
-            }
+            RemoteBotModelRow(store: store, selectedModelID: $selectedModelID, label: "Model for this run")
             if !profile.starters.isEmpty {
                 RemoteBotStarters(starters: profile.starters, tint: profile.tint, appearance: appearance, prompt: $prompt)
             }
