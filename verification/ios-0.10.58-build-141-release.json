@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-02",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.58",
+    "build": "141",
+    "sourceCommit": "c8b6dc2",
+    "buildID": "435b3045-73d1-4f58-b34d-ced37ef1c672",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "testerGroup": "mes (internal, access to all builds)",
+    "minOS": "18.0",
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "privacyManifest": true,
+    "debugFixturesExcluded": true,
+    "ipaSHA256": "cedf580fe3cf46c096fb87f95bf000b4875452fbfc20cadf4a3035c0fc77c129",
+    "testNotes": "verification/ios-0.10.58-build-141-testflight-notes.txt (en-GB and en-US, read back)"
+  },
+  "checks": [
+    {"check": "iOS unit tests", "result": "Passed", "passed": 57, "failed": 0},
+    {"check": "Bots and secondary-page UI tests", "result": "Passed", "passed": 10, "failed": 0},
+    {"check": "Other iOS UI suites", "result": "Passed except one pre-existing flake", "note": "ComposerUITests.testDeleteAndCanceledPress drops simulator keystrokes intermittently; it also failed 1 of 3 runs on the previous commit dc11eed."},
+    {"check": "verify-ios-unchanged.py", "result": "Passed"}
+  ],
+  "notVerified": ["Live bot runs from a physical iPhone against a Mac with this update"]
+}
