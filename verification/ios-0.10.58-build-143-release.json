@@ -1,0 +1,47 @@
+{
+  "date": "2026-11-02",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.58",
+    "build": "143",
+    "sourceCommit": "3392ae2",
+    "toolchain": "Xcode 27.1 (27A9275), iphoneos27.1 SDK, same as build 140",
+    "buildID": "811f8bb4-3dbe-4aba-8817-dfcc30555106",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "testerGroup": "mes (internal, access to all builds)",
+    "minOS": "18.0",
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "privacyManifest": true,
+    "weakImportsMatchBuild140": true,
+    "dateLessEqualSymbolImported": false,
+    "ipaSHA256": "6a5c2422912fcde4cf393e67d08572a2d3d80dec7c685eb1591756a83f7f0861",
+    "testNotes": "verification/ios-0.10.58-build-143-testflight-notes.txt (en-US and en-GB, read back)"
+  },
+  "changesSince142": [
+    "Bots model row opens the shared picker with configured API provider models"
+  ],
+  "checks": [
+    {
+      "check": "iOS unit tests",
+      "result": "Passed"
+    },
+    {
+      "check": "Bots and secondary-page UI tests",
+      "result": "Passed",
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "check": "verify-ios-unchanged.py",
+      "result": "Passed"
+    }
+  ],
+  "notVerified": [
+    "Launch on the iPhone 27.2 beta from TestFlight (builds 142 and 143)"
+  ]
+}

@@ -1,0 +1,19 @@
+Vamp Companion 0.10.58 (143)
+
+Fixes build 141 closing right after launch on iOS 27.2 beta devices.
+
+Bots has a new home: what needs you comes first, then what is working, the latest team workflow, and every specialist.
+
+Please test:
+- Bots can use any model from your configured API providers: in a bot's Run card or in Work together, tap the model row and pick from Local, ChatGPT, or API (grouped by provider, with search).
+- Open Bots while a bot waits for you: Approve, Decline, Resume, or Discard right in the "Needs you" row. Answer opens that bot.
+- "Working now" shows each running bot's task and time, and which step a queued bot waits for. Progress keeps updating while the screen is open.
+- "Latest workflow" lists each step (Researcher, Builder, Reviewer) with its state; tap a step to open its bot.
+- In a bot, "Recent runs" keeps the last five results. Open one to read the full result, see evidence and criteria met, Apply changes to your project, or open its transcript.
+- Approve shows "See request" and a question shows "See question" to open the transcript first.
+- Suggested tasks fill the task box; they never start a run on their own.
+- A bot that is already working can't start a second run; the page says why.
+- On a Mac running the App Store edition, Bots explains that bots need the website edition.
+- Check larger text sizes, iPad split view, and Dark appearance.
+
+Apply changes needs Vamp Companion for Mac with this update; older Macs simply don't show it.
