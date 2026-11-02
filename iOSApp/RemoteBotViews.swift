@@ -67,7 +67,12 @@ struct RemoteBotsView: View {
     private var library: some View {
         RemotePageScroll {
             RemotePageHeading(title: "Your team", subtitle: "Five perspectives. Choose a specialist or give the team one outcome.")
-            if !store.isConnected {
+            // The App Store edition of Vamp Companion refuses bot requests; say so up front.
+            if !botsAvailable {
+                RemoteInlineNotice(title: "Bots aren't available on this Mac",
+                    detail: "This Mac runs the App Store edition of Vamp Companion. Bots need the website edition.")
+                    .clipShape(RoundedRectangle(cornerRadius: 17))
+            } else if !store.isConnected {
                 RemoteInlineNotice(title: "Mac unreachable",
                     detail: "Bots run on your Mac. Reconnect to start or steer a run.",
                     actionTitle: "Retry", action: { Task { await store.connectSaved() } })
@@ -97,7 +102,7 @@ struct RemoteBotsView: View {
                     }
                 }
             }
-            RemotePageSection(title: "Work together") { workflowPanel }
+            if botsAvailable { RemotePageSection(title: "Work together") { workflowPanel } }
         }
         .refreshable { try? await store.refresh() }
         .navigationTitle("Bots")
@@ -121,6 +126,8 @@ struct RemoteBotsView: View {
         store.botRuns.first { $0.profileID == profileID && !$0.isTerminal }
             ?? store.botRuns.first { $0.profileID == profileID }
     }
+
+    private var botsAvailable: Bool { store.hostStatus?.capabilities?.contains("bots") ?? true }
 
     private var canOrchestrate: Bool {
         store.isConnected && !isOrchestrating && !selectedModelID.isEmpty

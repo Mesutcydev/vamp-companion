@@ -18,13 +18,11 @@ enum DesignPreviewScreen: String, CaseIterable {
     case welcome
     case settingsGeneral = "settings-general"
     case settingsModels = "settings-models"
-    case settingsBots = "settings-bots"
     case settingsAgent = "settings-agent"
     case settingsNetwork = "settings-network"
     case settingsPlugins = "settings-plugins"
     case settingsHover = "settings-hover"
     case settingsFocus = "settings-focus"
-    case botsDashboard = "bots"
 
     static func fromLaunchArguments() -> DesignPreviewScreen? {
         let args = ProcessInfo.processInfo.arguments
@@ -63,9 +61,9 @@ enum DesignPreview {
                 transcript: [],
                 plan: [],
                 approval: approval)
-        case .welcome, .settingsGeneral, .settingsModels, .settingsBots,
+        case .welcome, .settingsGeneral, .settingsModels,
              .settingsAgent, .settingsNetwork, .settingsPlugins,
-             .settingsHover, .settingsFocus, .botsDashboard:
+             .settingsHover, .settingsFocus:
             break
         }
     }

@@ -23,7 +23,6 @@ struct SettingsView: View {
         case general = "General"
         case models = "Models & Providers"
         case agent = "Agent"
-        case bots = "Bots"
         case network = "Network"
         case plugins = "Plugins"
         var id: String { rawValue }
@@ -33,7 +32,6 @@ struct SettingsView: View {
             case .general: "gearshape"
             case .models: "square.stack.3d.up"
             case .agent: "cpu"
-            case .bots: "person.3"
             case .network: "network"
             case .plugins: "puzzlepiece"
             }
@@ -105,7 +103,6 @@ struct SettingsView: View {
                                 ModelsAndProvidersTab(section: $modelsSection)
                                     .environmentObject(appState)
                             case .agent: AgentTab()
-                            case .bots: BotsTab()
                             case .network: NetworkTab()
                             case .plugins: PluginsTab()
                             }
@@ -158,7 +155,6 @@ struct SettingsView: View {
         case .general: "Theme, composer, keyboard, and launch behaviour"
         case .models: "Everything that answers what runs your next message"
         case .agent: "Autonomy, generation, safety, memory, and Mac control"
-        case .bots: "Specialist computers, browser profiles, and orchestration"
         case .network: "The local API server and remote iPhone sessions"
         case .plugins: "Tools, integrations, and capability extensions"
         }

@@ -79,6 +79,11 @@ enum BotComputerError: Error, LocalizedError {
 /// Persists bot computers and owns the Apple Container CLI boundary. A bot's
 /// workspace and browser profile never overlap another bot's directories.
 actor BotComputerService {
+    /// The app's one instance. Actor isolation is per instance, and every call reads, edits and
+    /// rewrites `computers.json`: separate instances raced, so two bots set up at once (a
+    /// workflow's parallel first steps) could each overwrite the other's record.
+    static let shared = BotComputerService()
+
     private let root: URL
     private let fileManager: FileManager
 
@@ -171,6 +176,9 @@ actor BotComputerService {
         guard let spec = Self.specialists.first(where: { $0.id == profileID }) else {
             throw BotComputerError.unknownProfile
         }
+        // Before preferredBackend(): it runs `container system status` (up to 5 s), which every
+        // run start paid even though the computer already existed.
+        if let existing = try load().first(where: { $0.profileID == profileID }) { return existing }
         return try prepareIfNeeded(
             profileID: spec.id,
             name: spec.name,
@@ -328,9 +336,12 @@ actor BotComputerService {
         }
         let workspace = URL(fileURLWithPath: record.workspacePath, isDirectory: true)
         let result: CommandResult
-        if record.backend == .appleContainer,
-           let executable = Self.containerExecutable(fileManager: fileManager),
-           let containerName = record.containerName {
+        if record.backend == .appleContainer {
+            // Never fall through to the host shell: that would run a VM-isolated bot's command
+            // directly on the Mac.
+            guard let executable = Self.containerExecutable(fileManager: fileManager),
+                  let containerName = record.containerName
+            else { throw BotComputerError.containersUnavailable }
             result = try ShellRunner.runProcess(
                 executable: executable,
                 arguments: Self.execArguments(

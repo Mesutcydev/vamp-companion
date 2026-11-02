@@ -101,7 +101,6 @@ struct MainWindowView: View {
     /// sheets (or three docked columns) hide the composer.
     private func presentToolPanel(_ panel: ToolPanel) {
         showSettings = false
-        if destination == .bots { destination = .conversations }
         showBrowser = panel == .browser
         showSimulator = panel == .simulator
         showDiagnostics = panel == .diagnostics
@@ -390,7 +389,6 @@ struct MainWindowView: View {
     /// falling back to the workspace name when there is no saved chat yet.
     private var windowTitle: String {
         if showSettings { return "Settings" }
-        if destination == .bots { return "Bots" }
         if let id = sessions.activeSessionID,
            let record = SessionStore.shared.load(id: id) {
             let title = SessionTitle.display(for: record)
@@ -590,7 +588,7 @@ struct MainWindowView: View {
     private var appNotifications: AnyPublisher<Notification, Never> {
         Publishers.MergeMany([
             .openModelManager, .openWorkspace, .openSystemReadiness, .openRemoteAccess,
-            .openBrowserPanel, .openBotsDashboard, .openAssistantHome, .openAppSettings,
+            .openBrowserPanel, .openAssistantHome, .openAppSettings,
             .openProviderSettings,
             .toggleBrowserPanel, .toggleSimulatorPanel, .toggleDiagnosticsPanel,
             .gitStatus, .gitDiff, .undoCheckpoint, .exportChatMarkdown,
@@ -609,19 +607,11 @@ struct MainWindowView: View {
             showReadiness = true
         case .openRemoteAccess: requestRemoteAccess()
         case .openBrowserPanel: presentToolPanel(.browser)
-        case .openBotsDashboard:
-            showSettings = false
-            destination = .bots
-            showBrowser = false
-            showSimulator = false
-            showDiagnostics = false
         case .openAssistantHome:
             showSettings = false
-            if destination == .bots { destination = .conversations }
         case .openAppSettings:
             settingsTab = .general
             showSettings = true
-            if destination == .bots { destination = .conversations }
             showBrowser = false
             showSimulator = false
             showDiagnostics = false
@@ -637,7 +627,6 @@ struct MainWindowView: View {
         case .exportChatJSON: exportCurrentChat(format: .json)
         case .exportTaskBundle: exportCurrentTaskBundle()
         case .newChat:
-            if destination == .bots { destination = .conversations }
             // New Chat is contextual: it preserves the selected project and
             // starts inside it. Leaving the project is an explicit action in
             // the sidebar's workspace menu.
@@ -668,7 +657,6 @@ struct MainWindowView: View {
         settingsTab = .models
         settingsModelsSection = .library
         showSettings = true
-        if destination == .bots { destination = .conversations }
         showBrowser = false
         showSimulator = false
         showDiagnostics = false
@@ -678,7 +666,6 @@ struct MainWindowView: View {
         settingsTab = .models
         settingsModelsSection = .providers
         showSettings = true
-        if destination == .bots { destination = .conversations }
         showBrowser = false
         showSimulator = false
         showDiagnostics = false
@@ -717,7 +704,6 @@ struct MainWindowView: View {
             // requested fixture so the screenshot always shows the argument
             // that launched this exact binary.
             showSettings = false
-            if destination == .bots { destination = .conversations }
             showBrowser = false
             showSimulator = false
             showDiagnostics = false
@@ -752,9 +738,6 @@ struct MainWindowView: View {
                 settingsTab = .models
                 settingsModelsSection = .library
                 showSettings = true
-            case .settingsBots:
-                settingsTab = .bots
-                showSettings = true
             case .settingsAgent:
                 settingsTab = .agent
                 showSettings = true
@@ -770,9 +753,6 @@ struct MainWindowView: View {
             case .settingsFocus:
                 settingsTab = .general
                 showSettings = true
-            case .botsDashboard:
-                showSettings = false
-                destination = .bots
             }
         }
     }
@@ -848,7 +828,6 @@ struct MainWindowView: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
-            if destination == .bots { destination = .conversations }
             await sessions.switchWorkspace(to: url)
             if case .failed = appState.enginePhase { appState.enginePhase = .idle }
             var preferences = AppPreferencesStore.shared.current
@@ -939,11 +918,6 @@ struct MainWindowView: View {
     @ViewBuilder
     private func detailPane(compact: Bool) -> some View {
         switch destination {
-        case .bots:
-            BotDashboardView()
-                .environmentObject(appState)
-                .environmentObject(sessions)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .devices:
             RemoteAccessView(presentedAsSheet: false)
                 .environmentObject(appState)

@@ -286,7 +286,7 @@ final class AppState: ObservableObject {
             return true
         }
         botRuns.pruneHandler = { ids in
-            Task { try? await BotComputerService().removeRunWorkspaces(runIDs: ids) }
+            Task { try? await BotComputerService.shared.removeRunWorkspaces(runIDs: ids) }
         }
         Task { [weak self] in
             await BotRunToolBridge.shared.configure { [weak self] command in
@@ -446,12 +446,13 @@ final class AppState: ObservableObject {
         return local + chatGPT + api
     }
 
-    var botModelOptions: [RemoteStartModel] { remoteStartModels() }
-
     private func startBotRun(_ run: BotRunRecord) async -> RemoteSessionStartOutcome {
-        let service = BotComputerService()
+        let service = BotComputerService.shared
         do {
-            var computer = try await service.prepareSpecialist(profileID: run.profileID)
+            let prepared = try await service.prepareSpecialist(profileID: run.profileID)
+            // The saved state goes stale when the Mac restarts: a "running" VM that is actually
+            // stopped was never started, and every command of the run failed.
+            var computer = try await service.refresh().first { $0.id == prepared.id } ?? prepared
             if computer.state != .running {
                 computer = try await service.start(id: computer.id)
             }
@@ -536,8 +537,10 @@ final class AppState: ObservableObject {
             await controller.switchWorkspace(
                 to: URL(fileURLWithPath: work.path, isDirectory: true),
                 restoreLatest: false)
+            // Bot runs auto-approve every tool, so driving other Mac apps must stay behind the
+            // user's own Computer control opt-in rather than come with the Navigator role.
             controller.applyRemoteIsolation(
-                computerControl: run.profileID == "navigator",
+                computerControl: run.profileID == "navigator" && settings.computerControlEnabled,
                 linuxContainer: computer.backend == .appleContainer ? LinuxContainerTarget(
                     executable: BotComputerService.containerCLI() ?? "",
                     containerName: computer.containerName ?? "",
@@ -656,7 +659,7 @@ final class AppState: ObservableObject {
             return (false, "This run has no changes to apply: it did not work on a Git project.")
         }
         do {
-            let summary = try await BotComputerService().applyChanges(
+            let summary = try await BotComputerService.shared.applyChanges(
                 workPath: work, baseTree: base, projectPath: project)
             botRuns.markApplied(runID: runID)
             return (true, summary)
@@ -802,7 +805,7 @@ final class AppState: ObservableObject {
             await sessions.switchToChatOnly()
         }
         sessions.applyRemoteIsolation(
-            computerControl: options.botProfileID == "navigator",
+            computerControl: options.botProfileID == "navigator" && settings.computerControlEnabled,
             linuxContainer: options.linuxContainer,
             browser: options.botBrowser)
         let now = Date()

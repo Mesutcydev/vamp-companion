@@ -11,14 +11,13 @@ import SwiftUI
 
 /// The sidebar's fixed destinations, above the conversation list.
 enum ShellDestination: String, Hashable, CaseIterable, Identifiable {
-    case conversations, bots, devices
+    case conversations, devices
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .conversations: "Conversations"
-        case .bots: "Bots"
         case .devices: "Devices"
         }
     }
@@ -26,7 +25,6 @@ enum ShellDestination: String, Hashable, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .conversations: "bubble.left.and.bubble.right"
-        case .bots: "person.2"
         case .devices: "iphone"
         }
     }

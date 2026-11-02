@@ -294,7 +294,6 @@ extension Notification.Name {
     static let openWorkspace = Notification.Name("com.beetcode.openWorkspace")
     static let openSystemReadiness = Notification.Name("com.beetcode.openSystemReadiness")
     static let focusChatSearch = Notification.Name("com.beetcode.focusChatSearch")
-    static let openBotsDashboard = Notification.Name("com.beetcode.openBotsDashboard")
     static let openAssistantHome = Notification.Name("com.beetcode.openAssistantHome")
     static let openAppSettings = Notification.Name("com.beetcode.openAppSettings")
     /// Open one saved conversation by id (object: UUID) — posted by the

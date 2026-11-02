@@ -1,43 +1,6 @@
 import Combine
 import Foundation
 
-/// Draft lifetime is independent of navigation. Files are local and owner-only.
-@MainActor
-final class BotDraftStore: ObservableObject {
-    static let shared = BotDraftStore()
-    @Published private(set) var errorMessage: String?
-    private var values: [String: String] = [:]
-    private let url: URL?
-
-    init(url: URL? = nil) {
-        self.url = url ?? (AppState.isTestHost || ProcessInfo.processInfo.arguments.contains("--design-preview")
-            ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("VampCompanion/BotDrafts/drafts.json"))
-        if let file = self.url, let data = try? Data(contentsOf: file) {
-            values = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
-        }
-    }
-
-    func value(for key: String) -> String { values[key] ?? "" }
-    func set(_ value: String, for key: String) {
-        values[key] = value.isEmpty ? nil : value
-        retry()
-    }
-    func retry() {
-        guard let url else { return }
-        do {
-            let manager = FileManager.default
-            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                        attributes: [.posixPermissions: 0o700])
-            try JSONEncoder().encode(values).write(to: url, options: .atomic)
-            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            errorMessage = nil
-        } catch {
-            errorMessage = "Drafts are retained in memory, but could not be saved: \(error.localizedDescription)"
-        }
-    }
-}
-
 @MainActor
 final class BotRunCoordinator: ObservableObject {
     struct StartError: Error, LocalizedError, Equatable {
@@ -67,6 +30,10 @@ final class BotRunCoordinator: ObservableObject {
     private var activeRunIDs: Set<UUID> = []
     private var activeLocalRunID: UUID?
     private var budgetTasks: [UUID: Task<Void, Never>] = [:]
+    private var budgetDeadlines: [UUID: Date] = [:]
+    /// Remaining budget of runs waiting on the user.
+    private var pausedBudgets: [UUID: TimeInterval] = [:]
+    private var persistQueued = false
     /// Tail of the persistence chain. See `persist()`.
     private var persistTask: Task<Void, Never>?
     @Published private(set) var persistenceError: String?
@@ -346,6 +313,10 @@ final class BotRunCoordinator: ObservableObject {
                 }
             }
         }
+        if finish == nil, let state = record(run.id)?.state, state != run.state {
+            if state == .needsApproval || state == .needsInput { pauseBudget(run.id) }
+            else if state == .running { resumeBudget(run.id) }
+        }
         // A passing independent review is the verification a build step cannot give itself.
         if case .completed = finish, run.evidence?.phase == .review, BotRunEvidence.reportsPass(text) {
             for id in run.dependencyRunIDs ?? [] {
@@ -575,15 +546,29 @@ final class BotRunCoordinator: ObservableObject {
         }
     }
 
-    private func scheduleBudget(for run: BotRunRecord) {
+    private func scheduleBudget(for run: BotRunRecord, seconds: TimeInterval? = nil) {
         budgetTasks[run.id]?.cancel()
-        let seconds = run.budget?.maximumDurationSeconds
+        let seconds = seconds ?? run.budget?.maximumDurationSeconds
             ?? BotRunBudget.standard.maximumDurationSeconds
+        budgetDeadlines[run.id] = Date().addingTimeInterval(seconds)
         budgetTasks[run.id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             await MainActor.run { self?.expireBudget(runID: run.id) }
         }
+    }
+
+    /// Time spent waiting on the user doesn't count: an unanswered question used to fail the
+    /// run once its 30 minutes ran out.
+    private func pauseBudget(_ runID: UUID) {
+        guard let deadline = budgetDeadlines.removeValue(forKey: runID) else { return }
+        budgetTasks.removeValue(forKey: runID)?.cancel()
+        pausedBudgets[runID] = max(deadline.timeIntervalSinceNow, 0)
+    }
+
+    private func resumeBudget(_ runID: UUID) {
+        guard let remaining = pausedBudgets.removeValue(forKey: runID), let run = record(runID) else { return }
+        scheduleBudget(for: run, seconds: remaining)
     }
 
     /// End a run that has used up its time budget.
@@ -613,6 +598,8 @@ final class BotRunCoordinator: ObservableObject {
         pruneHistory()
         budgetTasks[runID]?.cancel()
         budgetTasks[runID] = nil
+        budgetDeadlines[runID] = nil
+        pausedBudgets[runID] = nil
         activeRunIDs.remove(runID)
         if activeLocalRunID == runID { activeLocalRunID = nil }
         refreshQueuePositions()
@@ -655,11 +642,18 @@ final class BotRunCoordinator: ObservableObject {
     /// save on every mutation. A single `drain()` therefore raced a dozen overlapping writes,
     /// any of which could land after a newer one and walk run state backwards on disk. Chaining
     /// each write behind the previous one costs nothing and makes the last writer the newest.
+    ///
+    /// Writes are also coalesced: while one is queued, later calls ride on it, and it saves
+    /// whatever `runs` holds when it runs. Streaming syncs used to rewrite the whole history
+    /// about twice a second per active run.
     private func persist() {
-        let snapshot = runs
+        guard !persistQueued else { return }
+        persistQueued = true
         let previous = persistTask
         persistTask = Task { [store] in
             await previous?.value
+            persistQueued = false
+            let snapshot = runs
             do {
                 try await store.save(snapshot)
                 persistenceError = nil

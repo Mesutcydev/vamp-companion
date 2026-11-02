@@ -3,20 +3,6 @@ import XCTest
 
 final class BotComputerServiceTests: XCTestCase {
     @MainActor
-    func testDraftsSurviveStoreRecreationAndStayPrivate() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let url = root.appendingPathComponent("drafts.json")
-        let drafts = BotDraftStore(url: url)
-        drafts.set("Keep this task", for: "builder:task")
-        drafts.set("Research draft", for: "researcher:task")
-        let restored = BotDraftStore(url: url)
-        XCTAssertEqual(restored.value(for: "builder:task"), "Keep this task")
-        XCTAssertEqual(restored.value(for: "researcher:task"), "Research draft")
-        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber, 0o600)
-    }
-
-    @MainActor
     func testFailedPersistencePreventsRuntimeStartAndCanRetry() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -497,6 +483,32 @@ final class BotComputerServiceTests: XCTestCase {
 
         XCTAssertEqual(started, ["builder"], "the step the Reviewer waits on must start")
         XCTAssertEqual(coordinator.runs.first { $0.id == reviewer.id }?.state, .queued)
+    }
+
+    @MainActor
+    func testBudgetPausesWhileTheRunWaitsOnTheUser() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = BotRunStore(root: root)
+        var run = BotRunRecord.queued(
+            profileID: "builder", profileName: "Builder", modelID: "api|test", prompt: "Build")
+        run.state = .recoverable
+        run.budget = BotRunBudget(maximumTurns: 30, maximumDurationSeconds: 0.4, maximumRetries: 0)
+        try await store.save([run])
+        let coordinator = BotRunCoordinator(store: store)
+        coordinator.startHandler = { _ in .accepted(UUID()) }
+        func state() -> BotRunState? { coordinator.runs.first { $0.id == run.id }?.state }
+        await waitUntil { coordinator.runs.count == 1 }
+        XCTAssertTrue(coordinator.resume(runID: run.id))
+        await waitUntil { coordinator.runs.first?.sessionID != nil }
+
+        coordinator.sync(runID: run.id, phase: .awaitingQuestion, finish: nil, output: "")
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(state(), .needsInput, "waiting on the user must not use up the budget")
+
+        coordinator.sync(runID: run.id, phase: .working, finish: nil, output: "")
+        await waitUntil { state() == .failed }
+        XCTAssertEqual(coordinator.runs.first?.phase, "Budget exceeded")
     }
 
     @MainActor

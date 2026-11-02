@@ -250,7 +250,7 @@ final class RemoteSessionHost {
         self.engine = engine
         self.sessions = sessions
         self.sharing = sharing ?? RemoteSharingStore()
-        self.botComputers = botComputers ?? BotComputerService()
+        self.botComputers = botComputers ?? .shared
         self.persistsPairedClients = persistsPairedClients
         self.tokens = persistsPairedClients ? RemotePairedClientStore.load() : [:]
         if persistsPairedClients {
@@ -849,7 +849,8 @@ final class RemoteSessionHost {
             }
             if let botID = options.botComputerID {
                 do {
-                    var record = try await botComputers.load().first(where: { $0.id == botID })
+                    // refresh(), not load(): a saved "running" goes stale when the Mac restarts.
+                    var record = try await botComputers.refresh().first(where: { $0.id == botID })
                     if let current = record, current.backend == .isolatedWorkspace, current.state != .running {
                         record = try await botComputers.start(id: botID)
                     }
