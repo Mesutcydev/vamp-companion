@@ -270,7 +270,9 @@ struct RemotePageButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .frame(minHeight: 44)
+            // Exactly 44 can measure 43.99997 at a fractional y; the half point keeps
+            // every button at or above the 44-pt touch target wherever it lands.
+            .frame(minHeight: 44.5)
             .padding(.horizontal, 14)
             .foregroundStyle(primary ? Color.white : configuration.role == .destructive ? RemoteInstrument.danger : RemoteInstrument.ink)
             .background(primary ? BeetTheme.accent : RemoteInstrument.recess,

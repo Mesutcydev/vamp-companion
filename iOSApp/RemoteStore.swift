@@ -339,7 +339,8 @@ final class RemoteStore {
         lastConnectedAt = Date()
         connectionAvailable = true
         consecutivePollingFailures = 0
-        noteIdleTick(changed: sessions != nextList.sessions)
+        // Bot runs count as activity: they change without touching the session list.
+        noteIdleTick(changed: sessions != nextList.sessions || botRuns != nextBotRuns)
         sessions = nextList.sessions
         // Bot runs were added after the original paired-session protocol;
         // an older Mac must remain usable instead of failing the whole refresh.
@@ -1514,6 +1515,8 @@ final class RemoteStore {
     private var pollInterval: Duration {
         if selectedSession != nil { return .seconds(2) }
         if sessions.contains(where: \.isRunning) { return .seconds(2) }
+        // Working bots stay live without polling every 2 s: the run list is the heaviest payload.
+        if botRuns.contains(where: \.isWorking) { return .seconds(4) }
         return .seconds(pollIdleSeconds)
     }
 

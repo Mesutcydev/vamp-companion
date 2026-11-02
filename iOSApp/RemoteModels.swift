@@ -256,6 +256,13 @@ struct RemoteBotRun: Decodable, Identifiable, Hashable {
     var finalOutput: String {
         artifacts?.last(where: { $0.kind == "summary" })?.value ?? latestOutput
     }
+    /// The task as the user wrote it: workflow steps carry the Mac's orchestration contract
+    /// and earlier steps' handoffs after it.
+    var objective: String { prompt.components(separatedBy: "\n\nOrchestration contract").first ?? prompt }
+    var needsAttention: Bool { ["needsApproval", "needsInput", "recoverable"].contains(state) }
+    var isWorking: Bool { state == "queued" || state == "running" }
+    var startedAt: Date { Date(timeIntervalSince1970: createdAt) }
+    var finishedAt: Date { Date(timeIntervalSince1970: updatedAt) }
 }
 struct RemoteBotWorkspaceEntry: Decodable, Identifiable, Hashable {
     var id: String { path }
