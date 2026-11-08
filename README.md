@@ -14,7 +14,7 @@ Requires an Apple Silicon Mac with macOS 15 or later. The public iOS download
 is not available yet; an existing sideloaded Vamp Assistant iOS build can pair
 with the companion.
 
-1. Download the notarized ZIP, unzip it, and move **Vamp Companion.app** to Applications.
+1. Download the Developer ID signed DMG, open it, and move **Vamp Companion.app** to Applications. The current website preview has not been notarized by Apple.
 2. In Models, use a model already downloaded in Vamp Assistant, or download or
    import a supported model. For API-backed models, open
    Settings → Manage API providers and accounts.
@@ -132,3 +132,6 @@ MIT, derived from [Vamp Assistant](https://github.com/Mesutcydev/vamp-assistant)
 The original copyright and third-party dependency notices are retained.
 Historical architecture and release documents under docs describe the source
 application; current companion behavior is documented here.
+
+The current website DMG preview bundles the upstream and Prism GGUF runtimes.
+It is Developer ID signed; Apple notarization and Sparkle promotion are deferred.

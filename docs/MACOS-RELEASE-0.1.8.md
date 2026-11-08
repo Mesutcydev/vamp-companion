@@ -21,5 +21,9 @@ Validation: both macOS test bundles compile; 14 headless Swift core tests and
 checks pass. App-hosted XCTest execution remains unverified because Xcode's
 runner stalls before test execution. Companion's unchanged-iOS guard passes.
 
-Developer ID signatures, Apple notarization, stapling, Gatekeeper, and Sparkle
-archive/feed signatures are verified before publication.
+The website DMG and app are Developer ID signed. At the user’s request, Apple
+notarization and Sparkle promotion are deferred. No Apple upload completed.
+The existing signed Sparkle feed continues to serve the previous notarized build.
+
+Website artifact: `Vamp-Companion-0.1.8-build-12-preview.dmg` (45,715,143 bytes).
+SHA-256: `ae1f534480435d4f5c02f217299ee04dfba243bd6635ec0b8c802f15aac2c6a5`.
