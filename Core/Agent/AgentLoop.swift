@@ -207,6 +207,7 @@ actor AgentLoop {
             }
         }
         let context = ToolContext(workspace: workspace)
+        context.mediaEngine = engine
         context.linuxContainer = linuxContainer
         context.browserSession = browserSession
         context.memory = memory

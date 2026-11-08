@@ -283,6 +283,8 @@ final class ToolContext: @unchecked Sendable {
     var browserSession: BrowserSession?
     /// Long-term memory for the current workspace (nil when disabled).
     var memory: AgentMemory?
+    /// The active session engine; media tools never choose a provider themselves.
+    var mediaEngine: (any LLMEngine)?
     private let lock = NSLock()
     private var readFiles: Set<String> = []
     private let cancelFlag = OSAllocatedUnfairLock(initialState: false)

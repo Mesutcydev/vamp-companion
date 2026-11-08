@@ -39,6 +39,7 @@ BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' App/Info.plist)"
 WORK="$ROOT/dist/macos-${VERSION}-build-${BUILD}"
 [[ ! -e "$WORK" ]] || { echo "Release work already exists: $WORK. Use the exported app with finalize-vamp-companion.sh." >&2; exit 1; }
 mkdir -p "$WORK"
+python3 "$ROOT/scripts/install-inference-runtimes.py" --runtime compatible --destination "$ROOT/.release-runtimes"
 DESTINATION=export
 [[ "$MODE" != --submit ]] || DESTINATION=upload
 
@@ -58,7 +59,7 @@ xcodebuild -project BeetCode.xcodeproj -scheme VampCompanion -configuration Rele
   -destination 'generic/platform=macOS' -derivedDataPath "$ROOT/.derived" -clonedSourcePackagesDirPath "$ROOT/.spm" -disableAutomaticPackageResolution -skipPackageUpdates -jobs 1 \
   -onlyUsePackageVersionsFromResolvedFile -skipPackagePluginValidation -skipMacroValidation \
   -archivePath "$WORK/Vamp Companion.xcarchive" \
-  ARCHS=arm64 EXCLUDED_ARCHS=x86_64 CODE_SIGN_STYLE=Manual \
+  VAMP_BUNDLE_RUNTIMES=YES ARCHS=arm64 EXCLUDED_ARCHS=x86_64 CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$IDENTITY" DEVELOPMENT_TEAM="$TEAM" \
   COMPILER_INDEX_STORE_ENABLE=NO GCC_GENERATE_DEBUGGING_SYMBOLS=NO SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO \
   ENABLE_HARDENED_RUNTIME=YES CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \

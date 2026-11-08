@@ -86,11 +86,12 @@ Local MLX, GGUF, model import/download logic, inference safeguards, and provider
 versions are inherited from Vamp Assistant. Model IDs and remote protocol
 version 1 remain compatible with the existing iOS app.
 
-GGUF compatibility runtimes can be matched to exact model IDs or GGUF
-architectures. To install the pinned LFM3-compatible runtime, run
-`python3 scripts/install-inference-runtimes.py --runtime llamaCompatibility`.
-Companion selects it automatically for LFM3; unrelated models keep their
-existing runtimes. Experimental acceleration remains separately opt-in.
+Current GGUF runtimes are selected automatically by architecture and packed
+file type. Install them with
+`python3 scripts/install-inference-runtimes.py --runtime compatible`.
+LFM3 Omni supports local file-based audio/video analysis and WAV speech
+through `analyze_media` and `generate_speech`. See the
+[runtime compatibility and verification notes](docs/RUNTIME-COMPATIBILITY-2026-11-08.md).
 
 ## Build and test
 

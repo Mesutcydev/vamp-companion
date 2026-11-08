@@ -2774,6 +2774,8 @@ final class AgentSessionController: ObservableObject {
         SimDescribeTool(),
         SimScreenshotTool(),
         DescribeImageTool(),
+        AnalyzeMediaTool(),
+        GenerateSpeechTool(),
         SimBuildRunTool(),
         // In-app browser: extraction is auto-approved; navigation/click/
         // type/eval go through the approval card like every other mutation.
@@ -2835,6 +2837,8 @@ final class AgentSessionController: ObservableObject {
         let botControlTools = botRun ? [] : Self.botControlTools
         if chatOnly {
             let statusTools: [any AgentTool] = [
+                AnalyzeMediaTool(),
+                GenerateSpeechTool(),
                 TailscaleStatusTool(),
                 DiskSpaceStatusTool(),
                 MacSystemStatusTool(),
@@ -2860,6 +2864,8 @@ final class AgentSessionController: ObservableObject {
     /// avoiding computer-use, app-scaffolding, build-run orchestration, and
     /// advanced browser schemas in every model prefill.
     static let constrainedLocalTools: [any AgentTool] = [
+        AnalyzeMediaTool(),
+        GenerateSpeechTool(),
         ReadFileTool(),
         WriteFileTool(),
         ListDirectoryTool(),

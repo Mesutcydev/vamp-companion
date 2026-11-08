@@ -147,9 +147,9 @@ final class LiveManagedInferenceTests: XCTestCase {
             ("lfm3-1.7b-atomic-uncensored-ad-q6k", 1_587_969_920),
         ]
         for (modelID, size) in models {
-            let engine = GGUFEngine(resolveCompatibilityRuntime: { id, architecture in
+            let engine = GGUFEngine(resolveCompatibilityRuntime: { id, architecture, fileType in
                 ManagedInferenceRuntime.selectGGUFCompatibility(
-                    modelID: id, architecture: architecture, runtimes: runtimes)
+                    modelID: id, architecture: architecture, fileType: fileType, runtimes: runtimes)
             })
             try await engine.load(directory: root.appendingPathComponent(modelID),
                                   modelID: modelID, diskBytes: size, contextSize: 8_192)
