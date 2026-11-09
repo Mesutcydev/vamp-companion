@@ -32,8 +32,8 @@ struct CompanionSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                CompanionPageHeading(eyebrow: "Preferences", title: "Make it yours.",
-                                     subtitle: "Connect your providers and choose what paired devices can access.")
+                CompanionPageHeading(title: "Settings",
+                                     subtitle: "Providers, appearance, and what paired devices can reach.")
                 if CompanionDistribution.isAppStore { CompanionWebsitePromoCard() }
                 CompanionGeneralSettings()
                 SettingsCard(title: "Connections", icon: "key") {

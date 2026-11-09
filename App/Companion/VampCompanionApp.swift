@@ -27,7 +27,10 @@ enum CompanionDestination: String, CaseIterable, Identifiable {
 @Observable
 final class CompanionNavigation {
     static let shared = CompanionNavigation()
-    var destination = CompanionDestination.models
+    // Screenshot runs open a chosen page; only the test host reads this.
+    var destination = AppState.isTestHost
+        ? ProcessInfo.processInfo.environment["VAMP_COMPANION_TEST_DESTINATION"].flatMap(CompanionDestination.init(rawValue:)) ?? .models
+        : .models
     var showsProviders = false
 }
 

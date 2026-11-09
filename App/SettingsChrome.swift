@@ -8,8 +8,8 @@ struct SettingsCard<Content: View>: View {
     var footer: String? = nil
     @ViewBuilder var content: Content
 
-    /// One silver faceplate per group: engraved technical heading inside,
-    /// aligned rows beneath, helper text below the plate.
+    /// One card per group: a sentence-case heading inside, aligned rows
+    /// beneath, helper text below the card.
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
             VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -17,8 +17,8 @@ struct SettingsCard<Content: View>: View {
                     Image(systemName: icon)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(CompanionBrand.ink)
-                        .frame(width: 27, height: 27)
-                        .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
+                        .frame(width: 26, height: 26)
+                        .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     Text(title)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(CompanionBrand.ink)

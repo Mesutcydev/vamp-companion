@@ -1,0 +1,13 @@
+Vamp Companion 0.10.59 (145)
+
+A cleaner chat screen.
+
+Please test in a chat:
+- Your messages sit on the right and fit their text, even short ones like "Hey".
+- Images or files you attach show as a small chip under your message (for example "1 image").
+- Lists in Vamp's replies show real bullets and numbers. Sub-points, quotes, headings and dividers are formatted too.
+- Each Vamp reply ends with the Vamp logo and a Copy button. While Vamp works, the same row shows the glowing logo, the step (Thinking) and moving dots. Nothing should jump when the reply finishes.
+- System notes such as "Image sent to …" are small grey text with a matching icon.
+- Tool steps are one row: name on the left, Done or Failed on the right. Tap to open the details.
+- Long-press your message: Copy and Use in composer leave out the attachment chip text.
+- Check Light and Dark, and larger text sizes.

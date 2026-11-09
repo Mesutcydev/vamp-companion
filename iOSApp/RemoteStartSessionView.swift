@@ -6,21 +6,23 @@ import UniformTypeIdentifiers
 struct RemoteStartChip: View {
   let title: String
   let symbol: String
+  var showsChevron = true
 
   var body: some View {
     HStack(spacing: 6) {
       Image(systemName: symbol).font(.caption.weight(.semibold))
         .foregroundStyle(BeetTheme.accentBright).accessibilityHidden(true)
       Text(title).lineLimit(1).truncationMode(.middle)
-      Image(systemName: "chevron.down").font(.caption2.weight(.bold))
-        .foregroundStyle(RemoteInstrument.secondaryInk).accessibilityHidden(true)
+      if showsChevron {
+        Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+          .foregroundStyle(RemoteInstrument.secondaryInk).accessibilityHidden(true)
+      }
     }
-    .font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
-    .padding(.horizontal, 12).frame(minHeight: 36)
-    .background(RemoteInstrument.recess, in: Capsule())
-    .overlay { Capsule().strokeBorder(RemoteInstrument.seam.opacity(0.3), lineWidth: 0.75) }
-    // 36-point capsule, 44-point target.
-    .padding(.vertical, 4).contentShape(Rectangle())
+    .font(.footnote.weight(.semibold)).foregroundStyle(RemoteInstrument.ink)
+    .padding(.horizontal, 12).frame(minHeight: 34)
+    .vampGlass(Capsule(), interactive: true)
+    // 34-point capsule, 44-point target.
+    .padding(.vertical, 5).contentShape(Rectangle())
   }
 }
 
@@ -81,6 +83,9 @@ struct StartSessionSheet: View {
   @State private var folderPathDraft = ""
   @State private var showPathEntry = false
   @State private var didRestoreChoices = false
+  @State private var showWorkspace = false
+  @State private var showAPIKey = false
+  private let focusOnOpen: Bool
   // Start choices follow the Mac's restored-project behavior without
   // becoming part of the remote protocol or a persisted prompt draft.
   @AppStorage("remoteStart.sessionMode") private var savedSessionModeRaw =
@@ -89,10 +94,7 @@ struct StartSessionSheet: View {
   @AppStorage("remoteStart.modelID") private var savedModelID = ""
   @AppStorage("remoteStart.reasoningEffort") private var savedReasoningEffort = ""
   @AppStorage("remoteStart.workspacePath") private var savedWorkspacePath = ""
-  @FocusState private var taskFocused: Bool
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
   init(
     store: RemoteStore, initialBotID: String, initialPrompt: String = "",
@@ -103,6 +105,8 @@ struct StartSessionSheet: View {
     self.initialBotID = initialBotID
     self.initialModelID = initialModelID
     self.onStarted = onStarted
+    // Writing is the first step; reviewed quick starts keep the keyboard down.
+    focusOnOpen = initialPrompt.isEmpty
     _prompt = State(initialValue: initialPrompt)
   }
 
@@ -170,54 +174,55 @@ struct StartSessionSheet: View {
 
   var body: some View {
     NavigationStack {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
-          if !store.isConnected { RemoteReconnectBanner(store: store) }
-
-          VStack(alignment: .leading, spacing: 7) {
-            if codeModeAvailable {
-              RemotePageSegments(selection: $sessionMode,
-                options: RemoteSessionMode.allCases.map { ($0.title, $0) })
-                .accessibilityLabel("Session mode")
+      GeometryReader { proxy in
+        ScrollView {
+          VStack(spacing: 18) {
+            if !store.isConnected { RemoteReconnectBanner(store: store) }
+            greeting
+            catalogNotice
+            if let hint = startHint {
+              Label(hint, systemImage: "info.circle")
+                .font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
             }
-            Text(sessionMode == .chat
-                 ? "Ask anything. No project folder is opened."
-                 : "Vamp works inside a project folder on your Mac.")
-              .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-              .fixedSize(horizontal: false, vertical: true)
           }
-
-          composer
-
-          if let hint = startHint {
-            Label(hint, systemImage: "info.circle")
-              .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-              .fixedSize(horizontal: false, vertical: true)
-              .padding(.horizontal, 4)
-          }
-
-          catalogNotice
-
-          setupSection
+          .padding(.horizontal, 16).padding(.vertical, 12)
+          .frame(maxWidth: RemoteInstrument.contentWidth)
+          .frame(maxWidth: .infinity, minHeight: proxy.size.height)
         }
-        .padding(.horizontal, horizontalSizeClass == .compact ? 16 : 20)
-        .padding(.vertical, 16)
-        .frame(maxWidth: RemoteInstrument.contentWidth)
-        .frame(maxWidth: .infinity)
+        .scrollDismissesKeyboard(.interactively)
       }
-      .scrollContentBackground(.hidden)
-      .scrollDismissesKeyboard(.interactively)
-      .background(RemoteInstrument.canvas)
+      .background { RemoteBackdrop() }
       .navigationTitle(sessionMode == .chat ? "New chat" : "New code session")
       .navigationBarTitleDisplayMode(.inline)
       .remotePageChrome()
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-          .vampUtilityAction()
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel", systemImage: "xmark") { dismiss() }
+            .tint(RemoteInstrument.ink)
+        }
+        ToolbarItem(placement: .principal) {
+          if codeModeAvailable {
+            modePicker.pickerStyle(.segmented).frame(width: 190)
+          } else {
+            Text(sessionMode == .chat ? "New chat" : "New code session").font(.headline)
+          }
+        }
       }
-
-      .sheet(item: $consoleComputer) { computer in
-        RemoteBotConsoleView(store: store, computer: computer)
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        VStack(spacing: 0) {
+          setupChips
+          RemoteComposer(
+            draft: $prompt, isRunning: false, isReachable: store.isConnected, isSending: isStarting,
+            onSend: start, onStop: {},
+            modelName: store.startModels.contains(where: { $0.id == selectedModelID }) ? selectedModelName : nil,
+            onSelectModel: { showModelPicker = true },
+            modeName: sessionMode.title,
+            editorID: "remote.start.prompt", primaryID: "remote.start.submit",
+            sendLabel: sessionMode == .chat ? "Start chat" : "Start session",
+            placeholderText: sessionMode == .chat ? "Message Vamp…" : "What should Vamp work on?",
+            canSend: canStart, autoFocus: focusOnOpen)
+        }
       }
       .sheet(isPresented: $showModelPicker) {
         RemoteModelPickerSheet(
@@ -233,11 +238,20 @@ struct StartSessionSheet: View {
         )
         .environment(\.remoteAppearance, appearance)
       }
+      .sheet(isPresented: $showWorkspace) {
+        NavigationStack {
+          workspacePage
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showWorkspace = false } } }
+        }
+        .presentationDetents([.medium, .large])
+      }
+      .sheet(isPresented: $showAPIKey) {
+        NavigationStack { apiKeyPage }
+          .presentationDetents([.medium])
+      }
       .task {
         guard !didRestoreChoices else { return }
         didRestoreChoices = true
-        // Writing is the first step; reviewed quick starts keep the keyboard down.
-        taskFocused = prompt.isEmpty
         selectedBotID = botsAvailable ? initialBotID : ""
         source = savedSource
         selectedModelID = savedModelID
@@ -287,212 +301,147 @@ struct StartSessionSheet: View {
         handleModeChange(mode)
       }
       .onChange(of: selectedBotID) { _, _ in attachMatchingBotComputer() }
-      .alert("New folder on Mac", isPresented: $showNewFolder) {
-        TextField("Folder name", text: $newFolderName)
-        Button("Cancel", role: .cancel) { newFolderName = "" }
-        Button("Create") { createFolder() }
-      } message: {
-        Text(
-          store.workspaceCreateParent.map { "Created inside \($0)." }
-            ?? "Created in the app’s Documents folder on your Mac.")
-      }
-      .alert("Open a folder path", isPresented: $showPathEntry) {
-        TextField("~/Developer/my-app", text: $folderPathDraft)
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-        Button("Cancel", role: .cancel) { folderPathDraft = "" }
-        Button("Open") { openFolderPath() }
-      } message: {
-        Text("The folder must already exist inside your Mac home directory.")
-      }
       .keyboardDismissToolbar()
     }
     .remotePageErrors(store: store)
   }
 
-  /// The message and the choices that shape it share one surface, so the
-  /// model, folder, and Start stay reachable above the keyboard.
-  private var composer: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      // ponytail: a `prompt` truncates to one line on a vertical-axis
-      // field, so at accessibility sizes this read "What should i…".
-      // The placeholder is a sibling in the ZStack rather than an
-      // overlay so it contributes height — the frame is a floor, so the box
-      // grows to fit the wrapped text instead of clipping it.
-      ZStack(alignment: .topLeading) {
-        if prompt.isEmpty {
-          Text(sessionMode == .chat ? "Message Vamp…" : "What should Vamp work on?")
-            .font(.body)
-            .foregroundStyle(RemoteInstrument.secondaryInk)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-        // The field reserves its own lines, so the whole box takes focus.
-        TextField("", text: $prompt, axis: .vertical)
-          .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2...4 : 4...8)
-          .font(.body)
-          .focused($taskFocused)
-          .accessibilityLabel("Task")
-          .accessibilityIdentifier("remote.start.prompt")
-      }
-      .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
-      .frame(maxWidth: .infinity, alignment: .topLeading)
+  // MARK: Shared pieces
 
-      RemotePageDivider()
-
-      let layout = dynamicTypeSize.isAccessibilitySize
-        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-        : AnyLayout(HStackLayout(spacing: 8))
-      layout {
-        Button { showModelPicker = true } label: {
-          RemoteStartChip(title: selectedModelName, symbol: sourceIcon)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Model, \(selectedModelName)")
-        .accessibilityHint("Opens the searchable model list")
-        .accessibilityIdentifier("remote.start.model")
-        if sessionMode == .code {
-          NavigationLink {
-            RemotePageScroll { workspaceSection }
-              .remotePageChrome().navigationTitle("Project folder")
-          } label: {
-            RemoteStartChip(
-              title: selectedBotComputerID == nil ? selectedWorkspaceTitle : "Bot computer",
-              symbol: selectedBotComputerID == nil ? "folder" : "square.stack.3d.up")
-          }
-          .buttonStyle(.plain)
-          .accessibilityLabel("Project folder, \(selectedWorkspaceTitle)")
-        }
-        if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
-        startButton
-          .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .trailing)
-      }
-      .padding(.horizontal, 10).padding(.vertical, 6)
+  private var modePicker: some View {
+    Picker("Session mode", selection: $sessionMode) {
+      ForEach(RemoteSessionMode.allCases) { Text($0.title).tag($0) }
     }
-    .remotePageCard()
-    .overlay {
-      RoundedRectangle(cornerRadius: 17, style: .continuous)
-        .strokeBorder(taskFocused ? BeetTheme.accentBright.opacity(0.7) : .clear, lineWidth: 1)
-        .allowsHitTesting(false)
-    }
-    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: taskFocused)
   }
 
-  private var startButton: some View {
-    Button {
-      UIImpactFeedbackGenerator(style: .light).impactOccurred()
-      start()
-    } label: {
-      ZStack {
-        if isStarting {
-          ProgressView().tint(.white)
-        } else {
-          Image(systemName: "arrow.up").font(.body.weight(.bold))
+  private var greeting: some View {
+    VStack(spacing: 10) {
+      RemoteBeaconMark(size: 46, isActive: isLoadingModels || isStarting)
+      Text(sessionMode == .chat ? "Ask Vamp anything" : "What should Vamp work on?")
+        .font(.title2.weight(.bold)).multilineTextAlignment(.center)
+      Text(summary).font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
+        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+    }
+    .frame(maxWidth: .infinity)
+    .accessibilityElement(children: .combine)
+  }
+
+  /// One line that says where and how the chat will run.
+  private var summary: String {
+    var parts = [store.activeComputerName]
+    if sessionMode == .code { parts.append(selectedBotComputerID == nil ? selectedWorkspaceTitle : "Bot computer") }
+    if botsAvailable { parts.append(botProfile.name) }
+    parts.append(permissionTitle)
+    return parts.joined(separator: " · ")
+  }
+
+  private var permissionTitle: String { fullAccess ? "Full access" : autoMode ? "Auto mode" : "Asks first" }
+  private var permissionSymbol: String { autoMode || fullAccess ? "bolt.shield" : "checkmark.shield" }
+  private var whereTitle: String {
+    selectedBotComputerID == nil ? selectedWorkspaceTitle
+      : botComputers.first(where: { $0.id == selectedBotComputerID }).map { displayName(for: $0) } ?? "Bot computer"
+  }
+
+  private var botMenu: some View {
+    Picker("Bot", selection: $selectedBotID) {
+      ForEach(RemoteBotProfile.profiles) { profile in
+        Label(profile.name, systemImage: profile.symbol).tag(RemoteBotProfile.resolvedID(profile.id) ?? "")
+      }
+    }
+  }
+
+  @ViewBuilder private var permissionMenu: some View {
+    Toggle("Auto mode", isOn: $autoMode)
+    Toggle("Full access", isOn: $fullAccess)
+    Divider()
+    Text(autoMode || fullAccess ? "This run skips approval prompts." : "Your Mac's approval settings apply.")
+  }
+
+  private var reasoningMenu: some View {
+    Picker("Reasoning", selection: $selectedReasoningEffort) {
+      Text("Auto").tag(String?.none)
+      ForEach(reasoningEfforts, id: \.self) { Text($0.capitalized).tag(Optional($0)) }
+    }
+  }
+
+  /// The choices sit right above the message as glass chips, so setting up
+  /// the chat never leaves the chat.
+
+  private var setupChips: some View {
+    ScrollView(.horizontal) {
+      HStack(spacing: 8) {
+        if sessionMode == .code {
+          Button { showWorkspace = true } label: {
+            RemoteStartChip(title: whereTitle, symbol: selectedBotComputerID == nil ? "folder" : "square.stack.3d.up")
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("Project folder, \(whereTitle)")
+        }
+        if botsAvailable {
+          Menu { botMenu } label: { RemoteStartChip(title: botProfile.name, symbol: botProfile.symbol) }
+            .accessibilityLabel("Bot, \(botProfile.name)")
+        }
+        Menu { permissionMenu } label: { RemoteStartChip(title: permissionTitle, symbol: permissionSymbol) }
+          .accessibilityLabel("Permissions, \(permissionTitle)")
+          .accessibilityIdentifier("remote.start.options")
+        if !reasoningEfforts.isEmpty {
+          Menu { reasoningMenu } label: {
+            RemoteStartChip(title: selectedReasoningEffort?.capitalized ?? "Reasoning", symbol: "brain.head.profile")
+          }
+          .accessibilityLabel("Reasoning, \(selectedReasoningEffort?.capitalized ?? "Auto")")
+        }
+        if source == "api" {
+          Button { showAPIKey = true } label: { RemoteStartChip(title: "API key", symbol: "key", showsChevron: false) }
+            .buttonStyle(.plain)
         }
       }
-      .foregroundStyle(canStart || isStarting ? Color.white : RemoteInstrument.secondaryInk)
-      .frame(width: 44, height: 44)
-      .background(canStart || isStarting ? BeetTheme.accent : RemoteInstrument.recess, in: Circle())
-      .contentShape(Circle())
+      .padding(.horizontal, 14)
     }
-    .buttonStyle(.plain)
-    .disabled(!canStart)
-    .accessibilityLabel(sessionMode == .chat ? "Start chat" : "Start session")
-    .accessibilityIdentifier("remote.start.submit")
-    .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: canStart)
+    .scrollIndicators(.hidden)
+    .scrollClipDisabled()
+  }
+
+  // MARK: Second-level pages
+
+  private var workspacePage: some View {
+    RemotePageScroll {
+      workspaceSection
+      if botsAvailable { botComputerSection }
+    }
+    .navigationTitle("Where Vamp works").navigationBarTitleDisplayMode(.inline)
+    .remotePageChrome()
+    .sheet(item: $consoleComputer) { computer in
+      RemoteBotConsoleView(store: store, computer: computer)
+    }
+    .modifier(workspaceAlerts)
+    .remotePageErrors(store: store)
+  }
+
+  private var apiKeyPage: some View {
+    RemotePageScroll { apiKeySection.padding(14).remotePageCard() }
+      .navigationTitle("API key").navigationBarTitleDisplayMode(.inline)
+      .remotePageChrome()
+      .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showAPIKey = false } } }
+  }
+
+  private var workspaceAlerts: RemoteWorkspaceAlerts {
+    RemoteWorkspaceAlerts(showNewFolder: $showNewFolder, newFolderName: $newFolderName,
+      showPathEntry: $showPathEntry, folderPathDraft: $folderPathDraft,
+      parent: store.workspaceCreateParent, onCreate: createFolder, onOpen: openFolderPath)
   }
 
   @ViewBuilder
   private var catalogNotice: some View {
     if isLoadingModels {
       RemoteNoticeLabel(title: "Loading models…", detail: "Asking your Mac what it can run.", isWorking: true)
-        .remotePageCard()
     } else if let notice = store.backgroundNotice {
       Button { loadModels() } label: {
         RemoteNoticeLabel(title: "Model catalog unavailable", detail: notice, actionTitle: "Retry",
           symbol: "exclamationmark.triangle.fill")
       }
-      .buttonStyle(RemotePageRowButtonStyle()).remotePageCard()
+      .buttonStyle(.plain)
     } else if store.isConnected, store.startModels.isEmpty {
       RemoteNoticeLabel(title: emptyModelsTitle, detail: emptyModelsDescription, symbol: sourceIcon)
-        .remotePageCard()
-    }
-  }
-
-  /// Every choice shows its current value; the controls open one level down.
-  private var setupSection: some View {
-    RemotePageSection(title: "Setup", padding: 0) {
-      if botsAvailable {
-        NavigationLink {
-          RemoteBotChooser(selectedBotID: $selectedBotID).navigationTitle("Bot")
-        } label: {
-          RemotePageRowLabel(title: "Bot", symbol: "person.crop.circle", subtitle: botProfile.name)
-        }
-        .buttonStyle(RemotePageRowButtonStyle())
-      }
-
-      if !reasoningEfforts.isEmpty {
-        let efforts = reasoningEfforts
-        if botsAvailable { RemotePageDivider().padding(.leading, 66) }
-        Menu {
-          Picker("Reasoning", selection: $selectedReasoningEffort) {
-            Text("Auto").tag(String?.none)
-            ForEach(efforts, id: \.self) { Text($0.capitalized).tag(Optional($0)) }
-          }
-        } label: {
-          RemotePageRowLabel(title: "Reasoning", symbol: "brain.head.profile",
-            subtitle: selectedReasoningEffort?.capitalized ?? "Auto", showsChevron: false)
-            .overlay(alignment: .trailing) {
-              Image(systemName: "chevron.up.chevron.down").font(.caption.weight(.semibold))
-                .foregroundStyle(RemoteInstrument.secondaryInk).padding(.trailing, 14)
-                .accessibilityHidden(true)
-            }
-        }
-        .buttonStyle(RemotePageRowButtonStyle())
-        .accessibilityLabel("Reasoning, \(selectedReasoningEffort?.capitalized ?? "Auto")")
-      }
-
-      if botsAvailable || !reasoningEfforts.isEmpty { RemotePageDivider().padding(.leading, 66) }
-      NavigationLink {
-        RemotePageScroll {
-          RemotePageHeading(title: "Permissions", subtitle: "Choose what this run may do without asking you first.")
-          RemotePageSection(title: "Approvals") {
-            RemoteAdvancedAccessBank(autoMode: $autoMode, fullAccess: $fullAccess)
-          }
-        }
-        .remotePageChrome().navigationTitle("Permissions")
-      } label: {
-        RemotePageRowLabel(title: "Permissions",
-          symbol: autoMode || fullAccess ? "bolt.shield" : "checkmark.shield",
-          subtitle: fullAccess ? "Full access · no approval prompts"
-            : autoMode ? "Auto mode · skips approval prompts" : "Asks before changes")
-      }
-      .buttonStyle(RemotePageRowButtonStyle())
-      .accessibilityIdentifier("remote.start.options")
-
-      if sessionMode == .code {
-        RemotePageDivider().padding(.leading, 66)
-        NavigationLink {
-          RemotePageScroll { botComputerSection }
-            .remotePageChrome().navigationTitle("Bot computer")
-        } label: {
-          RemotePageRowLabel(title: "Bot computer", symbol: "square.stack.3d.up",
-            subtitle: botComputers.first(where: { $0.id == selectedBotComputerID })
-              .map { displayName(for: $0) } ?? "None · optional")
-        }
-        .buttonStyle(RemotePageRowButtonStyle())
-      }
-
-      if source == "api" {
-        RemotePageDivider().padding(.leading, 66)
-        NavigationLink {
-          RemotePageScroll { apiKeySection.padding(14).remotePageCard() }
-            .remotePageChrome().navigationTitle("API key")
-        } label: {
-          RemotePageRowLabel(title: "API key", symbol: "key", subtitle: keyMessage ?? "Add or replace a provider key")
-        }
-        .buttonStyle(RemotePageRowButtonStyle())
-      }
     }
   }
 
@@ -556,7 +505,7 @@ struct StartSessionSheet: View {
   private var workspaceSection: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text("PROJECT FOLDER").font(.caption2.bold()).tracking(0.8)
+        Text("Project folder").font(.footnote.weight(.semibold))
         Spacer()
         if selectedBotComputerID != nil {
           Text("Bot computer")
@@ -658,7 +607,7 @@ struct StartSessionSheet: View {
   private var botComputerSection: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
-        Text("BOT COMPUTER").font(.caption2.bold()).tracking(0.8)
+        Text("Bot computer").font(.footnote.weight(.semibold))
         Spacer()
         Text(
           botComputers.isEmpty
@@ -819,7 +768,7 @@ struct StartSessionSheet: View {
 
   private var apiKeySection: some View {
     VStack(alignment: .leading, spacing: 9) {
-      Text("API KEY").font(.caption2.bold()).tracking(0.8).foregroundStyle(
+      Text("API key").font(.footnote.weight(.semibold)).foregroundStyle(
         BeetTheme.secondaryText(appearance))
       HStack(spacing: 8) {
         Picker("Provider", selection: $keyProviderID) {
@@ -922,5 +871,37 @@ struct StartSessionSheet: View {
       }
       isStarting = false
     }
+  }
+}
+
+/// Folder prompts live with whichever page shows the folder list, so the
+/// alert is presented by the visible sheet.
+struct RemoteWorkspaceAlerts: ViewModifier {
+  @Binding var showNewFolder: Bool
+  @Binding var newFolderName: String
+  @Binding var showPathEntry: Bool
+  @Binding var folderPathDraft: String
+  let parent: String?
+  let onCreate: () -> Void
+  let onOpen: () -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .alert("New folder on Mac", isPresented: $showNewFolder) {
+        TextField("Folder name", text: $newFolderName)
+        Button("Cancel", role: .cancel) { newFolderName = "" }
+        Button("Create", action: onCreate)
+      } message: {
+        Text(parent.map { "Created inside \($0)." } ?? "Created in the app’s Documents folder on your Mac.")
+      }
+      .alert("Open a folder path", isPresented: $showPathEntry) {
+        TextField("~/Developer/my-app", text: $folderPathDraft)
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+        Button("Cancel", role: .cancel) { folderPathDraft = "" }
+        Button("Open", action: onOpen)
+      } message: {
+        Text("The folder must already exist inside your Mac home directory.")
+      }
   }
 }

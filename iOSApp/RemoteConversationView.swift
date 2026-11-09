@@ -51,18 +51,9 @@ struct ConversationView: View {
 
     var body: some View {
         ZStack {
-            RemoteBackdrop()
+            RemoteBackdrop(strength: 0.45)
             if let detail = store.selectedSession, detail.id == sessionID {
                 VStack(spacing: 0) {
-                    ConversationStatus(
-                        detail: detail,
-                        models: store.startModels,
-                        selectedModelID: $selectedModelID,
-                        showsModel: false,
-                        isReachable: store.isConnected,
-                        isSending: store.sendingSessionIDs.contains(sessionID),
-                        onStop: { Task { await store.stop() } },
-                        onRefreshModels: { await store.loadStartModels() })
                     if !store.isConnected {
                         RemoteReconnectBanner(store: store)
                     }
@@ -105,11 +96,18 @@ struct ConversationView: View {
         }.navigationTitle("").navigationBarTitleDisplayMode(.inline)
             .remoteNavigationChrome()
             .keyboardDismissToolbar()
-            .toolbarBackground(BeetTheme.background(appearance).opacity(0.92), for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    RemoteConversationTitle(title: displayTitle, subtitle: store.activeComputerName)
-                        .padding(.horizontal, 4)
+                    RemoteConversationTitle(title: displayTitle) {
+                        if let detail = store.selectedSession, detail.id == sessionID {
+                            ConversationStatus(detail: detail, isReachable: store.isConnected,
+                                               isSending: store.sendingSessionIDs.contains(sessionID),
+                                               computerName: store.activeComputerName)
+                        } else {
+                            Text(store.activeComputerName)
+                        }
+                    }
+                    .padding(.horizontal, 4)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     let locked = store.isUpdatingAccess || !store.isConnected
@@ -386,130 +384,31 @@ struct ConversationOpeningState: View {
     }
 }
 
+/// Run state, mode and Mac in one quiet line under the conversation title.
 struct ConversationStatus: View {
     let detail: RemoteSessionDetail
-    let models: [RemoteStartModelOption]
-    @Binding var selectedModelID: String
-    var showsModel = true
     var isReachable = true
     var isSending = false
-    var onStop: (() -> Void)? = nil
-    var onRefreshModels: (() async -> Void)? = nil
-    @Environment(\.remoteAppearance) private var appearance
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @State private var showPicker = false
-    @State private var pickerSource = "local"
+    var computerName: String? = nil
 
-    private var selectedName: String {
-        models.first(where: { $0.id == selectedModelID })?.name ?? detail.modelID
+    private var isCode: Bool { detail.mode == "code" || !(detail.workspacePath ?? "").isEmpty }
+    private var state: String {
+        !isReachable ? "Offline" : detail.error != nil ? "Error" : isSending ? "Sending" : detail.isRunning ? detail.phase.capitalized : "Ready"
+    }
+    private var color: Color {
+        !isReachable ? RemoteInstrument.secondaryInk : detail.error != nil ? RemoteInstrument.danger
+            : detail.isRunning || isSending ? BeetTheme.accentBright : RemoteInstrument.green
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            detailedStatus
-            compactStatus
+        HStack(spacing: 4) {
+            RemoteLivePulse(color: color, active: isReachable && (detail.isRunning || isSending), fast: true)
+                .scaleEffect(0.8)
+            Text(state).foregroundStyle(color == RemoteInstrument.green ? RemoteInstrument.secondaryInk : color)
+                .contentTransition(.opacity)
+            Text([isCode ? "Code" : nil, computerName].compactMap { $0 }.map { "· \($0)" }.joined(separator: " "))
         }
-        .font(.caption)
-        .foregroundStyle(BeetTheme.secondaryText(appearance))
-        .padding(.horizontal, 16)
-        .padding(.vertical, verticalSizeClass == .compact ? 3 : 6)
-        .frame(maxWidth: .infinity, minHeight: verticalSizeClass == .compact ? 26 : 34, alignment: .leading)
-        .background(BeetTheme.readingSurface(appearance))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(BeetTheme.line(appearance))
-                .frame(height: 0.75)
-        }
-        .sheet(isPresented: $showPicker) {
-            RemoteModelPickerSheet(
-                models: models,
-                source: $pickerSource,
-                selectedModelID: $selectedModelID,
-                onRefresh: onRefreshModels)
-                .environment(\.remoteAppearance, appearance)
-        }
-    }
-
-    private var detailedStatus: some View {
-        HStack(spacing: 7) {
-            statusIdentity
-            Spacer(minLength: 8)
-            if showsModel { modelControl }
-            statusAction
-        }
-    }
-
-    private var compactStatus: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 7) {
-                statusIdentity
-                Spacer(minLength: 8)
-                statusAction
-            }
-            if showsModel { HStack(spacing: 7) {
-                Text(detail.mode == "code" || !(detail.workspacePath ?? "").isEmpty ? "Code" : "Chat")
-                    .fontWeight(.semibold)
-                if detail.mode == "code" || !(detail.workspacePath ?? "").isEmpty {
-                    Text("·")
-                    Text(detail.workspace).lineLimit(1)
-                }
-                Text("·")
-                modelControl
-            } }
-        }
-    }
-
-    private var statusIdentity: some View {
-        HStack(spacing: 7) {
-            RemoteSignal(color: !isReachable ? RemoteInstrument.secondaryInk : (detail.error != nil ? RemoteInstrument.danger : (detail.isRunning || isSending ? RemoteInstrument.orange : RemoteInstrument.green)),
-                         isActive: isReachable && (detail.isRunning || isSending))
-            Text(!isReachable ? "Offline" : detail.error != nil ? "Error" : isSending ? "Sending" : detail.isRunning ? detail.phase.capitalized : "Ready")
-                .fontWeight(.semibold)
-            Text("·")
-            Text(detail.mode == "code" || !(detail.workspacePath ?? "").isEmpty ? "Code" : "Chat")
-                .fontWeight(.semibold)
-        }
-    }
-
-    private var modelControl: some View {
-        Group {
-            if models.isEmpty {
-                Text(detail.modelID).lineLimit(1)
-            } else {
-                Button {
-                    pickerSource = models.first { $0.id == selectedModelID }?.source ?? "local"
-                    showPicker = true
-                } label: {
-                    HStack(spacing: 3) {
-                        Text(selectedName).lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(.caption2, design: .monospaced, weight: .medium))
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(detail.isRunning)
-                .accessibilityLabel("Model, \(selectedName)")
-                .accessibilityHint("Opens the searchable model list")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var statusAction: some View {
-        if detail.isRunning {
-            Button(action: { onStop?() }) {
-                Label("Stop", systemImage: "stop.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .frame(minHeight: 44)
-
-            }
-            .buttonStyle(RemoteKeyButtonStyle(prominent: true))
-            .disabled(!isReachable || isSending)
-            .accessibilityLabel("Stop the agent")
-        } else {
-            Label("\(detail.messages.count)", systemImage: "text.bubble")
-        }
+        .lineLimit(1)
+        .accessibilityElement(children: .combine)
     }
 }

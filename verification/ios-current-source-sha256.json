@@ -88,7 +88,7 @@
   "iOSApp/RemoteVideoSurface.swift": "6776e7c1a15c81e0887f032bbdfdbab2530ac461fbf1c73c7e68b79c2783677c",
   "iOSApp/RemoteViews.swift": "6d6ae27f133d3aedc1f7d624266aa1310b2555f67ae2d0649028e60f9d3ed221",
   "iOSTests/RemoteDraftAndNotificationTests.swift": "39deef00650ca53c216d069cf31ebfbdd4c118db1e7bfccca16eaea5c787ff7c",
-  "iOSTests/RemoteProtocolRegressionTests.swift": "1cac44e959e34e3999784ff446b8279228abfc18e686f17af8fde358e9e29605",
+  "iOSTests/RemoteProtocolRegressionTests.swift": "80cf94591c3ec2dd08972c41e5e8150c1d0bd34e7310b88644a3452376f1bff9",
   "iOSTests/RemoteStoreConcurrencyTests.swift": "39d681bc67e56f96d448545d7f321dedd330af5d0a84ed7e5f68ea9ef24c864e",
   "iOSUITests/ComposerUITests.swift": "600e6b139945d968036d670b7afb6368351ee2c5ae9d3f07364112af567184de",
   "iOSUITests/ControlSurfaceUITests.swift": "c45dd703b5e3f448b6cda183aeae9da5eb01c87521a25e62cc6e6d13a4ee1bef",

@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-09",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.59",
+    "build": "145",
+    "sourceCommit": "72a6d59 plus the uncommitted iOS redesign and chat redesign in the working tree",
+    "toolchain": "Xcode 27.1, iphoneos27.1 SDK (24A94232), same as builds 142 to 144",
+    "buildID": "41a87937-0aa2-49de-b18c-3c1bb65a1416",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "testerGroup": "mes (internal, access to all builds)",
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "weakImportsVsBuild144": "Identical (41 weak imports)",
+    "ipaSHA256": "13b939792a6eda0ea7839c931d3007c09792031280f4d828f23d1b9c1e7e4038",
+    "testNotes": "verification/ios-0.10.59-build-145-testflight-notes.txt (en-US and en-GB, read back)"
+  },
+  "changesSince144": [
+    "User messages hug their text on the trailing side; attachment summaries become chips",
+    "Markdown lists, nested items, quotes, headings and rules render natively",
+    "Assistant turns end with a logo and Copy footer that keeps the same height while streaming",
+    "Quieter notices with matching symbols; one-row tool cards; smaller title; weaker chat backdrop"
+  ],
+  "checks": [
+    { "check": "iOS unit tests", "result": "Passed", "passed": 58, "failed": 0 },
+    { "check": "ChatPolishUITests", "result": "Passed", "passed": 4 },
+    { "check": "ComposerUITests", "result": "Passed", "passed": 6 },
+    { "check": "verify-ios-unchanged.py", "result": "Passed" }
+  ],
+  "notVerified": [
+    "Chat against a real Mac (fixtures only)",
+    "Homepage, SecondaryPages, CompanionHub and ControlSurface UI tests were not re-run for this build",
+    "Launch from TestFlight on a device"
+  ]
+}

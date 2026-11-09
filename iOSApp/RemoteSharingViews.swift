@@ -33,9 +33,9 @@ struct RemoteShareSheet: View {
             .sheet(item: $downloadedFile) { item in RemoteActivityView(items: [item.url]) }
             .overlay(alignment: .bottom) {
                 if let confirmation {
-                    Text(confirmation).font(.subheadline.weight(.semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 15).padding(.vertical, 10)
-                        .background(Color.black.opacity(0.82), in: Capsule())
+                    Text(confirmation).font(.subheadline.weight(.semibold)).foregroundStyle(RemoteInstrument.ink)
+                        .padding(.horizontal, 16).padding(.vertical, 11)
+                        .vampGlass(Capsule())
                         .padding(.bottom, 18).transition(reduceMotion ? .identity : .move(edge: .bottom).combined(with: .opacity))
                         .task(id: confirmation) {
                             do { try await Task.sleep(for: .seconds(3)) }
@@ -63,7 +63,7 @@ struct ShareSheetHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Image(systemName: "arrow.left.arrow.right.circle.fill").font(.system(size: 24)).foregroundStyle(BeetTheme.accentBright)
-            Text("Clipboard & files").font(RemoteInstrument.TypeStyle.title).tracking(-0.3)
+            Text("Clipboard & files").font(.title2.weight(.bold))
             Text("Clipboard and files travel directly between this device and your paired Mac.")
                 .font(.subheadline).foregroundStyle(BeetTheme.secondaryText(appearance)).lineSpacing(2)
         }
@@ -173,7 +173,7 @@ struct RemoteSharedFileRow: View {
 struct RemoteSectionLabel: View {
     @Environment(\.remoteAppearance) private var appearance
     let title: String
-    var body: some View { Text(title).font(.system(.caption2, design: .monospaced, weight: .medium)).tracking(0.9).foregroundStyle(BeetTheme.secondaryText(appearance)) }
+    var body: some View { Text(title).font(.footnote.weight(.semibold)).foregroundStyle(BeetTheme.secondaryText(appearance)) }
 }
 
 struct DownloadedRemoteFile: Identifiable {

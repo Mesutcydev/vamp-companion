@@ -4,20 +4,22 @@ import SwiftUI
 /// Companion's brand is independent of the inherited Assistant preferences.
 /// The same screen-and-fangs geometry is used by the app icon and thevamp.app.
 enum CompanionBrand {
-    // Every large surface is neutral. Red is reserved for a primary action or
-    // an active/attention signal, rather than colouring model categories.
-    static var canvas: Color { .dynamic(light: 0xF4F4F4, dark: 0x181818, oled: 0x000000) }
-    static var surface: Color { .dynamic(light: 0xFAFAFA, dark: 0x222222, oled: 0x131313) }
-    static var inset: Color { .dynamic(light: 0xEFEFEF, dark: 0x1C1C1C, oled: 0x0C0C0C) }
-    static var control: Color { .dynamic(light: 0xE8E8E8, dark: 0x303030, oled: 0x242424) }
-    static var stroke: Color { .dynamic(light: 0xD0D0D0, dark: 0x414141, oled: 0x383838) }
-    static let ink = Color.dynamic(light: 0x222222, dark: 0xF2F2F2, oled: 0xF2F2F2)
-    static let secondary = Color.dynamic(light: 0x555555, dark: 0xBBBBBB, oled: 0xBBBBBB)
-    static let tertiary = Color.dynamic(light: 0x666666, dark: 0x999999, oled: 0x999999)
+    // Every large surface is neutral and uses the same system greys as the
+    // iPhone app. Red is reserved for a primary action or a live signal.
+    static var canvas: Color { .dynamic(light: 0xF2F2F7, dark: 0x161618, oled: 0x000000) }
+    static var surface: Color { .dynamic(light: 0xFFFFFF, dark: 0x1F1F22, oled: 0x111113) }
+    static var inset: Color { .dynamic(light: 0xEDEDF2, dark: 0x29292D, oled: 0x19191B) }
+    static var control: Color { .dynamic(light: 0xE5E5EA, dark: 0x323236, oled: 0x242426) }
+    static var thumb: Color { .dynamic(light: 0xFFFFFF, dark: 0x5A5A5F, oled: 0x4A4A4F) }
+    static var stroke: Color { .dynamic(light: 0xD8D8DD, dark: 0x3A3A3E, oled: 0x333336) }
+    static let ink = Color.dynamic(light: 0x1C1C1E, dark: 0xF2F2F7, oled: 0xF2F2F7)
+    static let secondary = Color.dynamic(light: 0x6C6C70, dark: 0xAEAEB2, oled: 0xAEAEB2)
+    static let tertiary = Color.dynamic(light: 0x8A8A8E, dark: 0x8E8E93, oled: 0x8E8E93)
     static let accent = Color.fixed(0xBD2939)
     static let accentInk = Color.dynamic(light: 0xAD2030, dark: 0xF0808D, oled: 0xF0808D)
+    static let green = Color.dynamic(light: 0x248A3D, dark: 0x30D158, oled: 0x30D158)
     static var accentWash: Color { control }
-    static let radius: CGFloat = 8
+    static let radius: CGFloat = 14
     static let pageInset: CGFloat = 24
 
     static func display(_ size: CGFloat) -> Font { .custom("BarlowCondensed-Bold", size: size) }
@@ -67,8 +69,9 @@ struct CompanionBrandBadge: View {
             .fill(CompanionBrand.ink, style: FillStyle(eoFill: true))
             .padding(size * 0.1)
             .frame(width: size, height: size)
-            .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
+            .background(CompanionBrand.surface, in: RoundedRectangle(cornerRadius: size * 0.24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
+                .strokeBorder(CompanionBrand.stroke.opacity(0.7), lineWidth: 0.5))
             .overlay(alignment: .bottomTrailing) {
                 Circle().fill(CompanionBrand.accent)
                     .frame(width: size * 0.17, height: size * 0.17)
@@ -79,80 +82,174 @@ struct CompanionBrandBadge: View {
     }
 }
 
+/// Sentence-case page title, as the iPhone app writes its headings.
 struct CompanionPageHeading: View {
-    let eyebrow: LocalizedStringResource
     let title: LocalizedStringResource
     let subtitle: LocalizedStringResource
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(eyebrow).textCase(.uppercase)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .tracking(1.2).foregroundStyle(CompanionBrand.secondary)
-            Text(title).font(.system(size: 25, weight: .semibold))
-                .tracking(-0.4).foregroundStyle(CompanionBrand.ink)
-            Text(subtitle).font(.system(size: 14))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(CompanionBrand.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text(subtitle).font(.system(size: 13))
                 .foregroundStyle(CompanionBrand.secondary)
-                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
+/// A status dot that radiates a slow ring while the thing it describes is
+/// alive, matching the iPhone app. Stops under Reduce Motion.
+struct CompanionLivePulse: View {
+    let color: Color
+    var active = true
+    var fast = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let animates = active && !reduceMotion
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animates)) { context in
+            let period = fast ? 1.4 : 2.6
+            let phase = animates ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period : 1
+            Circle().fill(color).frame(width: 7, height: 7)
+                .background {
+                    Circle().stroke(color, lineWidth: 1.2)
+                        .scaleEffect(1 + phase * 1.6)
+                        .opacity(animates ? (1 - phase) * 0.7 : 0)
+                }
+        }
+        .frame(width: 14, height: 14)
+        .accessibilityHidden(true)
+    }
+}
+
 struct CompanionStatusPill: View {
     let title: LocalizedStringResource
     let isReady: Bool
+    var isConnecting = false
+
+    private var color: Color {
+        isReady ? CompanionBrand.green : isConnecting ? Color.orange : CompanionBrand.secondary
+    }
 
     var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: isReady ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(isReady ? CompanionBrand.ink : CompanionBrand.secondary)
-            Text(title).font(.system(size: 12, weight: .medium))
+        HStack(spacing: 6) {
+            CompanionLivePulse(color: color, active: isReady || isConnecting, fast: isConnecting)
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(color)
         }
-        .foregroundStyle(CompanionBrand.ink)
-        .padding(.horizontal, 11).padding(.vertical, 7)
-        .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
-        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
+        .padding(.horizontal, 10).frame(height: 28)
+        .companionToolbarTrack()
         .accessibilityElement(children: .combine)
     }
 }
 
 struct CompanionCardModifier: ViewModifier {
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: CompanionBrand.radius, style: .continuous)
         content
-            .background(CompanionBrand.surface, in: RoundedRectangle(cornerRadius: CompanionBrand.radius))
-            .overlay(RoundedRectangle(cornerRadius: CompanionBrand.radius)
-                .strokeBorder(contrast == .increased ? CompanionBrand.secondary : CompanionBrand.stroke,
-                              lineWidth: 1))
+            .background(CompanionBrand.surface, in: shape)
+            .overlay {
+                // A lit top edge reads as depth without drawing a box.
+                shape.strokeBorder(contrast == .increased
+                    ? LinearGradient(colors: [CompanionBrand.secondary], startPoint: .top, endPoint: .bottom)
+                    : LinearGradient(colors: [CompanionBrand.stroke.opacity(scheme == .dark ? 0.9 : 0.6),
+                                              CompanionBrand.stroke.opacity(scheme == .dark ? 0.3 : 0.25)],
+                                     startPoint: .top, endPoint: .bottom),
+                    lineWidth: contrast == .increased ? 1 : 0.75)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: .black.opacity(scheme == .dark ? 0.25 : 0.05), radius: 10, y: 3)
     }
 }
 
 extension View {
     func companionCard() -> some View { modifier(CompanionCardModifier()) }
+
+    /// macOS 26 already seats toolbar items on Liquid Glass; earlier systems
+    /// get the same capsule as a quiet track.
+    @ViewBuilder
+    func companionToolbarTrack() -> some View {
+        if #available(macOS 26.0, *) {
+            self
+        } else {
+            background(CompanionBrand.control, in: Capsule())
+        }
+    }
 }
 
-struct CompanionNavigationButtonStyle: ButtonStyle {
-    let isSelected: Bool
+extension ToolbarContent {
+    /// The logo sits on the bar itself, not inside a glass capsule.
+    @ToolbarContentBuilder
+    func companionBareToolbarItem() -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            self.sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
+    }
+}
+
+struct CompanionSegment<Value: Hashable>: Identifiable {
+    let title: LocalizedStringResource
+    var symbol: String? = nil
+    let value: Value
+    var identifier: String? = nil
+    var id: Value { value }
+}
+
+/// The iPhone app's segmented control: a neutral thumb that slides between
+/// choices. Each segment stays a button with its own identifier.
+struct CompanionSegments<Value: Hashable>: View {
+    @Binding var selection: Value
+    let segments: [CompanionSegment<Value>]
+    var inToolbar = false
+    @Namespace private var thumb
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(isSelected ? CompanionBrand.ink : CompanionBrand.secondary)
-            .padding(.horizontal, 18).frame(height: 36)
-            .background(isSelected ? CompanionBrand.control : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6))
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(isSelected ? CompanionBrand.accent : .clear)
-                    .frame(height: 2)
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(segments) { segment in
+                let selected = segment.value == selection
+                Button { selection = segment.value } label: {
+                    HStack(spacing: 6) {
+                        if let symbol = segment.symbol {
+                            Image(systemName: symbol).font(.system(size: 12, weight: .medium))
+                        }
+                        Text(segment.title)
+                    }
+                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected ? CompanionBrand.ink : CompanionBrand.secondary)
+                    .padding(.horizontal, 14).frame(height: 26)
+                    .background {
+                        if selected {
+                            Capsule().fill(CompanionBrand.thumb)
+                                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                                .matchedGeometryEffect(id: "thumb", in: thumb)
+                        }
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier(segment.identifier ?? "")
             }
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .padding(2)
+        .modifier(CompanionSegmentTrack(inToolbar: inToolbar))
+        .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.85), value: selection)
+    }
+}
+
+private struct CompanionSegmentTrack: ViewModifier {
+    let inToolbar: Bool
+    func body(content: Content) -> some View {
+        if inToolbar { content.companionToolbarTrack() }
+        else { content.background(CompanionBrand.control, in: Capsule()) }
     }
 }
 
@@ -163,14 +260,13 @@ struct CompanionArcadeButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(primary ? Color.white : CompanionBrand.ink)
-            .padding(.horizontal, 14).frame(minHeight: 36)
-            .background(primary ? CompanionBrand.accent : CompanionBrand.control,
-                        in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(primary ? CompanionBrand.accent : CompanionBrand.stroke, lineWidth: 1))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .padding(.horizontal, 14).frame(minHeight: 30)
+            .background(primary ? CompanionBrand.accent : CompanionBrand.control, in: Capsule())
+            .contentShape(Capsule())
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }

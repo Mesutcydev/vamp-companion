@@ -81,9 +81,8 @@ struct RemoteControlUnavailableState: View {
                         Image(systemName: "xmark")
                             .font(.system(size: 14, weight: .semibold))
                             .frame(width: 44, height: 44)
-                            .background(RemoteInstrument.pearl, in: RoundedRectangle(cornerRadius: 8))
                             .foregroundStyle(RemoteInstrument.ink)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(BeetTheme.line(appearance), lineWidth: 0.75))
+                            .vampGlass(Circle(), interactive: true)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Close remote control")
@@ -96,12 +95,9 @@ struct RemoteControlUnavailableState: View {
 
                 VStack(spacing: 12) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(BeetTheme.surfaceStrong(appearance))
-                            .frame(width: 48, height: 48)
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(BeetTheme.line(appearance), lineWidth: 0.75)
-                            .frame(width: 48, height: 48)
+                        Circle()
+                            .fill(RemoteInstrument.orange.opacity(0.14))
+                            .frame(width: 56, height: 56)
                         if isWorking {
                             ProgressView().controlSize(.large).tint(RemoteInstrument.orange)
                         } else {
@@ -113,8 +109,7 @@ struct RemoteControlUnavailableState: View {
 
                     VStack(spacing: 8) {
                         Text(status)
-                            .font(.caption2.weight(.bold))
-                            .tracking(1.1)
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(BeetTheme.secondaryText(appearance))
                         Text(title)
                             .font(.title2.weight(.semibold))
@@ -192,9 +187,8 @@ private struct RemoteMacUnlockState: View {
                             Image(systemName: "xmark")
                                 .font(.system(size: 14, weight: .semibold))
                                 .frame(width: 44, height: 44)
-                                .background(RemoteInstrument.pearl, in: Circle())
-                            .foregroundStyle(RemoteInstrument.ink)
-                                .overlay(Circle().stroke(BeetTheme.line(appearance), lineWidth: 0.75))
+                                .foregroundStyle(RemoteInstrument.ink)
+                                .vampGlass(Circle(), interactive: true)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Close remote control")
@@ -218,9 +212,8 @@ private struct RemoteMacUnlockState: View {
                             }
 
                             VStack(spacing: 8) {
-                                Text("SECURE REMOTE UNLOCK")
-                                    .font(.caption2.weight(.bold))
-                                    .tracking(1.1)
+                                Text("Secure remote unlock")
+                                    .font(.footnote.weight(.semibold))
                                     .foregroundStyle(BeetTheme.secondaryText(appearance))
                                 Text("Mac is locked")
                                     .font(.title2.weight(.semibold))
@@ -244,11 +237,7 @@ private struct RemoteMacUnlockState: View {
                                 .disabled(isSubmitting)
                                 .padding(.horizontal, 14)
                                 .frame(minHeight: 48)
-                                .modifier(RemoteGlassBackdrop(radius: 12, role: .control))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(BeetTheme.line(appearance), lineWidth: 0.75)
-                                }
+                                .remotePageField()
 
                             Button(action: submitPassword) {
                                 HStack(spacing: 8) {
@@ -424,7 +413,7 @@ struct RemoteControlView: View {
                     RemoteControlUnavailableState(
                         title: "Mac unavailable",
                         message: store.connectionSubtitle,
-                        status: store.isConnecting ? "RECONNECTING" : "CONNECTION LOST",
+                        status: store.isConnecting ? "Reconnecting" : "Connection lost",
                         symbol: "wifi.exclamationmark",
                         isWorking: store.isConnecting,
                         topInset: proxy.safeAreaInsets.top,
@@ -451,7 +440,7 @@ struct RemoteControlView: View {
                             title: "Mac is locked",
                             message: status.remoteUnlockMessage
                                 ?? "Unlock the Mac to resume Vamp Stream and Remote Control. The connection will retry automatically.",
-                            status: "SECURE LOCK SCREEN",
+                            status: "Secure lock screen",
                             symbol: "lock.fill",
                             isWorking: false,
                             topInset: proxy.safeAreaInsets.top,
@@ -464,7 +453,7 @@ struct RemoteControlView: View {
                     RemoteControlUnavailableState(
                         title: sourceMode == .application ? "Vamp Stream is off" : "Mac Control is off",
                         message: status.message ?? "Turn on Mac Control in Vamp Assistant on your Mac, then allow Screen Recording.",
-                        status: "ACTION REQUIRED ON MAC",
+                        status: "Action required on Mac",
                         symbol: "display.trianglebadge.exclamationmark",
                         isWorking: false,
                         topInset: proxy.safeAreaInsets.top,
@@ -921,7 +910,7 @@ struct RemoteControlView: View {
                 } label: {
                     classicIconLabel(systemName: "display.2", active: false)
                 }
-                .buttonStyle(RemoteKeyButtonStyle())
+                .buttonStyle(RemoteBarKeyStyle())
             }
             if sourceMode == .application {
                 Menu {
@@ -955,7 +944,7 @@ struct RemoteControlView: View {
                 } label: {
                     classicIconLabel(systemName: "macwindow.on.rectangle", active: selectedWindowID != nil)
                 }
-                .buttonStyle(RemoteKeyButtonStyle())
+                .buttonStyle(RemoteBarKeyStyle())
                 .accessibilityLabel("Choose streamed application")
             }
             Menu {
@@ -990,10 +979,10 @@ struct RemoteControlView: View {
             } label: {
                 classicIconLabel(systemName: fillScreen ? "rectangle.arrowtriangle.2.outward" : "ellipsis", active: fillScreen)
             }
-            .buttonStyle(RemoteKeyButtonStyle())
+            .buttonStyle(RemoteBarKeyStyle())
 
             Rectangle()
-                .fill(Color.white.opacity(0.18))
+                .fill(RemoteInstrument.seam)
                 .frame(width: 1, height: 22)
                 .padding(.horizontal, 2)
 
@@ -1006,10 +995,9 @@ struct RemoteControlView: View {
         }
         .scrollIndicators(.hidden)
         .frame(height: 54)
+        .clipShape(Capsule())
         .frame(maxWidth: 520)
-        .background(RemoteInstrument.pearl, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(RemoteInstrument.edge, lineWidth: 0.75))
-        .shadow(color: .black.opacity(0.34), radius: 12, y: 6)
+        .vampGlass(Capsule())
         .padding(.horizontal, 10)
         .padding(.bottom, bottomInset + 8)
     }
@@ -1029,7 +1017,7 @@ struct RemoteControlView: View {
         } label: {
             classicIconLabel(systemName: systemName, active: active, dimmed: dimmed, destructive: destructive)
         }
-        .buttonStyle(RemoteKeyButtonStyle(prominent: destructive, isSelected: active))
+        .buttonStyle(RemoteBarKeyStyle())
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(accessibilityValue ?? "")
         .accessibilityAddTraits(active ? .isSelected : [])
@@ -1048,6 +1036,8 @@ struct RemoteControlView: View {
                     destructive || active ? .white : dimmed ? RemoteInstrument.secondaryInk : RemoteInstrument.ink
                 )
         }
+        .frame(width: 36, height: 36)
+        .background(destructive ? RemoteInstrument.danger : active ? BeetTheme.accent : .clear, in: Circle())
         .frame(width: 44, height: 44)
         .contentShape(Rectangle())
     }
@@ -1569,5 +1559,19 @@ private struct RemoteMarkupOverlay: View {
             }
             .padding(12)
         }
+    }
+}
+
+/// Keys inside the floating glass bar stay bare; the bar is the glass.
+private struct RemoteBarKeyStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? RemoteInstrument.recess : .clear, in: Circle())
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.9 : 1)
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }

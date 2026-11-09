@@ -46,12 +46,10 @@ private struct KeyboardDismissToolbarModifier: ViewModifier {
                                                         to: nil, from: nil, for: nil)
                     } label: {
                         Image(systemName: "keyboard.chevron.compact.down")
-                            .font(.subheadline.weight(.semibold)).frame(width: 44, height: 44)
                     }
-                    .buttonStyle(RemoteKeyButtonStyle())
                     .accessibilityLabel("Hide keyboard")
                     .accessibilityIdentifier("remote.hideKeyboard")
-                }.vampUtilityAction()
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
@@ -72,35 +70,33 @@ extension View {
     }
 
     func remoteFaceplate(radius: CGFloat = RemoteInstrument.panelRadius) -> some View {
-        background(RemoteInstrument.panel, in: RoundedRectangle(cornerRadius: radius))
-            .overlay {
-                RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(RemoteInstrument.seam.opacity(0.55), lineWidth: 0.75)
-                    .allowsHitTesting(false)
-            }
+        remotePageCard(radius: radius)
     }
 
     func remoteRecess(focused: Bool = false) -> some View {
-        background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 10))
+        background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(focused ? BeetTheme.accentBright : RemoteInstrument.seam.opacity(0.65), lineWidth: 0.75)
-                    .allowsHitTesting(false)
-            }
-            .overlay(alignment: .leading) {
-                Rectangle().fill(RemoteInstrument.orange)
-                    .frame(width: 2, height: 24)
-                    .padding(.leading, 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(BeetTheme.accentBright, lineWidth: 1.5)
                     .opacity(focused ? 1 : 0)
                     .allowsHitTesting(false)
             }
     }
 
+    /// The bar is left to the system: Liquid Glass on iOS 26, translucent before.
     func remoteNavigationChrome() -> some View {
         foregroundStyle(RemoteInstrument.ink)
-            .toolbarBackground(RemoteInstrument.header, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+    }
 
+    /// Native Liquid Glass on iOS 26 and later, a thin material before it.
+    @ViewBuilder
+    func vampGlass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        if #available(iOS 26.0, *) {
+            glassEffect(Glass.regular.tint(tint).interactive(interactive), in: shape)
+        } else {
+            background(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.thinMaterial), in: shape)
+                .overlay { shape.stroke(.white.opacity(0.14), lineWidth: 0.5).allowsHitTesting(false) }
+        }
     }
 }
 
@@ -113,26 +109,11 @@ struct RemoteGlassBackdrop: ViewModifier {
     var role: RemoteGlassRole = .card
 
     func body(content: Content) -> some View {
-        content.background {
-            let shape = RoundedRectangle(cornerRadius: min(radius, RemoteInstrument.panelRadius), style: .continuous)
-            shape
-                .fill(role == .control
-                      ? LinearGradient(colors: [RemoteInstrument.recess, RemoteInstrument.recess], startPoint: .top, endPoint: .bottom)
-                      : RemoteInstrument.pearl)
-                .overlay {
-                    shape.strokeBorder(RemoteInstrument.chassisEdge.opacity(0.62), lineWidth: 0.75)
-                }
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(RemoteInstrument.housingRim.opacity(role == .control ? 0.18 : 0.46))
-                        .frame(height: 0.5)
-                        .padding(.horizontal, min(radius, RemoteInstrument.panelRadius))
-                }
-        }
+        content.vampGlass(RoundedRectangle(cornerRadius: max(radius, 16), style: .continuous))
     }
 }
 
-/// Shared mobile materials. Geometry stays mobile; hues follow the Mac family.
+/// iOS-native neutrals with the Vamp red reserved for actions and live state.
 enum RemoteInstrument {
     static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(uiColor: UIColor { traits in
@@ -142,47 +123,43 @@ enum RemoteInstrument {
                            blue: CGFloat(value & 255) / 255, alpha: 1)
         })
     }
-    // Graphite, warm white and Vamp red follow the supplied identity reference.
-    static let canvas = adaptive(0xF4F3F1, 0x131416)
-    static let reading = adaptive(0xFFFFFF, 0x1D1F22)
-    static let panel = adaptive(0xFFFFFF, 0x24262A)
-    static let header = adaptive(0xF4F3F1, 0x131416)
-    static let navigation = adaptive(0xE7E6E3, 0x24262A)
-    static let ink = adaptive(0x202124, 0xF4F4F2)
-    static let secondaryInk = adaptive(0x626369, 0xB5B5BA)
-    static let pearlTop = adaptive(0xFFFFFF, 0x3C3E43)
-    static let pearlMid = adaptive(0xEAE9E6, 0x2C2E33)
-    static let pearlLow = adaptive(0xD4D3D0, 0x202226)
-    static let recess = adaptive(0xE8E7E4, 0x222428)
-    static let darkInsert = adaptive(0x202124, 0x0D0E10)
-    static let seam = adaptive(0xBABAB8, 0x45474C)
+    static let canvas = adaptive(0xF2F2F7, 0x050506)
+    static let reading = adaptive(0xFFFFFF, 0x1A1A1D)
+    static let panel = reading
+    static let header = canvas
+    static let navigation = adaptive(0xE5E5EA, 0x2C2C2E)
+    static let ink = adaptive(0x1C1C1E, 0xF5F5F7)
+    static let secondaryInk = adaptive(0x6C6C70, 0x9D9DA4)
+    /// The raised selection in a recessed track, like a system segmented control.
+    static let thumb = adaptive(0xFFFFFF, 0x55555A)
+    static let pearlTop = reading
+    static let pearlMid = reading
+    static let pearlLow = adaptive(0xF7F7FA, 0x161618)
+    static let recess = adaptive(0xE9E9EE, 0x2A2A2D)
+    static let darkInsert = adaptive(0x1C1C1E, 0x3A3A3C)
+    static let seam = adaptive(0xD1D1D6, 0x38383B)
     static let beacon = adaptive(0xAD2030, 0xFF7B88)
     static let beaconFill = adaptive(0xBD2939, 0xBD2939)
-    static let signalMint = Color(red: 0.65, green: 0.94, blue: 0.74)
-    static let console = LinearGradient(colors: [Color(red: 0.19, green: 0.20, blue: 0.22),
-                                                  Color(red: 0.06, green: 0.065, blue: 0.075)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing)
-    static let orange = adaptive(0xC6530A, 0xE9954B)
-    static let green = adaptive(0x287C43, 0x79AF89)
-    static let danger = adaptive(0xA73730, 0xE58E87)
-    // Physical instrument control surfaces. The housing is one machined
-    // enclosure; the keys sit inside it, one tonal step brighter so the
-    // enclosure edge reads. All three stay legible in both appearances.
-    static let housing = adaptive(0xDAD9D6, 0x282A2E)
-    static let housingRim = adaptive(0xFFFFFF, 0x62656B)
-    static let housingFoot = adaptive(0x9A9997, 0x111214)
-    static let keyFace = adaptive(0xF7F6F3, 0x393B40)
-    static let keyFacePressed = adaptive(0xDCDAD7, 0x23252A)
-    static let keyTopHighlight = adaptive(0xFFFFFF, 0x66696E)
-    static let keyBottomShadow = adaptive(0x969693, 0x090A0C)
-    static let keySeam = adaptive(0x7D7880, 0x0E0E0E)
-    static let keyInsetShadow = adaptive(0x938D96, 0x000000)
-    /// The single hairline that defines a chassis perimeter. One edge, no rails.
-    static let chassisEdge = adaptive(0xBABAB8, 0x45474C)
-    static let pearl = LinearGradient(colors: [pearlTop, pearlMid, pearlLow], startPoint: .top, endPoint: .bottom)
-    static let edge = LinearGradient(colors: [adaptive(0xFFFFFF, 0x595959), seam], startPoint: .top, endPoint: .bottom)
-    static let panelRadius: CGFloat = 14
-    static let controlRadius: CGFloat = 7
+    static let signalMint = adaptive(0x248A3D, 0x30D158)
+    static let console = LinearGradient(colors: [reading, reading], startPoint: .top, endPoint: .bottom)
+    static let orange = adaptive(0xC93400, 0xFF9F0A)
+    static let green = adaptive(0x248A3D, 0x30D158)
+    static let danger = adaptive(0xD70015, 0xFF453A)
+    // Retired hardware names, kept as aliases so old call sites read the new palette.
+    static let housing = recess
+    static let housingRim = adaptive(0xFFFFFF, 0x48484A)
+    static let housingFoot = adaptive(0xC7C7CC, 0x000000)
+    static let keyFace = reading
+    static let keyFacePressed = recess
+    static let keyTopHighlight = housingRim
+    static let keyBottomShadow = housingFoot
+    static let keySeam = seam
+    static let keyInsetShadow = housingFoot
+    static let chassisEdge = seam
+    static let pearl = LinearGradient(colors: [pearlTop, pearlLow], startPoint: .top, endPoint: .bottom)
+    static let edge = LinearGradient(colors: [housingRim, seam], startPoint: .top, endPoint: .bottom)
+    static let panelRadius: CGFloat = 20
+    static let controlRadius: CGFloat = 12
     static let hairline: CGFloat = 0.75
     static let controlHeight: CGFloat = 44
     static let contentWidth: CGFloat = 740
@@ -202,11 +179,43 @@ enum RemoteInstrument {
     }
 }
 
+/// The canvas, with two faint pools of accent light drifting near the top so
+/// the glass above has something to bend. Still under Reduce Motion.
 struct RemoteBackdrop: View {
+    /// Reading screens (a chat) keep the glow fainter behind long text.
+    var strength = 1.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
+    @State private var drift = false
+
     var body: some View {
-        RemoteInstrument.canvas
-            .ignoresSafeArea()
-            .accessibilityHidden(true)
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let strength = (scheme == .dark ? 0.2 : 0.11) * strength
+            ZStack(alignment: .top) {
+                RemoteInstrument.canvas
+                pool(width: width * 1.3, opacity: strength)
+                    .offset(x: width * (drift ? -0.32 : -0.12), y: width * (drift ? -0.62 : -0.5))
+                pool(width: width * 0.95, opacity: strength * 0.7)
+                    .offset(x: width * (drift ? 0.42 : 0.24), y: width * (drift ? -0.38 : -0.52))
+            }
+            .frame(width: width, height: proxy.size.height, alignment: .top)
+            .clipped()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 11).repeatForever(autoreverses: true)) { drift = true }
+        }
+    }
+
+    private func pool(width: CGFloat, opacity: Double) -> some View {
+        Circle()
+            .fill(RadialGradient(colors: [BeetTheme.accentBright.opacity(opacity), .clear],
+                                 center: .center, startRadius: 0, endRadius: width / 2))
+            .frame(width: width, height: width)
     }
 }
 
@@ -303,11 +312,7 @@ struct RemoteNoticeLabel: View {
         .padding(.horizontal, RemoteInstrument.Space.inset)
         .padding(.vertical, verticalSizeClass == .compact ? 0 : RemoteInstrument.Space.inset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RemoteInstrument.panel)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(RemoteInstrument.orange).frame(width: 2)
-                .padding(.vertical, RemoteInstrument.Space.inset).allowsHitTesting(false)
-        }
+        .background(RemoteInstrument.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(Rectangle())
     }
 }
@@ -408,11 +413,8 @@ struct RemoteInstrumentForm<Content: View>: View {
                         if !section.header.isEmpty {
                             ForEach(section.header) { header in
                                 header
-                                    .font(RemoteInstrument.TypeStyle.section)
-                                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                                    .font(.footnote.weight(.semibold))
                                     .foregroundStyle(RemoteInstrument.secondaryInk)
-                                    .textCase(.uppercase)
-                                    .tracking(1.2)
                             }
                             VampHairline()
                         }
@@ -608,52 +610,32 @@ extension EnvironmentValues {
 
 /// A stationary housing underneath a moving face. All mobile hardware keys
 /// share this rendering, including the existing selection and action banks.
+/// Every tappable key is a piece of glass: clear at rest, accent-tinted when it
+/// is the prominent action or the current choice. Rounded to a capsule at 44pt.
 struct RemoteKeySurface: ViewModifier {
     var isPressed = false
     var isSelected = false
     var prominent = false
-    var radius: CGFloat = 6
+    var radius: CGFloat = 22
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
-    private var engaged: Bool { isSelected || (isPressed && isEnabled) }
-    private var face: Color {
-        if prominent { return isEnabled ? BeetTheme.accent : RemoteInstrument.keyFacePressed }
-        if isSelected { return RemoteInstrument.darkInsert }
-        return engaged ? RemoteInstrument.keyFacePressed : RemoteInstrument.keyFace
-    }
-
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: max(radius, 12), style: .continuous)
+        let tinted = (prominent && isEnabled) || isSelected
         content
-            .background {
-                shape.fill(LinearGradient(colors: [face, face.opacity(0.88)], startPoint: .top, endPoint: .bottom))
-                    .overlay {
-                        shape.strokeBorder(RemoteInstrument.keySeam.opacity(contrast == .increased ? 0.85 : 0.28),
-                                           lineWidth: contrast == .increased ? 1.5 : 0.5)
-                    }
-                    .overlay(alignment: .top) {
-                        Rectangle()
-                            .fill(RemoteInstrument.keyTopHighlight.opacity(engaged ? 0.12 : 0.65))
-                            .frame(height: 0.5)
-                            .padding(.horizontal, radius)
-                            .padding(.top, 0.5)
-                    }
-                    .overlay(alignment: .top) {
-                        LinearGradient(colors: [RemoteInstrument.keyInsetShadow.opacity(engaged ? 0.20 : 0), .clear],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(height: 3).clipShape(shape)
-                    }
-                    .shadow(color: RemoteInstrument.keyBottomShadow.opacity(engaged ? 0 : 0.28),
-                            radius: 0, x: 0, y: engaged ? 0 : 1)
+            .background(tinted ? BeetTheme.accent : RemoteInstrument.recess.opacity(0.55), in: shape)
+            .vampGlass(shape, tint: tinted ? BeetTheme.accent.opacity(0.6) : nil, interactive: isEnabled)
+            .overlay {
+                if contrast == .increased {
+                    shape.strokeBorder(RemoteInstrument.seam, lineWidth: 1.5).allowsHitTesting(false)
+                }
             }
-            .offset(y: engaged && !reduceMotion ? 1 : 0)
-            .padding(.bottom, 1)
-            .background(RemoteInstrument.housingFoot.opacity(0.55), in: shape)
-            .opacity(isEnabled ? 1 : 0.48)
-            .animation(reduceMotion ? nil : .easeOut(duration: isPressed ? 0.08 : 0.14), value: isPressed)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isSelected)
+            .scaleEffect(isPressed && !reduceMotion ? 0.96 : 1)
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: isPressed)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isSelected)
     }
 }
 
@@ -992,9 +974,8 @@ struct VampHardwareSeam: View {
 struct VampMicroLabel: View {
     let title: String
     var body: some View {
-        Text(title).textCase(.uppercase)
-            .font(RemoteInstrument.TypeStyle.section).tracking(1.2)
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        Text(title)
+            .font(.footnote.weight(.semibold))
             .foregroundStyle(RemoteInstrument.secondaryInk)
             .accessibilityAddTraits(.isHeader)
     }

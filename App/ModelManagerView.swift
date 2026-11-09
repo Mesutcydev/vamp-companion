@@ -58,15 +58,13 @@ struct ModelManagerView: View {
 
             // Library section switch. Order follows what you already have;
             // each segment stays individually reachable from UI tests.
-            Picker("Model library filter", selection: $libraryFilter) {
-                Text("Downloaded").tag("Downloaded")
-                Text("Connected").tag("Connected models")
-                Text("Discover").tag("Discover")
-            }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 390)
+            CompanionSegments(selection: $libraryFilter, segments: [
+                CompanionSegment(title: "Downloaded", value: "Downloaded"),
+                CompanionSegment(title: "Connected", value: "Connected models"),
+                CompanionSegment(title: "Discover", value: "Discover"),
+            ])
                 .padding(.vertical, 12)
+                .accessibilityElement(children: .contain)
                 .accessibilityLabel("Model library filter")
 
             if libraryFilter == "Connected models" {
@@ -537,11 +535,8 @@ private struct LocalModelsSection: View {
                                 CompanionModelRow(model: model, isRecommended: recommended.contains(model.id))
                             }
                         }
-                        .background(CompanionBrand.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: CompanionBrand.radius))
-                        .overlay(RoundedRectangle(cornerRadius: CompanionBrand.radius)
-                            .strokeBorder(CompanionBrand.stroke, lineWidth: 1))
-                        .overlay(alignment: .bottom) { Rectangle().fill(CompanionBrand.stroke).frame(height: 1) }
+                        .clipShape(RoundedRectangle(cornerRadius: CompanionBrand.radius, style: .continuous))
+                        .companionCard()
                         .accessibilityIdentifier("companion-model-list")
                     }
                 }
@@ -563,8 +558,7 @@ private struct CompanionModelEmptyState: View {
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(CompanionBrand.accentInk)
                 .frame(width: 50, height: 50)
-                .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(CompanionBrand.stroke, lineWidth: 1))
+                .background(CompanionBrand.accent.opacity(0.1), in: Circle())
                 .accessibilityHidden(true)
             VStack(spacing: 6) {
                 Text(isDownloaded ? "No downloaded models" : "No matching models")
@@ -618,7 +612,7 @@ private struct ModelManagerEmptySearch: View {
     }
 }
 
-/// Small uppercase section label with a glyph.
+/// Sentence-case section label with a glyph.
 private struct SectionHeader: View {
     let title: String
     let systemImage: String
@@ -627,12 +621,9 @@ private struct SectionHeader: View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 10, weight: .semibold))
-            Text(title.uppercased())
-                .font(.appUI(size: 10, weight: .semibold))
-                .tracking(1)
-            Rectangle()
-                .fill(Instrument.seam.opacity(0.45))
-                .frame(height: 0.75)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+            Spacer(minLength: 0)
         }
         .foregroundStyle(CompanionBrand.secondary)
         .padding(.horizontal, 4)
@@ -688,7 +679,7 @@ private struct CompanionModelRow: View {
                     }
                     HStack(spacing: 9) {
                         Text(model.format.rawValue.uppercased())
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold))
                         Text(capabilityLabel).font(.system(size: 12))
                     }.foregroundStyle(CompanionBrand.secondary)
                     sizeChips
@@ -725,10 +716,7 @@ private struct CompanionModelRow: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isActive ? CompanionBrand.control.opacity(0.5) : Color.clear)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(isActive ? CompanionBrand.accent : .clear).frame(width: 3)
-        }
+        .background(isActive ? CompanionBrand.accent.opacity(0.06) : Color.clear)
         .overlay(alignment: .bottom) {
             Rectangle().fill(CompanionBrand.stroke.opacity(0.5)).frame(height: 0.75)
         }
@@ -757,21 +745,20 @@ private struct CompanionModelRow: View {
 
     private var specReadout: some View {
         HStack(spacing: 12) {
-            technicalValue("CONTEXT", "\(model.contextWindow / 1024)K")
-            technicalValue("MIN", "\(model.minRAMGB) GB")
-            technicalValue("REC", "\(model.recommendedRAMGB) GB")
+            technicalValue("Context", "\(model.contextWindow / 1024)K")
+            technicalValue("Minimum", "\(model.minRAMGB) GB")
+            technicalValue("Recommended", "\(model.recommendedRAMGB) GB")
         }
     }
 
     private func technicalValue(_ label: String, _ value: String) -> some View {
         HStack(spacing: 4) {
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.7)
-                .foregroundStyle(Instrument.inkSecondary)
+                .font(.system(size: 12))
+                .foregroundStyle(CompanionBrand.secondary)
             Text(value)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(Instrument.ink)
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(CompanionBrand.ink)
         }
     }
 }
@@ -785,9 +772,7 @@ private struct ModelGlyph: View {
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(isActive ? CompanionBrand.ink : CompanionBrand.secondary)
             .frame(width: 32, height: 32)
-            .background(CompanionBrand.control, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(CompanionBrand.stroke, lineWidth: 0.75))
+            .background(isActive ? CompanionBrand.accent.opacity(0.12) : CompanionBrand.inset, in: Circle())
     }
 }
 
@@ -797,10 +782,10 @@ private struct SpecChip: View {
     let text: String
 
     var body: some View {
-        Text(text).font(.system(size: 12, weight: .medium, design: .monospaced))
+        Text(text).font(.system(size: 11.5, weight: .medium).monospacedDigit())
             .foregroundStyle(CompanionBrand.secondary)
-            .padding(.horizontal, 6).padding(.vertical, 3)
-            .background(CompanionBrand.inset, in: RoundedRectangle(cornerRadius: 3))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(CompanionBrand.inset, in: Capsule())
     }
 }
 
@@ -823,7 +808,6 @@ private struct VerdictBadge: View {
                 .foregroundStyle(CompanionBrand.secondary)
             Text(label)
                 .font(.system(size: 12, weight: .medium))
-                .tracking(0.5)
                 .foregroundStyle(CompanionBrand.secondary)
         }
             .help("Projected peak: \(ByteFormatter.bytes(projectedFootprint))")

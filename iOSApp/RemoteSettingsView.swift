@@ -47,53 +47,57 @@ struct RemoteSettingsSheet: View {
   var body: some View {
     NavigationStack {
       RemotePageScroll {
-        RemotePageHeading(title: "Make it yours", subtitle: "Appearance, your paired Mac, and connected accounts.")
         RemoteSettingsIdentity(version: RemoteAppVersion.current)
         RemoteSettingsAppearance(appearanceSetting: $appearanceSetting, accent: $accent)
-        RemotePageSection(title: "Paired Mac", padding: 0) {
+        RemotePageSection(title: "Mac", padding: 0) {
           HStack(spacing: 12) {
-            RemotePageSymbol(symbol: "desktopcomputer.and.macbook", active: store.isConnected)
-            VStack(alignment: .leading, spacing: 4) {
+            RemotePageSymbol(symbol: "desktopcomputer", active: store.isConnected,
+              tint: store.isConnected ? nil : RemoteInstrument.secondaryInk)
+            VStack(alignment: .leading, spacing: 2) {
               Text(store.activeComputerName).font(.body.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
               Text(store.isConnected ? store.connectionSubtitle : store.connectionLabel)
-                .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-              RemotePageBadge(title: store.isConnected ? "Connected" : "Offline",
-                color: store.isConnected ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
+                .font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
             }
-          }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-          RemotePageDivider().padding(.leading, 66)
+            Spacer(minLength: 8)
+            HStack(spacing: 5) {
+              RemoteLivePulse(color: store.isConnected ? RemoteInstrument.green : RemoteInstrument.secondaryInk,
+                active: store.isConnected)
+              Text(store.isConnected ? "Connected" : "Offline").font(.caption.weight(.semibold))
+                .foregroundStyle(store.isConnected ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
+            }.fixedSize()
+          }
+          .padding(.horizontal, 14).padding(.vertical, 12)
+          .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+          .accessibilityElement(children: .combine)
+          RemotePageDivider().padding(.leading, 58)
           Button {
             dismiss()
             onSwitchComputer()
           } label: {
-            RemotePageRowLabel(title: "Switch computer", symbol: "desktopcomputer.and.macbook")
+            RemotePageRowLabel(title: "Switch computer", symbol: "arrow.left.arrow.right", tint: .blue)
           }.buttonStyle(RemotePageRowButtonStyle())
-          RemotePageDivider().padding(.leading, 66)
+          RemotePageDivider().padding(.leading, 58)
+          NavigationLink { RemoteProvidersView(store: store) } label: {
+            RemotePageRowLabel(title: "API providers", symbol: "key.horizontal.fill",
+              subtitle: "Keys and model access on your Mac", tint: .orange)
+          }.buttonStyle(RemotePageRowButtonStyle())
+          RemotePageDivider().padding(.leading, 58)
           Button {
             dismiss()
             onDiagnostics()
           } label: {
-            RemotePageRowLabel(title: "Control diagnostics", symbol: "stethoscope")
-          }.buttonStyle(RemotePageRowButtonStyle())
-          RemotePageDivider().padding(.leading, 66)
-          Button(role: .destructive) { showForgetMac = true } label: {
-            Label("Forget this Mac", systemImage: "trash")
-              .font(.subheadline).foregroundStyle(RemoteInstrument.danger)
-              .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).padding(14)
+            RemotePageRowLabel(title: "Control diagnostics", symbol: "stethoscope", tint: .gray)
           }.buttonStyle(RemotePageRowButtonStyle())
         }
-        RemotePageSection(title: "Connections", padding: 0) {
-          NavigationLink { RemoteProvidersView(store: store) } label: {
-            RemotePageRowLabel(title: "API providers", symbol: "key.horizontal", subtitle: "Keys and model access on your Mac")
-          }.buttonStyle(RemotePageRowButtonStyle())
+        Button(role: .destructive) { showForgetMac = true } label: {
+          Text("Forget this Mac")
+            .font(.body).foregroundStyle(RemoteInstrument.danger)
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .contentShape(Rectangle())
         }
-        RemotePageSection(title: "About") {
-          RemoteSettingValue(title: "Product", value: "Vamp Companion")
-          RemoteSettingValue(title: "Platform", value: "iPhone and iPad")
-          RemoteSettingValue(title: "Version", value: RemoteAppVersion.current.version)
-          RemoteSettingValue(title: "Build", value: RemoteAppVersion.current.build)
-        }
+        .buttonStyle(RemotePageRowButtonStyle())
+        .remotePageCard()
       }
       .navigationTitle("Settings")
       .remotePageChrome()
@@ -150,20 +154,21 @@ struct RemoteSettingsSheet: View {
 
 }
 
+/// The app's own mark, centred like an About header; the version lives here
+/// once instead of in a separate About list.
 private struct RemoteSettingsIdentity: View {
   let version: RemoteAppVersion
   var body: some View {
-    HStack(spacing: 13) {
-      RemoteBeaconMark(size: 42)
-        .padding(9).background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 14))
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Vamp Companion").font(.headline)
-        Text("Version \(version.version) · Build \(version.build)")
-          .font(.caption.monospacedDigit()).foregroundStyle(RemoteInstrument.secondaryInk)
-      }
-      Spacer(minLength: 0)
+    VStack(spacing: 8) {
+      RemoteBeaconMark(size: 40)
+        .frame(width: 64, height: 64)
+        .remotePageCard(radius: 16)
+      Text("Vamp Companion").font(.title3.weight(.semibold))
+      Text("Version \(version.version) (\(version.build))")
+        .font(.footnote.monospacedDigit()).foregroundStyle(RemoteInstrument.secondaryInk)
     }
-    .padding(14).remotePageCard()
+    .frame(maxWidth: .infinity)
+    .padding(.top, 4)
     .accessibilityElement(children: .combine)
   }
 }
@@ -171,53 +176,134 @@ private struct RemoteSettingsIdentity: View {
 private struct RemoteSettingsAppearance: View {
   @Binding var appearanceSetting: RemoteAppearanceSetting
   @Binding var accent: AccentPalette
+  @Environment(\.dynamicTypeSize) private var typeSize
 
   var body: some View {
-    RemotePageSection(title: "Appearance") {
-      VStack(alignment: .leading, spacing: 14) {
-        RemotePageSegments(selection: $appearanceSetting,
-          options: RemoteAppearanceSetting.allCases.map { ($0.label, $0) })
-          .accessibilityLabel("Appearance")
-        RemotePageDivider()
-        HStack {
-          Text("Accent").font(.subheadline.weight(.medium))
-          Spacer(minLength: 8)
-          Text(accent.label).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+    RemotePageSection(title: "Appearance", padding: 0) {
+      let layout = typeSize.isAccessibilitySize
+        ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 0))
+      layout {
+        ForEach(RemoteAppearanceSetting.allCases) { setting in
+          RemoteAppearanceTile(setting: setting, selected: setting == appearanceSetting) {
+            UISelectionFeedbackGenerator().selectionChanged()
+            appearanceSetting = setting
+          }
         }
-        RemoteSettingsAccentPicker(selection: $accent)
-        Text("System follows your device’s appearance.")
-          .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+      }
+      .padding(.horizontal, 8).padding(.vertical, 14)
+      .accessibilityElement(children: .contain)
+      .accessibilityLabel("Appearance")
+      RemotePageDivider().padding(.leading, 14)
+      HStack {
+        Text("Accent").font(.body)
+        Spacer(minLength: 8)
+        Text(accent.label).font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
+          .contentTransition(.opacity)
+      }
+      .padding(.horizontal, 14).padding(.top, 12)
+      RemoteSettingsAccentPicker(selection: $accent)
+        .padding(.horizontal, 6).padding(.bottom, 6)
+    }
+  }
+}
+
+/// A miniature chat in each scheme, like the Light and Dark choices in iOS
+/// Display settings; System shows both halves.
+private struct RemoteAppearanceTile: View {
+  let setting: RemoteAppearanceSetting
+  let selected: Bool
+  let action: () -> Void
+  @Environment(\.dynamicTypeSize) private var typeSize
+
+  var body: some View {
+    Button(action: action) {
+      // At accessibility sizes the previews give way to plain rows.
+      if typeSize.isAccessibilitySize {
+        HStack {
+          Text(setting.label).font(.body.weight(selected ? .semibold : .regular))
+          Spacer(minLength: 8)
+          check
+        }
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, minHeight: 44)
+      } else {
+        VStack(spacing: 8) {
+          preview
+            .frame(width: 58, height: 84)
+            .overlay {
+              RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(selected ? BeetTheme.accentBright : RemoteInstrument.seam, lineWidth: selected ? 2 : 0.5)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+          Text(setting.label).font(.subheadline.weight(selected ? .semibold : .regular))
+          check
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
       }
     }
+    .foregroundStyle(RemoteInstrument.ink)
+    .contentShape(Rectangle())
+    .buttonStyle(RemoteHomePressStyle())
+    .accessibilityLabel(setting.label)
+    .accessibilityAddTraits(selected ? .isSelected : [])
+    .animation(.snappy(duration: 0.2), value: selected)
+  }
+
+  private var check: some View {
+    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+      .font(.system(size: 20))
+      .foregroundStyle(selected ? BeetTheme.accentBright : RemoteInstrument.seam)
+      .contentTransition(.symbolEffect(.replace))
+      .accessibilityHidden(true)
+  }
+
+  @ViewBuilder private var preview: some View {
+    switch setting {
+    case .light: screen(dark: false)
+    case .dark: screen(dark: true)
+    case .system:
+      screen(dark: false).overlay {
+        screen(dark: true).mask(alignment: .trailing) { Rectangle().frame(width: 29) }
+      }
+    }
+  }
+
+  private func screen(dark: Bool) -> some View {
+    let line = dark ? Color(white: 0.32) : Color(white: 0.86)
+    return RoundedRectangle(cornerRadius: 12, style: .continuous)
+      .fill(dark ? Color(white: 0.1) : .white)
+      .overlay(alignment: .top) {
+        VStack(alignment: .leading, spacing: 5) {
+          Capsule().fill(BeetTheme.accentBright).frame(width: 24, height: 8)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+          Capsule().fill(line).frame(width: 34, height: 5)
+          Capsule().fill(line).frame(width: 26, height: 5)
+          Capsule().fill(line).frame(width: 30, height: 5)
+        }
+        .padding(.horizontal, 8).padding(.top, 12)
+      }
   }
 }
 
 private struct RemoteSettingsAccentPicker: View {
   @Binding var selection: AccentPalette
   var body: some View {
-    LazyVGrid(columns: [GridItem(.adaptive(minimum: 44), spacing: 8)], spacing: 8) {
+    HStack(spacing: 0) {
       ForEach(AccentPalette.allCases) { palette in
         Button {
           UISelectionFeedbackGenerator().selectionChanged()
           selection = palette
         } label: {
-          let hex = palette.hexes.accentLight
-          ZStack {
-            Circle().fill(Color(red: Double((hex >> 16) & 255) / 255,
-              green: Double((hex >> 8) & 255) / 255, blue: Double(hex & 255) / 255))
-              .frame(width: 28, height: 28)
-            if palette == selection {
-              Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.white)
-            }
-          }
-          .frame(maxWidth: .infinity, minHeight: 44)
-          .background(palette == selection ? RemoteInstrument.recess : .clear,
-            in: RoundedRectangle(cornerRadius: 11))
-          .overlay {
-            RoundedRectangle(cornerRadius: 11).strokeBorder(
-              palette == selection ? RemoteInstrument.ink.opacity(0.45) : .clear, lineWidth: 1)
-          }
-          .contentShape(Rectangle())
+          let color = RemoteInstrument.adaptive(palette.hexes.accentLight, palette.hexes.accentDark)
+          // The system colour-well look: a swatch inside a ring when chosen.
+          Circle().fill(color)
+            .frame(width: 26, height: 26)
+            .padding(4)
+            .overlay { Circle().strokeBorder(color, lineWidth: 2).opacity(palette == selection ? 1 : 0) }
+            .scaleEffect(palette == selection ? 1 : 0.86)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(Rectangle())
+            .animation(.snappy(duration: 0.2), value: selection)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(palette.label) accent")
@@ -370,7 +456,7 @@ private struct RemoteProviderDetailView: View {
         if let provider {
           RemotePageSection(title: "Connection", spacing: 12) {
             RemoteMobileStatus(
-              title: !store.isConnected ? "MAC OFFLINE" : provider.isReady ? "READY" : "NOT CONNECTED",
+              title: !store.isConnected ? "Mac offline" : provider.isReady ? "Ready" : "Not connected",
               color: store.isConnected && provider.isReady ? RemoteInstrument.green : RemoteInstrument.secondaryInk)
             if let baseURL = provider.baseURL {
               Text(baseURL).font(.caption.monospaced())
@@ -495,31 +581,5 @@ private struct RemoteProviderDetailView: View {
     } message: {
       Text("This provider's models will no longer be available until you add another key.")
     }
-  }
-}
-
-/// Metadata stacks at accessibility sizes without squeezing either column.
-private struct RemoteSettingValue: View {
-  let title: String
-  let value: String
-  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-  var body: some View {
-    let layout =
-      dynamicTypeSize.isAccessibilitySize
-      ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-      : AnyLayout(HStackLayout(spacing: 12))
-    layout {
-      Text(title).font(.subheadline).foregroundStyle(
-        RemoteInstrument.secondaryInk)
-      if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
-      Text(verbatim: value).font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
-        .monospacedDigit()
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .frame(minHeight: 44)
-    .padding(.vertical, 4)
-    .overlay(alignment: .bottom) { RemotePageDivider() }
-    .accessibilityElement(children: .combine)
   }
 }

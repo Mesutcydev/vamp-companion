@@ -1,0 +1,15 @@
+Vamp Companion 0.10.59 (146)
+
+A new Home and Settings.
+
+Please test on Home:
+- The glass Mac card shows your Mac, the loaded model and a live status (Online, Working, Offline). Models, Control, Bots and Share sit inside it.
+- Chats are grouped by Today, Yesterday, Previous 7 days and Earlier. Running chats show moving dots; times read like Messages.
+- Tap "Message Vamp" at the bottom to start a new chat. The keyboard should open right away.
+- Plan & organize and Work on a project fill in the message without sending it.
+- Pull down to refresh, search, and long-press a chat to rename or delete it.
+
+Please test in Settings:
+- Pick System, Light or Dark from the preview cards, and an accent colour.
+- Switch computer, API providers, Control diagnostics and Forget this Mac.
+- Check Light and Dark, and larger text sizes.

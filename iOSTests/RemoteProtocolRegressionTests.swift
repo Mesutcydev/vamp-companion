@@ -263,6 +263,20 @@ final class RemoteInstrumentRenderingTests: XCTestCase {
         try await capture(settings, name: "panel-settings-disconnected", size: phone)
     }
 
+    func testChatMarkdownBlocksAndAttachmentSplit() {
+        let blocks = MarkdownText.blocks("Intro\n\n- **One** a\n  - nested\n2. Two\n\n> quote\n---\n```swift\nlet x = 1")
+        XCTAssertEqual(blocks, [
+            .paragraph("Intro"),
+            .list([.init(marker: "•", level: 0, text: "**One** a"), .init(marker: "•", level: 1, text: "nested"),
+                   .init(marker: "2.", level: 0, text: "Two")]),
+            .quote("quote"), .rule, .code("let x = 1", "swift"),
+        ])
+        XCTAssertEqual(MarkdownText.blocks("**1. Bold** line"), [.paragraph("**1. Bold** line")])
+        let split = RemoteUserTurn.split("Describe this.  ·  1 attachment · a.swift  ·  2 images")
+        XCTAssertEqual(split.message, "Describe this.")
+        XCTAssertEqual(split.attachments, ["1 attachment · a.swift", "2 images"])
+    }
+
     @MainActor func testComposerIntrinsicSizing() {
         for width in [320.0, 402.0, 740.0] {
             func height(_ text: String, compact: Bool = false) -> CGFloat {
@@ -273,9 +287,9 @@ final class RemoteInstrumentRenderingTests: XCTestCase {
                 return host.sizeThatFits(in: CGSize(width: width, height: 1000)).height
             }
             let empty = height("")
-            // Preserve the original instrument deck and its integrated status rail.
-            XCTAssertLessThanOrEqual(empty, 130, "Original composer must remain bounded at width \(width)")
-            XCTAssertGreaterThanOrEqual(empty, 120)
+            // The floating glass composer: one text line over one row of 44-pt controls.
+            XCTAssertLessThanOrEqual(empty, 130, "Composer must remain bounded at width \(width)")
+            XCTAssertGreaterThanOrEqual(empty, 96)
             XCTAssertEqual(height("A short draft"), empty, accuracy: 2)
             let six = height("One\nTwo\nThree\nFour\nFive\nSix")
             XCTAssertGreaterThan(six, empty + 60)

@@ -1,0 +1,14 @@
+Vamp Companion 0.10.59 (144)
+
+A new look for the whole app: native iOS glass controls, quieter colours, and small live status animations. Every action from 0.10.58 is still there.
+
+New chat now opens straight into a chat. Set it up from the chips above the message box.
+
+Please test:
+- Home: the glass Mac panel shows your Mac, its status (Online / Working / Offline) and the loaded model. The round buttons open Models, Control, Bots and Share.
+- New chat: tap the pencil. The keyboard opens right away. Switch Chat / Code at the top; pick Bot, Permissions, Reasoning, API key, and in Code mode the Folder, from the chips above the message box. Pick the model from the chip inside the message box, then send to start.
+- Quick starts on Home fill in the message without sending it.
+- Chats: status (Ready, Thinking, Offline) now sits under the title. The message box floats at the bottom. While Vamp works and you type a follow-up, Stop, Steer and Queue sit together in the message box.
+- Settings, Models, Bots, Share and Control should all look consistent in Light and Dark, and with larger text sizes.
+- Control: the bottom bar over your Mac's screen is now a glass bar. Please check it while connected to a Mac.
+- Reduce Motion (Settings > Accessibility > Motion) should stop the moving glow and pulses.

@@ -39,7 +39,7 @@ final class SecondaryPagesUITests: XCTestCase {
         let app = launch("new-session", appearance: "dark", state: "store-edition")
         let prompt = app.descendants(matching: .any).matching(identifier: "remote.start.prompt").firstMatch
         XCTAssertTrue(prompt.waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["Permissions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["remote.start.options"].waitForExistence(timeout: 5), "Permissions stay in the chat")
         XCTAssertFalse(app.buttons["Code"].exists, "The App Store Mac edition cannot open folders")
         XCTAssertFalse(app.staticTexts["Bot"].exists, "The App Store Mac edition has no bots")
         XCTAssertFalse(app.alerts.firstMatch.waitForExistence(timeout: 3), "Refused routes must not raise alerts")
@@ -96,7 +96,7 @@ final class SecondaryPagesUITests: XCTestCase {
         let openAI = app.buttons.containing(.staticText, identifier: "OpenAI").firstMatch
         XCTAssertTrue(openAI.waitForExistence(timeout: 15))
         openAI.tap()
-        XCTAssertTrue(app.staticTexts["MAC OFFLINE"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Mac offline"].waitForExistence(timeout: 5))
         let key = app.secureTextFields["Replacement API key"]
         key.tap()
         key.typeText("fixture-only-not-a-credential")
@@ -126,7 +126,7 @@ final class SecondaryPagesUITests: XCTestCase {
     func testSettingsAndProviderSetupInBothAppearances() {
         for appearance in ["light", "dark"] {
             let app = launch("settings", appearance: appearance)
-            XCTAssertTrue(app.staticTexts["Make it yours"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.buttons["Dark"].waitForExistence(timeout: 15))
             XCTAssertTrue(app.buttons["System"].exists)
             XCTAssertGreaterThanOrEqual(app.buttons["Light"].frame.height, 44)
             capture(app, "settings-\(appearance)")
@@ -176,7 +176,7 @@ final class SecondaryPagesUITests: XCTestCase {
 
     func testSecondaryPagesWithAccessibilityText() {
         let app = launch("settings", appearance: "dark", largeText: true)
-        XCTAssertTrue(app.staticTexts["Make it yours"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Dark"].waitForExistence(timeout: 15))
         let dark = app.buttons["Dark"]
         reveal(dark, in: app)
         XCTAssertGreaterThanOrEqual(dark.frame.height, 44)

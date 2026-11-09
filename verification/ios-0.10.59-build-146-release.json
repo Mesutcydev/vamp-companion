@@ -1,0 +1,38 @@
+{
+  "date": "2026-11-09",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.59",
+    "build": "146",
+    "sourceCommit": "72a6d59 plus the uncommitted iOS, chat, Home and Settings redesign in the working tree",
+    "toolchain": "Xcode 27.1, iphoneos27.1 SDK (24A94232), same as builds 142 to 145",
+    "buildID": "d6c30a9f-806a-473e-ab95-d7d1b5e25d81",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "testerGroup": "mes (internal, access to all builds)",
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "weakImportsVsBuild145": "Identical (41 weak imports)",
+    "ipaSHA256": "43851b78b8aecdb45a2751322238effc5cb33cb2f22ca9e7881e66f1d9cfba20",
+    "testNotes": "verification/ios-0.10.59-build-146-testflight-notes.txt (en-US and en-GB, read back)"
+  },
+  "changesSince145": [
+    "Home: one glass Mac card with Models, Control, Bots and Share inside it; chats grouped by day; floating Message Vamp bar replaces the top compose button; starters as compact rows",
+    "Settings: About header, Light and Dark preview cards, one-line accent colours, iOS-style coloured rows, Forget this Mac on its own",
+    "Message counts use singular and plural correctly"
+  ],
+  "checks": [
+    { "check": "iOS unit tests", "result": "Passed", "passed": 58, "failed": 0 },
+    { "check": "HomepageUITests, ChatPolishUITests, ComposerUITests, CompanionHubUITests", "result": "Passed" },
+    { "check": "SecondaryPagesUITests", "result": "Passed after fixes; the bot draft typing test failed once from dropped simulator keystrokes and passed when re-run" },
+    { "check": "verify-ios-unchanged.py", "result": "Passed" }
+  ],
+  "notVerified": [
+    "Home and Settings against a real Mac (fixtures only)",
+    "ControlSurfaceUITests were not re-run for this build",
+    "Launch from TestFlight on a device"
+  ]
+}

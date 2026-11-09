@@ -37,7 +37,7 @@ struct MessageTranscript: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 24) {
+                LazyVStack(spacing: 16) {
                     ForEach(detail.messages) { message in
                         MessageBubble(
                             message: message,
@@ -57,7 +57,6 @@ struct MessageTranscript: View {
                 .padding(.horizontal, 16).padding(.vertical, 16).frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(BeetTheme.readingSurface(appearance))
             .defaultScrollAnchor(.bottom)
             .defaultScrollAnchor(.top, for: .alignment)
             // Geometry is sampled independently from the scroll phase. The
@@ -207,14 +206,13 @@ struct MessageTranscript: View {
         } label: {
             Label(detail.isRunning ? "Jump to latest" : "Latest", systemImage: "arrow.down")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(BeetTheme.secondaryText(appearance))
-                .padding(.horizontal, 14)
+                .foregroundStyle(RemoteInstrument.ink)
+                .padding(.horizontal, 16)
                 .frame(minHeight: 44)
-                .background(RemoteInstrument.pearl, in: Capsule())
-                .overlay { Capsule().stroke(BeetTheme.line(appearance), lineWidth: 0.75) }
+                .vampGlass(Capsule(), interactive: true)
                 .contentShape(Capsule())
         }
-        .buttonStyle(RemotePressButtonStyle())
+        .buttonStyle(.plain)
         .padding(.bottom, 12)
         .transition(.opacity.combined(with: .scale(scale: 0.92)))
         .accessibilityLabel("Jump to latest message")
@@ -228,11 +226,11 @@ struct MessageBubble: View {
     var onRevert: (() -> Void)? = nil
     var onReuse: ((String) -> Void)? = nil
     @Environment(\.remoteAppearance) private var appearance
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var isUser: Bool { message.role == "user" }
     var body: some View {
       Group {
-        if message.role == "user" {
+        if isUser {
             RemoteUserTurn(text: message.content)
         }
         else if message.role == "toolCall" || message.role == "toolResult" { ToolMessageCard(message: message) }
@@ -261,59 +259,95 @@ struct MessageBubble: View {
             .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.red.opacity(0.3), lineWidth: 0.75) }
         }
         else if message.role == "notice" {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.uturn.up")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(BeetTheme.accentBright)
-                Text(message.content)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(BeetTheme.secondaryText(appearance))
-                Spacer(minLength: 4)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: noticeSymbol).font(.caption2.weight(.semibold))
+                    .accessibilityHidden(true)
+                Text(message.content).font(.caption)
             }
+            .foregroundStyle(RemoteInstrument.secondaryInk)
+            .padding(.horizontal, 2)
         }
         else {
-            RemoteTranscriptTurn(speaker: "Vamp", text: message.content)
+            RemoteTranscriptTurn(text: message.content)
         }
       }
       .contextMenu {
           if ["user", "assistant"].contains(message.role), !message.content.isEmpty {
-              Button("Copy message", systemImage: "doc.on.doc") { UIPasteboard.general.string = message.content }
-              if message.role == "user", let onReuse {
-                  Button("Use in composer", systemImage: "pencil") { onReuse(message.content) }
+              let text = isUser ? RemoteUserTurn.split(message.content).message : message.content
+              Button("Copy message", systemImage: "doc.on.doc") { UIPasteboard.general.string = text }
+              if isUser, let onReuse {
+                  Button("Use in composer", systemImage: "pencil") { onReuse(text) }
               }
           }
       }
+      .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+      .padding(.leading, isUser && !dynamicTypeSize.isAccessibilitySize ? 48 : 0)
+    }
+
+    private var noticeSymbol: String {
+        let text = message.content.lowercased()
+        if text.contains("image") { return "photo" }
+        if text.contains("checkpoint") || text.hasPrefix("undo") { return "clock.arrow.circlepath" }
+        if text.hasPrefix("approved") || text.hasSuffix("allowed") { return "checkmark.circle" }
+        if text.hasPrefix("declined") || text.hasSuffix("rejected") { return "xmark.circle" }
+        return "info.circle"
     }
 }
 
-/// Shared geometry prevents the answer moving when a stream becomes a message.
+/// An answer with a quiet footer: the logo plus Copy once finished, the logo
+/// plus the live phase while streaming. Same footer height in both states, so
+/// nothing moves when a stream becomes a message.
 struct RemoteTranscriptTurn: View {
-    let speaker: String
     let text: String
     var phase: String? = nil
     var active = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(speaker).font(.caption.weight(.semibold))
-                    .foregroundStyle(speaker == "Vamp" ? BeetTheme.accentBright : RemoteInstrument.secondaryInk)
+        VStack(alignment: .leading, spacing: 2) {
+            if !text.isEmpty { MarkdownText(text) }
+            HStack(spacing: 6) {
+                RemoteBeaconMark(ink: phase == nil ? RemoteInstrument.secondaryInk : BeetTheme.accentBright,
+                                 size: 14, isActive: phase != nil && active)
                 if let phase {
-                    RemoteChatWorkingDots(active: active)
-                    Text(phase.capitalized).font(.caption)
+                    Text(phase.capitalized).font(.footnote.weight(.medium))
+                        .foregroundStyle(RemoteInstrument.secondaryInk)
                         .contentTransition(.opacity)
+                    RemoteChatWorkingDots(active: active)
+                } else if !text.isEmpty {
+                    copyButton
                 }
             }
-            .foregroundStyle(RemoteInstrument.secondaryInk)
-            .frame(minHeight: 20, alignment: .leading)
+            .frame(minHeight: 34, alignment: .leading)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: phase)
-            if text.isEmpty, phase != nil {
-                Text("Vamp is working…").font(.body).foregroundStyle(RemoteInstrument.secondaryInk)
-            } else { MarkdownText(text) }
         }
         .foregroundStyle(RemoteInstrument.ink)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Vamp")
+    }
+
+    private var copyButton: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+        } label: {
+            Image(systemName: copied ? "checkmark" : "square.on.square")
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(copied ? BeetTheme.accentBright : RemoteInstrument.secondaryInk)
+                .frame(width: 30, height: 30)
+                .hitTarget(7)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(copied ? "Message copied" : "Copy message")
+        .accessibilityIdentifier("remote.chat.copy-message")
+        .task(id: copied) {
+            guard copied else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            copied = false
+        }
     }
 }
 
@@ -332,7 +366,7 @@ struct ReasoningMessageCard: View {
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "brain").font(.caption)
-                    VampMicroLabel(title: "Reasoning")
+                    Text("Reasoning").font(.footnote.weight(.medium))
                     Spacer(minLength: 8)
                     Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2)
                 }
@@ -354,7 +388,7 @@ struct ReasoningMessageCard: View {
                     .padding(12)
             }
         }
-        .background(expanded ? RemoteInstrument.recess : .clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(expanded ? RemoteInstrument.recess.opacity(0.6) : .clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
 
@@ -375,8 +409,7 @@ struct CheckpointMessageRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Checkpoint")
-                    .font(.system(.caption2, design: .monospaced, weight: .medium))
-                    .tracking(0.5)
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(BeetTheme.secondaryText(appearance))
                 Text(message.content)
                     .font(.caption)
@@ -394,8 +427,8 @@ struct CheckpointMessageRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BeetTheme.surfaceStrong(appearance),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(RemoteInstrument.recess.opacity(0.6),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .confirmationDialog("Restore this checkpoint?",
                             isPresented: $confirming,
                             titleVisibility: .visible) {
@@ -434,11 +467,7 @@ struct RemoteChatErrorCard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(BeetTheme.surfaceStrong(appearance), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(BeetTheme.line(appearance), lineWidth: 0.75)
-        }
+        .background(RemoteInstrument.danger.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
 
@@ -446,65 +475,128 @@ struct MarkdownText: View {
     let content: String
     init(_ content: String) { self.content = content }
 
-    private struct Block {
-        var text: String
-        var heading = 0
-        var isCode = false
-        var language: String?
+    struct ListItem: Equatable { var marker: String; var level: Int; var text: String }
+    enum Block: Equatable {
+        case paragraph(String), heading(Int, String), code(String, String?), list([ListItem]), quote(String), rule
     }
 
-    // Parse only presentation boundaries; preserve incomplete streamed code fences.
-    private var blocks: [Block] {
+    /// Block structure only; inline syntax is left to AttributedString. An
+    /// unclosed fence (a stream mid-code) still renders as code.
+    static func blocks(_ content: String) -> [Block] {
         var result: [Block] = []
-        var lines: [String] = []
-        var code = false
+        var paragraph: [String] = [], items: [ListItem] = [], quote: [String] = []
+        var code: [String]?
         var language: String?
         func flush() {
-            if !lines.isEmpty {
-                result.append(Block(text: lines.joined(separator: "\n"), isCode: code, language: language))
-                lines.removeAll(keepingCapacity: true)
-            }
+            if !paragraph.isEmpty { result.append(.paragraph(paragraph.joined(separator: "\n"))) }
+            if !items.isEmpty { result.append(.list(items)) }
+            if !quote.isEmpty { result.append(.quote(quote.joined(separator: "\n"))) }
+            paragraph = []; items = []; quote = []
         }
         for line in content.components(separatedBy: "\n") {
-            if line.hasPrefix("```") {
-                flush()
-                code.toggle()
-                language = code ? String(line.dropFirst(3).split(whereSeparator: \.isWhitespace).first ?? "").prefix(32).description : nil
-            } else if code {
-                lines.append(line)
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                flush()
-            } else {
-                let level = line.prefix(while: { $0 == "#" }).count
-                if (1...6).contains(level), line.dropFirst(level).first == " " {
-                    flush()
-                    result.append(Block(text: String(line.dropFirst(level + 1)), heading: level))
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let hashes = trimmed.prefix(while: { $0 == "#" }).count
+            if trimmed.hasPrefix("```") {
+                if let body = code {
+                    result.append(.code(body.joined(separator: "\n"), language)); code = nil
                 } else {
-                    lines.append(line)
+                    flush(); code = []
+                    language = String(trimmed.dropFirst(3).split(whereSeparator: \.isWhitespace).first?.prefix(32) ?? "")
                 }
+            } else if code != nil {
+                code?.append(line)
+            } else if trimmed.isEmpty {
+                flush()
+            } else if (1...6).contains(hashes), trimmed.dropFirst(hashes).first == " " {
+                flush(); result.append(.heading(hashes, String(trimmed.dropFirst(hashes + 1))))
+            } else if trimmed.count >= 3, let first = trimmed.first, "-*_".contains(first),
+                      trimmed.allSatisfy({ $0 == first || $0 == " " }) {
+                flush(); result.append(.rule)
+            } else if let item = listItem(line) {
+                if items.isEmpty { flush() }
+                items.append(item)
+            } else if trimmed.hasPrefix(">") {
+                if quote.isEmpty { flush() }
+                quote.append(String(trimmed.dropFirst().drop(while: { $0 == " " })))
+            } else if !items.isEmpty, line.first == " " || line.first == "\t" {
+                items[items.count - 1].text += "\n" + trimmed
+            } else {
+                if paragraph.isEmpty { flush() }
+                paragraph.append(line)
             }
         }
         flush()
+        if let body = code { result.append(.code(body.joined(separator: "\n"), language)) }
         return result
+    }
+
+    private static func listItem(_ line: String) -> ListItem? {
+        let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+        let rest = line.dropFirst(indent)
+        let level = min(indent / 2, 3)
+        if let first = rest.first, "-*+•".contains(first), rest.dropFirst().first == " " {
+            return ListItem(marker: "•", level: level, text: String(rest.dropFirst(2)))
+        }
+        let digits = rest.prefix(while: \.isNumber)
+        guard (1...3).contains(digits.count),
+              let dot = rest.dropFirst(digits.count).first, dot == "." || dot == ")",
+              rest.dropFirst(digits.count + 1).first == " " else { return nil }
+        return ListItem(marker: digits + ".", level: level, text: String(rest.dropFirst(digits.count + 2)))
+    }
+
+    private static func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                if block.isCode {
-                    RemoteChatCodeBlock(text: block.text, language: block.language)
-                } else {
-                    Text((try? AttributedString(markdown: block.text,
-                        options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(block.text))
-                        .font(block.heading == 0 ? .body : .headline)
-                        .lineSpacing(block.heading == 0 ? 5 : 2)
-                        .textSelection(.enabled)
+            ForEach(Array(Self.blocks(content).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .paragraph(let text):
+                    prose(text)
+                case .heading(let level, let text):
+                    Text(Self.inline(text))
+                        .font(level == 1 ? .title3.weight(.semibold) : level == 2 ? .headline : .subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(block.heading == 0 ? [] : .isHeader)
+                        .padding(.top, 2)
+                        .accessibilityAddTraits(.isHeader)
+                case .code(let text, let language):
+                    RemoteChatCodeBlock(text: text, language: language)
+                case .list(let items):
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(item.marker)
+                                    .font(.body.monospacedDigit())
+                                    .foregroundStyle(RemoteInstrument.secondaryInk)
+                                    .accessibilityHidden(item.marker == "•")
+                                prose(item.text)
+                            }
+                            .padding(.leading, CGFloat(item.level) * 18)
+                        }
+                    }
+                case .quote(let text):
+                    prose(text)
+                        .foregroundStyle(RemoteInstrument.secondaryInk)
+                        .padding(.leading, 12)
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(RemoteInstrument.seam).frame(width: 3)
+                        }
+                case .rule:
+                    Rectangle().fill(RemoteInstrument.seam).frame(height: 0.5).padding(.vertical, 4)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func prose(_ text: String) -> some View {
+        Text(Self.inline(text))
+            .font(.body)
+            .lineSpacing(4)
+            .tint(BeetTheme.accentBright)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -520,24 +612,25 @@ struct ToolMessageCard: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-                    .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 8))
+                    .background(RemoteInstrument.recess.opacity(0.7), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.bottom, 12)
             }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: symbol).font(.subheadline)
                     .foregroundStyle(message.didFail ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
                     .frame(width: 22).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(displayName).font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
-                    Text(message.role == "toolCall" ? "Tool request" : message.didFail ? "Failed" : "Tool result")
-                        .font(.caption).foregroundStyle(message.didFail ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
-                }.frame(minHeight: 44)
+                Text(displayName).font(.subheadline.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(message.role == "toolCall" ? "Request" : message.didFail ? "Failed" : "Done")
+                    .font(.caption).foregroundStyle(message.didFail ? RemoteInstrument.danger : RemoteInstrument.secondaryInk)
             }
+            .frame(minHeight: 44)
         }
         .tint(RemoteInstrument.secondaryInk)
-        .padding(.horizontal, 12).padding(.vertical, 4)
-        .background(RemoteInstrument.reading, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).strokeBorder(RemoteInstrument.seam.opacity(0.35), lineWidth: 0.75) }
+        .padding(.horizontal, 12)
+        .background(RemoteInstrument.recess.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: expanded)
     }
 
@@ -569,7 +662,7 @@ struct StreamingBubble: View {
     let text: String, phase: String
     var active = true
     var body: some View {
-        RemoteTranscriptTurn(speaker: "Vamp", text: text, phase: phase, active: active)
+        RemoteTranscriptTurn(text: text, phase: phase, active: active)
     }
 }
 
@@ -627,13 +720,9 @@ struct QueuedFollowUpsView: View {
                     .disabled(!canRemove || isUpdating)
                     .accessibilityLabel("Remove queued follow-up")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(BeetTheme.surface(appearance), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(BeetTheme.line(appearance).opacity(0.9), lineWidth: 0.75)
-                }
+                .padding(.leading, 14).padding(.trailing, 6)
+                .padding(.vertical, 4)
+                .vampGlass(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
         }
         .padding(.horizontal, 12)

@@ -81,54 +81,66 @@ struct SessionListView: View {
         let featured = Set(visible.filter { $0.isRunning || $0.queueState == "queued" }.prefix(2).map(\.id))
         return visible.filter { !featured.contains($0.id) }
     }
+    /// Date sections like Messages and Notes, so the list scans by when, not by count.
+    private var historyGroups: [(title: String, sessions: [RemoteSessionSummary])] {
+        guard search.isEmpty else { return history.isEmpty ? [] : [("Results", history)] }
+        let calendar = Calendar.current
+        let titles = ["Today", "Yesterday", "Previous 7 days", "Earlier"]
+        let groups = Dictionary(grouping: history) { session -> Int in
+            let date = Date(timeIntervalSince1970: session.updatedAt)
+            if calendar.isDateInToday(date) { return 0 }
+            if calendar.isDateInYesterday(date) { return 1 }
+            return date > .now.addingTimeInterval(-7 * 86_400) ? 2 : 3
+        }
+        return groups.keys.sorted().map { (titles[$0], groups[$0] ?? []) }
+    }
+
     var body: some View {
         ZStack {
             RemoteBackdrop()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 17) {
+                LazyVStack(alignment: .leading, spacing: 22) {
                     if search.isEmpty {
-                        RemoteHomeOverview(store: store,
-                            onStart: { presentNewSession(prompt: $0) }, onOpen: onOpen,
+                        RemoteHomeOverview(store: store, onOpen: onOpen,
                             onMac: { showMacHub = true }, onControl: { showControl = true },
                             onBots: { showBotRuns = true }, onShare: { showSharing = true })
                     }
-                    if history.isEmpty {
-                        if !search.isEmpty {
-                            RemoteEmptySessions(isSearching: true, isConnected: store.isConnected,
-                                onStart: { presentNewSession() }, onClearSearch: { search = "" })
-                        } else if visible.isEmpty {
-                            Text("Your conversations will appear here.")
-                                .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
-                                .padding(.vertical, 8)
+                    if history.isEmpty, !search.isEmpty {
+                        RemoteEmptySessions(isSearching: true, isConnected: store.isConnected,
+                            onStart: { presentNewSession() }, onClearSearch: { search = "" })
+                    } else if visible.isEmpty {
+                        Text("Your conversations will appear here.")
+                            .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
+                            .padding(.horizontal, 4)
+                    }
+                    ForEach(historyGroups, id: \.title) { group in
+                        VStack(alignment: .leading, spacing: 7) {
+                            RemotePageSectionHeading(title: LocalizedStringKey(group.title),
+                                detail: search.isEmpty ? nil : "\(group.sessions.count)").padding(.horizontal, 4)
+                            SessionGroup(sessions: group.sessions, store: store, onOpen: onOpen, selectedSessionID: selectedSessionID)
                         }
-                    } else {
-                        SessionSectionHeader(count: history.count)
-                        SessionGroup(sessions: history, store: store, onOpen: onOpen, selectedSessionID: selectedSessionID)
+                    }
+                    if search.isEmpty {
+                        RemoteHomeStarters(connected: store.isConnected, onStart: { presentNewSession(prompt: $0) })
                     }
                 }
-                .padding(16).frame(maxWidth: RemoteInstrument.contentWidth)
+                .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 24)
+                .frame(maxWidth: RemoteInstrument.contentWidth)
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
             .refreshable { try? await store.refresh(); await store.loadStartModels() }
-
+        }
+        .safeAreaInset(edge: .bottom) {
+            RemoteHomeComposeBar(connected: store.isConnected) { presentNewSession() }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
             .remoteNavigationChrome()
-        .toolbarBackground(BeetTheme.background(appearance).opacity(0.94), for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     RemoteWordmark()
                 }.vampUtilityAction()
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { presentNewSession() } label: {
-                        Label("New", systemImage: "plus").font(.subheadline.weight(.semibold))
-                    }
-                    .buttonStyle(.borderedProminent).tint(BeetTheme.accent)
-                    .disabled(!store.isConnected).accessibilityLabel("Start a new session")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
@@ -227,189 +239,6 @@ struct SessionListView: View {
     }
 }
 
-/// Connection and search stay visible while the conversation library scrolls.
-struct SessionControlHeader: View {
-    let store: RemoteStore
-    @Binding var search: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SessionLibraryHeading()
-            SessionConnectionCard(
-                name: store.activeComputerName,
-                subtitle: store.connectionSubtitle,
-                status: store.connectionLabel,
-                isConnected: store.isConnected,
-                isWorking: store.isConnecting || store.isRefreshing,
-                hasActiveTask: store.sessions.contains(where: \.isRunning),
-                onReconnect: { Task { await store.connectSaved() } })
-            SearchField(text: $search)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 16)
-        .frame(maxWidth: RemoteInstrument.contentWidth)
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct SessionLibraryHeading: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Conversations")
-                .font(.largeTitle.weight(.bold))
-                .tracking(-0.8)
-                .accessibilityAddTraits(.isHeader)
-            Text("Pick up where you left off.")
-                .font(.subheadline)
-                .foregroundStyle(RemoteInstrument.secondaryInk)
-        }
-    }
-}
-
-private struct SessionConnectionCard: View {
-    let name: String
-    let subtitle: String
-    let status: String
-    let isConnected: Bool
-    let isWorking: Bool
-    let hasActiveTask: Bool
-    let onReconnect: () -> Void
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-
-    var body: some View {
-        Button(action: onReconnect) {
-            HStack(spacing: 14) {
-                ZStack(alignment: .bottomTrailing) {
-                    Image(systemName: "desktopcomputer")
-                        .font(.system(size: 25, weight: .light))
-                        .foregroundStyle(Color(red: 0.96, green: 0.96, blue: 0.95))
-                        .frame(width: 52, height: 52)
-                        .background(.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 12))
-                    Circle().fill(isConnected ? RemoteInstrument.signalMint : RemoteInstrument.beacon)
-                        .frame(width: 6, height: 6).padding(7)
-                }
-                .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(name).font(.headline).foregroundStyle(.white)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    HStack(spacing: 6) {
-                        RemoteSignal(color: isConnected ? RemoteInstrument.signalMint : RemoteInstrument.beacon,
-                                     isActive: isWorking || (isConnected && hasActiveTask))
-                        Text(isConnected ? subtitle : (isWorking ? status : subtitle))
-                            .font(.caption)
-                            .foregroundStyle(Color(red: 0.73, green: 0.73, blue: 0.75))
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: isConnected ? "waveform" : "arrow.clockwise")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(isConnected ? RemoteInstrument.signalMint : .white)
-                    .symbolEffect(.pulse, options: .repeating,
-                                  isActive: (isWorking || (isConnected && hasActiveTask)) && !reduceMotion && scenePhase == .active)
-                    .frame(width: 36, height: 36)
-                    .background(.white.opacity(0.08), in: Circle())
-                    .accessibilityHidden(true)
-            }
-            .padding(14)
-            .frame(minHeight: 80)
-            .background(RemoteInstrument.console, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(.white.opacity(0.15), lineWidth: 0.75)
-                    .allowsHitTesting(false)
-            }
-            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-        }
-        .buttonStyle(SessionConsoleButtonStyle())
-        .disabled(isConnected || isWorking)
-        .accessibilityLabel(isConnected ? "Mac connected. \(name). \(subtitle)" : "\(status). \(name). \(subtitle). Retry connection")
-    }
-}
-
-private struct SessionConsoleButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.99 : 1)
-            .brightness(configuration.isPressed ? 0.025 : 0)
-            .animation(reduceMotion ? nil : RemoteInstrument.motion, value: configuration.isPressed)
-    }
-}
-
-private struct SessionQuickActions: View {
-    let onBots: () -> Void
-    let onControl: () -> Void
-    let onChooseComputer: () -> Void
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        let vertical = dynamicTypeSize.isAccessibilitySize
-        let layout = vertical ? AnyLayout(VStackLayout(spacing: 0)) : AnyLayout(HStackLayout(spacing: 0))
-        layout {
-            SessionQuickAction(title: "Bots", symbol: "person.3", action: onBots)
-            VampHairline(vertical: !vertical)
-            SessionQuickAction(title: "Control Mac", symbol: "display", action: onControl)
-            VampHairline(vertical: !vertical)
-            SessionQuickAction(title: "Computer", symbol: "desktopcomputer.and.macbook", action: onChooseComputer)
-        }
-        .frame(height: vertical ? nil : 64)
-        .padding(4)
-        .background(RemoteInstrument.pearl, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(RemoteInstrument.chassisEdge, lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
-        .shadow(color: RemoteInstrument.housingFoot.opacity(0.3), radius: 0, y: 1)
-    }
-}
-
-private struct SessionQuickAction: View {
-    let title: String
-    let symbol: String
-    let action: () -> Void
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        Button(action: action) {
-            let layout = dynamicTypeSize.isAccessibilitySize
-                ? AnyLayout(HStackLayout(spacing: 12)) : AnyLayout(VStackLayout(spacing: 7))
-            layout {
-                Image(systemName: symbol).font(.system(size: 22, weight: .light))
-                    .foregroundStyle(BeetTheme.accentBright).accessibilityHidden(true)
-                Text(title).font(.caption.weight(.semibold))
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, minHeight: 64)
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(RemotePressButtonStyle())
-        .accessibilityLabel(title)
-    }
-}
-
-struct SessionSectionHeader: View {
-    let count: Int
-    @Environment(\.remoteAppearance) private var appearance
-
-    var body: some View {
-        HStack {
-            Text("Recent conversations")
-                .font(.subheadline.weight(.semibold))
-            Spacer()
-            Text("\(count)")
-                .font(.caption2.monospacedDigit().weight(.semibold))
-        }
-        .foregroundStyle(BeetTheme.secondaryText(appearance))
-        .padding(.horizontal, 2)
-    }
-}
-
 struct SessionGroup: View {
     let sessions: [RemoteSessionSummary]
     var store: RemoteStore? = nil
@@ -429,16 +258,8 @@ struct SessionGroup: View {
                         NavigationLink(value: session.id) { SessionRow(session: session) }
                     }
                 }
-                    .buttonStyle(RemoteSessionButtonStyle())
-                    .background(selectedSessionID == session.id ? RemoteInstrument.recess : .clear)
-                    .overlay(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(BeetTheme.accentBright)
-                            .frame(width: 3)
-                            .padding(.vertical, 10)
-                            .opacity(selectedSessionID == session.id ? 1 : 0)
-                            .allowsHitTesting(false)
-                    }
+                    .buttonStyle(RemoteSessionButtonStyle(isLast: session.id == sessions.last?.id))
+                    .background(selectedSessionID == session.id ? BeetTheme.accentBright.opacity(0.12) : .clear)
                     .accessibilityAddTraits(selectedSessionID == session.id ? .isSelected : [])
                     .contextMenu {
                         if store != nil {
@@ -453,13 +274,8 @@ struct SessionGroup: View {
                     }
             }
         }
-        .background(RemoteInstrument.reading, in: RoundedRectangle(cornerRadius: RemoteInstrument.panelRadius))
-        .clipShape(RoundedRectangle(cornerRadius: RemoteInstrument.panelRadius))
-        .overlay {
-            RoundedRectangle(cornerRadius: RemoteInstrument.panelRadius)
-                .strokeBorder(RemoteInstrument.seam.opacity(0.5), lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .remotePageCard()
         .confirmationDialog(
             "Delete this chat?",
             isPresented: Binding(get: { pendingDelete != nil },
@@ -558,65 +374,82 @@ struct SearchField: View {
 struct SessionRow: View {
     let session: RemoteSessionSummary
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .center, spacing: 12) {
+            Group {
+                if session.isRunning {
+                    RemoteChatWorkingDots()
+                } else {
+                    Image(systemName: session.mode == "code" ? "chevron.left.forwardslash.chevron.right" : "bubble.left")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(RemoteInstrument.secondaryInk)
+                }
+            }
+            .frame(width: 32, height: 32)
+            .background(session.isRunning ? BeetTheme.accentBright.opacity(0.12) : RemoteInstrument.recess, in: Circle())
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(session.title).font(.body.weight(.semibold))
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                    Text(session.title).font(.body.weight(.medium))
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if !dynamicTypeSize.isAccessibilitySize {
                         SessionTimestamp(updatedAt: session.updatedAt)
                     }
                 }
-                let layout = dynamicTypeSize.isAccessibilitySize
-                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                    : AnyLayout(HStackLayout(spacing: 6))
-                layout {
-                    Text(session.workspace.isEmpty ? "Chat" : session.workspace)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                    Text("\(session.messageCount) messages")
-                    if session.isRunning { Text(session.phase).foregroundStyle(RemoteInstrument.green) }
+                Group {
+                    if session.isRunning {
+                        Text(session.phase.capitalized + "…").foregroundStyle(BeetTheme.accentBright)
+                    } else {
+                        Text("\(session.workspace.isEmpty ? "Chat" : session.workspace) · ^[\(session.messageCount) message](inflect: true)")
+                            .foregroundStyle(RemoteInstrument.secondaryInk)
+                    }
                 }
-                .font(.caption)
-                .foregroundStyle(RemoteInstrument.secondaryInk)
+                .font(.footnote)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 if dynamicTypeSize.isAccessibilitySize { SessionTimestamp(updatedAt: session.updatedAt) }
             }
         }
         .foregroundStyle(RemoteInstrument.ink)
         .padding(.horizontal, 14)
-        .padding(.vertical, 16)
-        .frame(minHeight: 72, alignment: .leading)
+        .padding(.vertical, 10)
+        .frame(minHeight: 60, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(session.isRunning ? [.isButton, .updatesFrequently] : .isButton)
     }
 }
 
+/// Time for today and yesterday, the weekday this week, the date after that,
+/// as Messages does; the date section already says which day.
 private struct SessionTimestamp: View {
     let updatedAt: TimeInterval
     var body: some View {
-        Text(Date(timeIntervalSince1970: updatedAt).formatted(.relative(presentation: .named)))
-            .font(.caption2.monospacedDigit())
+        let date = Date(timeIntervalSince1970: updatedAt)
+        let calendar = Calendar.current
+        Text(calendar.isDateInToday(date) || calendar.isDateInYesterday(date)
+             ? date.formatted(date: .omitted, time: .shortened)
+             : date > .now.addingTimeInterval(-7 * 86_400) ? date.formatted(.dateTime.weekday(.wide))
+             : date.formatted(date: .numeric, time: .omitted))
+            .font(.footnote.monospacedDigit())
             .foregroundStyle(RemoteInstrument.secondaryInk)
             .fixedSize(horizontal: true, vertical: false)
     }
 }
 
 struct RemoteSessionButtonStyle: ButtonStyle {
-    @Environment(\.remoteAppearance) private var appearance
+    var isLast = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(
-                configuration.isPressed ? RemoteInstrument.recess : Color.clear)
-            .overlay(alignment: .bottom) { VampHairline() }
-            .animation(reduceMotion ? nil : RemoteInstrument.motion, value: configuration.isPressed)
+            .background(configuration.isPressed ? RemoteInstrument.recess : Color.clear)
+            .overlay(alignment: .bottom) {
+                if !isLast { RemotePageDivider().padding(.leading, 58) }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -626,7 +459,7 @@ struct RemotePressButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(configuration.isPressed ? RemoteInstrument.recess.opacity(0.55) : .clear)
+            .background(configuration.isPressed ? RemoteInstrument.recess.opacity(0.7) : .clear)
             .opacity(isEnabled ? 1 : 0.48)
     }
 }

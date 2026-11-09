@@ -8,8 +8,8 @@ struct RemotePageScroll<Content: View>: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 17) { content }
-                .padding(16)
+            VStack(alignment: .leading, spacing: 20) { content }
+                .padding(.horizontal, 16).padding(.vertical, 12)
                 .frame(maxWidth: RemoteInstrument.contentWidth)
                 .frame(maxWidth: .infinity)
         }
@@ -29,20 +29,23 @@ struct RemotePageForm<Content: View>: View {
                 VStack(alignment: .leading, spacing: 9) {
                     if !section.header.isEmpty {
                         ForEach(section.header) { header in
-                            header.font(.subheadline.weight(.semibold))
-                                .foregroundStyle(RemoteInstrument.ink)
+                            header.font(.footnote.weight(.semibold))
+                                .foregroundStyle(RemoteInstrument.secondaryInk)
+                                .padding(.horizontal, 4)
                                 .accessibilityAddTraits(.isHeader)
                         }
                     }
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(section.content) { row in
-                            row.padding(14).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                            if row.id != section.content.last?.id { RemotePageDivider() }
+                            row.padding(.horizontal, 16).padding(.vertical, 11)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            if row.id != section.content.last?.id { RemotePageDivider().padding(.leading, 16) }
                         }
                     }.remotePageCard()
                     if !section.footer.isEmpty {
                         ForEach(section.footer) { footer in
                             footer.font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                                .padding(.horizontal, 4)
                         }
                     }
                 }
@@ -56,8 +59,8 @@ struct RemotePageHeading: View {
     let subtitle: LocalizedStringKey
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.title.weight(.bold)).tracking(-0.7)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.title2.weight(.bold))
                 .foregroundStyle(RemoteInstrument.ink)
                 .accessibilityAddTraits(.isHeader)
             Text(subtitle).font(.subheadline)
@@ -101,8 +104,8 @@ struct RemotePageSection<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            RemotePageSectionHeading(title: title, detail: detail)
+        VStack(alignment: .leading, spacing: 7) {
+            RemotePageSectionHeading(title: title, detail: detail).padding(.horizontal, 4)
             VStack(alignment: .leading, spacing: spacing) { content }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(padding)
@@ -118,7 +121,7 @@ struct RemotePageSectionHeading: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(RemoteInstrument.ink)
+            Text(title).font(.footnote.weight(.semibold)).foregroundStyle(RemoteInstrument.secondaryInk)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 4)
             if let detail {
@@ -148,36 +151,37 @@ struct RemotePageValueRow<Value: View>: View {
     }
 }
 
+/// Content sits on solid, softly lifted surfaces; glass is kept for controls.
 private struct RemotePageCard: ViewModifier {
     var radius: CGFloat
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        let dark = scheme == .dark
         content
-            .background(RemoteInstrument.reading, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .background(RemoteInstrument.reading, in: shape)
             .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(RemoteInstrument.seam.opacity(contrast == .increased ? 0.85 : 0.3),
-                                  lineWidth: contrast == .increased ? 1.5 : 0.75)
+                // A lit top edge reads as depth without drawing a border.
+                shape.strokeBorder(contrast == .increased
+                    ? LinearGradient(colors: [RemoteInstrument.seam], startPoint: .top, endPoint: .bottom)
+                    : LinearGradient(colors: [.white.opacity(dark ? 0.1 : 0.9), .white.opacity(dark ? 0.02 : 0)],
+                                     startPoint: .top, endPoint: .bottom),
+                    lineWidth: contrast == .increased ? 1.5 : 0.75)
                     .allowsHitTesting(false)
             }
-            .shadow(color: .black.opacity(scheme == .dark ? 0.1 : 0.035), radius: 5, y: 2)
+            .shadow(color: .black.opacity(dark ? 0.4 : 0.06), radius: 16, y: 6)
     }
 }
 
 extension View {
-    func remotePageCard(radius: CGFloat = 17) -> some View {
+    func remotePageCard(radius: CGFloat = 22) -> some View {
         modifier(RemotePageCard(radius: radius))
     }
 
     func remotePageField() -> some View {
-        background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(RemoteInstrument.seam.opacity(0.3), lineWidth: 0.75)
-                    .allowsHitTesting(false)
-            }
+        background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     func remotePageChrome() -> some View {
@@ -189,7 +193,7 @@ extension View {
 
 struct RemotePageDivider: View {
     var body: some View {
-        Rectangle().fill(RemoteInstrument.seam.opacity(0.3)).frame(height: 0.75)
+        Rectangle().fill(RemoteInstrument.seam.opacity(0.7)).frame(height: 0.5)
             .accessibilityHidden(true)
     }
 }
@@ -197,12 +201,15 @@ struct RemotePageDivider: View {
 struct RemotePageSymbol: View {
     let symbol: String
     var active = false
+    /// A filled tile in this colour, as iOS Settings draws its rows.
+    var tint: Color? = nil
 
     var body: some View {
-        Image(systemName: symbol).font(.system(size: 18, weight: .medium))
-            .foregroundStyle(active ? BeetTheme.accentBright : RemoteInstrument.secondaryInk)
-            .frame(width: 40, height: 40)
-            .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        Image(systemName: symbol).font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(active || tint != nil ? Color.white : RemoteInstrument.ink)
+            .frame(width: 32, height: 32)
+            .background(tint ?? (active ? BeetTheme.accent : RemoteInstrument.recess),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .accessibilityHidden(true)
     }
 }
@@ -214,8 +221,8 @@ struct RemotePageBadge: View {
     var body: some View {
         Text(title).font(.caption.weight(.medium))
             .foregroundStyle(color)
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(color.opacity(0.1), in: Capsule())
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(color.opacity(0.14), in: Capsule())
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -225,12 +232,13 @@ struct RemotePageRowLabel: View {
     let symbol: String
     var subtitle: String? = nil
     var showsChevron = true
+    var tint: Color? = nil
 
     var body: some View {
         HStack(spacing: 12) {
-            RemotePageSymbol(symbol: symbol)
+            RemotePageSymbol(symbol: symbol, tint: tint)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.body.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
+                Text(title).font(.body).foregroundStyle(RemoteInstrument.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 if let subtitle {
                     Text(subtitle).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
@@ -243,8 +251,8 @@ struct RemotePageRowLabel: View {
                     .foregroundStyle(RemoteInstrument.secondaryInk).accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
         .contentShape(Rectangle())
     }
 }
@@ -264,8 +272,6 @@ struct RemotePageRowButtonStyle: ButtonStyle {
 
 struct RemotePageButtonStyle: ButtonStyle {
     var primary = false
-    @Environment(\.isEnabled) private var enabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -273,17 +279,9 @@ struct RemotePageButtonStyle: ButtonStyle {
             // Exactly 44 can measure 43.99997 at a fractional y; the half point keeps
             // every button at or above the 44-pt touch target wherever it lands.
             .frame(minHeight: 44.5)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
             .foregroundStyle(primary ? Color.white : configuration.role == .destructive ? RemoteInstrument.danger : RemoteInstrument.ink)
-            .background(primary ? BeetTheme.accent : RemoteInstrument.recess,
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(primary ? Color.white.opacity(0.12) : RemoteInstrument.seam.opacity(0.3), lineWidth: 0.75)
-            }
-            .opacity(enabled ? configuration.isPressed ? 0.8 : 1 : 0.45)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: configuration.isPressed)
+            .modifier(RemoteKeySurface(isPressed: configuration.isPressed, prominent: primary))
     }
 }
 
@@ -293,40 +291,38 @@ struct RemotePageSegments<Selection: Hashable>: View {
     let options: [(String, Selection)]
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var thumb
 
     var body: some View {
         let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
+            ? AnyLayout(VStackLayout(spacing: 2)) : AnyLayout(HStackLayout(spacing: 2))
         layout {
             ForEach(options, id: \.1) { option in
+                let selected = selection == option.1
                 Button {
                     UISelectionFeedbackGenerator().selectionChanged()
                     selection = option.1
                 } label: {
-                    Text(option.0).font(.subheadline.weight(.medium))
-                        .foregroundStyle(selection == option.1 ? RemoteInstrument.ink : RemoteInstrument.secondaryInk)
+                    Text(option.0).font(.subheadline.weight(selected ? .semibold : .medium))
+                        .foregroundStyle(selected ? RemoteInstrument.ink : RemoteInstrument.secondaryInk)
                         .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(selection == option.1 ? RemoteInstrument.reading : .clear,
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        // Reading and recess are close in dark mode; the edge
-                        // and lift keep the selected option legible.
-                        .overlay {
-                            if selection == option.1 {
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .strokeBorder(RemoteInstrument.seam.opacity(0.45), lineWidth: 0.75)
+                        .background {
+                            if selected {
+                                Capsule().fill(RemoteInstrument.thumb)
+                                    .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+                                    .matchedGeometryEffect(id: "thumb", in: thumb)
                             }
                         }
-                        .shadow(color: .black.opacity(selection == option.1 ? 0.18 : 0), radius: 3, y: 1)
-                        .contentShape(Rectangle())
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(option.0)
-                .accessibilityAddTraits(selection == option.1 ? .isSelected : [])
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .padding(4)
-        .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-        .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: selection)
+        .padding(3)
+        .background(RemoteInstrument.recess, in: RoundedRectangle(cornerRadius: 25, style: .continuous))
+        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.82), value: selection)
         .accessibilityElement(children: .contain)
     }
 }

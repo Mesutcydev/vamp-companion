@@ -7,9 +7,6 @@ struct CompanionShell: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            CompanionHeader(selection: $navigation.destination,
-                            hostRunning: appState.remoteSessionRunning)
-            Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
             if appState.sessionStorageLocked {
                 HStack(spacing: 12) {
                     Image(systemName: "lock.fill").foregroundStyle(CompanionBrand.accentInk)
@@ -36,8 +33,8 @@ struct CompanionShell: View {
                 case .models:
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
-                            CompanionPageHeading(eyebrow: "Model library", title: "Your models. Your Mac.",
-                                                 subtitle: "Download a local model or connect a provider. Run it from your iPhone.")
+                            CompanionPageHeading(title: "Models",
+                                                 subtitle: "Download a local model or connect a provider, then use it from your iPhone.")
                             if CompanionDistribution.isAppStore { CompanionWebsitePromoCard() }
                             ModelManagerView(embedded: true)
                         }
@@ -51,15 +48,39 @@ struct CompanionShell: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Rectangle().fill(CompanionBrand.stroke).frame(height: 1)
-            CompanionRuntimeStatus(
-                hostRunning: appState.remoteSessionRunning,
-                hostEnabled: appState.settings.remoteSessionEnabled,
-                enginePhase: appState.enginePhase,
-                isWorking: appState.sessions.isRunning)
+            Rectangle().fill(CompanionBrand.stroke.opacity(0.6)).frame(height: 0.5)
+            CompanionRuntimeStatus(enginePhase: appState.enginePhase, isWorking: appState.sessions.isRunning)
         }
         .frame(minWidth: 600, minHeight: 520)
         .background(CompanionBrand.canvas)
+        // One compact bar, as the iPhone app's: logo, the three places, and
+        // whether your iPhone can reach this Mac.
+        .toolbar(removing: .title)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                HStack(spacing: 8) {
+                    CompanionBrandBadge(size: 26)
+                    Text("VAMP").font(CompanionBrand.wordmark(22)).tracking(1.2)
+                        .foregroundStyle(CompanionBrand.ink)
+                }
+                .padding(.leading, 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Vamp Companion")
+            }
+            .companionBareToolbarItem()
+            ToolbarItem(placement: .principal) {
+                CompanionSegments(selection: $navigation.destination, segments: CompanionDestination.allCases.map {
+                    CompanionSegment(title: $0.title, symbol: $0.symbol, value: $0, identifier: "companion-tab-\($0.rawValue)")
+                }, inToolbar: true)
+            }
+            ToolbarItem(placement: .primaryAction) {
+                CompanionStatusPill(
+                    title: appState.remoteSessionRunning ? "iPhone access ready"
+                        : appState.settings.remoteSessionEnabled ? "Connecting…" : "iPhone access off",
+                    isReady: appState.remoteSessionRunning,
+                    isConnecting: !appState.remoteSessionRunning && appState.settings.remoteSessionEnabled)
+            }
+        }
         .task { appState.sessionStorageLocked = !SessionCrypto.isAvailable }
         .sheet(isPresented: $navigation.showsProviders) {
             CompanionProviderSheet()
@@ -81,71 +102,39 @@ struct CompanionShell: View {
     }
 }
 
-private struct CompanionHeader: View {
-    @Binding var selection: CompanionDestination
-    let hostRunning: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 13) {
-                CompanionBrandBadge()
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("VAMP").font(CompanionBrand.wordmark(40))
-                        .tracking(2).foregroundStyle(CompanionBrand.ink)
-                    Text("COMPANION").font(.system(size: 9, weight: .semibold, design: .monospaced))
-                        .tracking(2).foregroundStyle(CompanionBrand.secondary)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Vamp Companion")
-                Spacer()
-                CompanionStatusPill(title: hostRunning ? "iPhone access ready" : "iPhone access off",
-                                    isReady: hostRunning)
-            }
-            HStack(spacing: 6) {
-                ForEach(CompanionDestination.allCases) { destination in
-                    Button {
-                        selection = destination
-                    } label: {
-                        Label { Text(destination.title) } icon: { Image(systemName: destination.symbol) }
-                            .frame(minWidth: 72)
-                    }
-                    .buttonStyle(CompanionNavigationButtonStyle(isSelected: selection == destination))
-                    .accessibilityAddTraits(selection == destination ? [.isSelected] : [])
-                    .accessibilityIdentifier("companion-tab-\(destination.rawValue)")
-                }
-                Spacer()
-            }
-        }
-        .padding(.horizontal, CompanionBrand.pageInset)
-        .padding(.top, 18).padding(.bottom, 14)
-        .background(CompanionBrand.canvas)
-    }
-}
-
+/// The model and whether the assistant is working, with the live dot the
+/// iPhone app uses for the same state.
 private struct CompanionRuntimeStatus: View {
-    let hostRunning: Bool
-    let hostEnabled: Bool
     let enginePhase: AppState.EnginePhase
     let isWorking: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "macbook.and.iphone").accessibilityHidden(true)
-            Text(hostRunning ? "iPhone access ready" : hostEnabled ? "Connecting…" : "iPhone access off")
+            switch enginePhase {
+            case .idle:
+                Image(systemName: "cpu").accessibilityHidden(true)
+                Text("Choose a model to get started")
+            case .loading(let name):
+                ProgressView().controlSize(.mini)
+                Text("Loading \(name)…")
+            case .ready(let name):
+                CompanionLivePulse(color: CompanionBrand.green, active: true)
+                Text(name).lineLimit(1).foregroundStyle(CompanionBrand.ink)
+                Text("Loaded").foregroundStyle(CompanionBrand.secondary)
+            case .failed:
+                Image(systemName: "exclamationmark.triangle").accessibilityHidden(true)
+                Text("Model needs attention").foregroundStyle(CompanionBrand.accentInk)
+            }
             Spacer()
-            if isWorking { ProgressView().controlSize(.mini); Text("Assistant is working") }
-            else {
-                switch enginePhase {
-                case .idle: Text("Choose a model to get started")
-                case .loading(let name): Text("Loading \(name)…")
-                case .ready(let name): Text(name).lineLimit(1)
-                case .failed: Text("Model needs attention").foregroundStyle(CompanionBrand.accentInk)
-                }
+            if isWorking {
+                CompanionLivePulse(color: CompanionBrand.accentInk, active: true, fast: true)
+                Text("Assistant is working").foregroundStyle(CompanionBrand.accentInk)
             }
         }
         .font(.system(size: 12)).foregroundStyle(CompanionBrand.secondary)
-        .padding(.horizontal, CompanionBrand.pageInset).padding(.vertical, 12)
+        .padding(.horizontal, CompanionBrand.pageInset).frame(height: 34)
         .background(CompanionBrand.canvas)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -168,7 +157,7 @@ struct CompanionDevicesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                CompanionPageHeading(eyebrow: "Device connections", title: "Your Mac, within reach.",
+                CompanionPageHeading(title: "Devices",
                                      subtitle: "Scan the code with Vamp Assistant or App Stream on your iPhone or iPad.")
                 if !settings.remoteSessionEnabled {
                     CompanionAccessSetup(allowLAN: $setupAllowLAN) {
@@ -236,6 +225,7 @@ struct CompanionDevicesView: View {
                          : "Your assistant keeps running when this window is closed. Choose clipboard, file sharing, and Mac control access in Settings.")
                         .font(.system(size: 13)).foregroundStyle(CompanionBrand.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
                 .padding(16).companionCard()
             }.padding(CompanionBrand.pageInset)
@@ -283,14 +273,14 @@ private struct CompanionPairingCard: View {
         HStack(alignment: .center, spacing: 24) {
             if let url {
                 RemoteQRCodeView(value: url).frame(width: 150, height: 150)
-                    .padding(12).background(.white, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(12).background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             VStack(alignment: .leading, spacing: 10) {
                 Label(networkKind == .tailscale ? "Tailscale connected" : "Trusted local Wi-Fi",
                       systemImage: networkKind == .tailscale ? "lock.shield" : "wifi")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(CompanionBrand.secondary)
-                Text("Pairing code").font(.system(size: 10, weight: .semibold))
-                    .textCase(.uppercase).tracking(1.2).foregroundStyle(CompanionBrand.secondary)
+                Text("Pairing code").font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(CompanionBrand.secondary)
                 Text(code).font(.system(size: 34, weight: .medium, design: .monospaced))
                     .tracking(3).foregroundStyle(CompanionBrand.ink)
                     .textSelection(.enabled)

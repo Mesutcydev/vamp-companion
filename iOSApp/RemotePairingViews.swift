@@ -142,7 +142,8 @@ private struct PairingMonitor: View {
         VStack(spacing: 6) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12).fill(RemoteInstrument.pearl)
-                RoundedRectangle(cornerRadius: 8).fill(RemoteInstrument.console).padding(6)
+                // The app icon's black field, so the white beacon reads in both themes.
+                RoundedRectangle(cornerRadius: 8).fill(Color(white: 0.06)).padding(6)
                 RemoteBeaconMark(ink: Color(red: 0.96, green: 0.96, blue: 0.95), size: 72)
             }
             .frame(width: 172, height: 114)
@@ -399,7 +400,7 @@ struct RemotePrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .frame(minHeight: 44, alignment: alignment)
             .foregroundStyle(.white)
             .modifier(RemoteKeySurface(isPressed: configuration.isPressed, prominent: true))
@@ -410,7 +411,7 @@ struct RemoteSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.medium))
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .frame(minHeight: 44)
             .foregroundStyle(configuration.role == .destructive ? RemoteInstrument.danger : RemoteInstrument.ink)
             .modifier(RemoteKeySurface(isPressed: configuration.isPressed))

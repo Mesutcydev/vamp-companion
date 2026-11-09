@@ -681,7 +681,7 @@ struct RemoteBotDetailView: View {
                 .font(.caption)
                 .foregroundStyle(BeetTheme.secondaryText(appearance))
             if !profile.starters.isEmpty {
-                Text("Openers").font(.system(.caption2, design: .monospaced, weight: .medium)).tracking(0.8)
+                Text("Openers").font(.footnote.weight(.semibold))
                     .foregroundStyle(BeetTheme.secondaryText(appearance))
                 ForEach(profile.starters, id: \.self) { starter in
                     Text("· \(starter)")
@@ -1110,38 +1110,6 @@ struct RemoteBotProfile: Identifiable, Hashable {
     var isSpecialist: Bool { id != RemoteBotProfile.general.id }
 }
 
-struct RemoteBotChooser: View {
-    @Binding var selectedBotID: String
-
-    private var effectiveID: String {
-        selectedBotID.isEmpty ? RemoteBotProfile.general.id : selectedBotID
-    }
-
-    var body: some View {
-        RemotePageScroll {
-            RemotePageHeading(title: "Choose a bot", subtitle: "A different perspective for your conversation.")
-            VStack(spacing: 0) {
-                ForEach(RemoteBotProfile.profiles) { profile in
-                    Button {
-                        selectedBotID = RemoteBotProfile.resolvedID(profile.id) ?? ""
-                        UISelectionFeedbackGenerator().selectionChanged()
-                    } label: {
-                        RemoteBotIndexRow(profile: profile, run: nil)
-                            .background(effectiveID == profile.id ? RemoteInstrument.recess : .clear,
-                                in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(RemotePageRowButtonStyle())
-                    .accessibilityAddTraits(effectiveID == profile.id ? .isSelected : [])
-                    if profile.id != RemoteBotProfile.profiles.last?.id {
-                        RemotePageDivider().padding(.leading, 66)
-                    }
-                }
-            }.remotePageCard()
-        }.remotePageChrome()
-    }
-
-}
-
 /// Suggested tasks that fill the field for review; they never start work on their own.
 struct RemoteBotStarters: View {
     let starters: [String]
@@ -1157,13 +1125,14 @@ struct RemoteBotStarters: View {
                         prompt = starter
                         UISelectionFeedbackGenerator().selectionChanged()
                     }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(BeetTheme.secondaryText(appearance))
-                    .padding(.horizontal, 11)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(RemoteInstrument.ink)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 36)
+                    .background(RemoteInstrument.recess, in: Capsule())
                     .frame(minHeight: 44)
-                    .background(RemoteInstrument.panel, in: RoundedRectangle(cornerRadius: 7))
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(RemoteInstrument.seam, lineWidth: 0.75))
-                    .buttonStyle(RemotePressButtonStyle())
+                    .contentShape(Capsule())
+                    .buttonStyle(.plain)
                 }
             }
         }

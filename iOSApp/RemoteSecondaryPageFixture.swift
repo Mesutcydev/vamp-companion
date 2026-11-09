@@ -21,7 +21,8 @@ struct RemoteSecondaryPageFixture: View {
             .transaction { transaction in
                 if delaysMutation { transaction.disablesAnimations = true }
             }
-            .overlay(alignment: .bottomTrailing) {
+            // Mid-leading, clear of the bottom composer and the toolbar.
+            .overlay(alignment: .leading) {
                 if delaysMutation && !releasedFixtureResponse {
                     Button {
                         RemoteSecondaryPageProtocol.releaseMutationResponse()

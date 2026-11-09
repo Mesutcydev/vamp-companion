@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// A compact overview of real host state. Every action goes through the
-/// existing session, model, control, or sharing screens.
+/// The top of Home: the Mac and what it is doing right now. Conversations,
+/// quick starts, and the new-chat bar are laid out by SessionListView.
 struct RemoteHomeOverview: View {
     let store: RemoteStore
-    let onStart: (String) -> Void
     let onOpen: (UUID) -> Void
     let onMac: () -> Void
     let onControl: () -> Void
@@ -17,235 +16,176 @@ struct RemoteHomeOverview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            RemoteHomeHeading(connected: store.isConnected, running: store.sessions.filter(\.isRunning).count)
-            RemoteHomeConsole(name: store.activeComputerName,
-                subtitle: store.connectionSubtitle, connected: store.isConnected,
+        VStack(alignment: .leading, spacing: 22) {
+            RemoteHomeMacPanel(name: store.activeComputerName,
+                connected: store.isConnected,
                 connecting: store.isConnecting || store.isRefreshing,
+                running: store.sessions.filter(\.isRunning).count,
                 working: store.isConnected && (store.hostStatus?.isRunning == true || store.sessions.contains(where: \.isRunning)),
                 queued: store.hostStatus?.queuedTasks ?? 0,
                 model: store.isConnected ? store.loadedLocalModel?.name : nil,
-                modelCount: store.startModels.count, onMac: onMac,
+                modelCount: store.startModels.count,
+                onMac: onMac, onControl: onControl, onBots: onBots, onShare: onShare,
                 onReconnect: { Task { await store.connectSaved() } })
-            RemoteHomeShortcuts(onMac: onMac, onControl: onControl, onBots: onBots, onShare: onShare)
             if !activity.isEmpty {
                 RemoteHomeActivity(sessions: Array(activity.prefix(2)), connected: store.isConnected, onOpen: onOpen)
             }
-            RemoteHomeStarters(connected: store.isConnected, onStart: onStart)
         }
         .accessibilityElement(children: .contain)
         .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: activity.map(\.id))
     }
 }
 
-private struct RemoteHomeHeading: View {
-    let connected: Bool
-    let running: Int
-    var body: some View {
-        HStack(alignment: .lastTextBaseline) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Home").font(.title.weight(.bold)).tracking(-0.7)
-                    .accessibilityAddTraits(.isHeader)
-                Text(Date.now, format: .dateTime.weekday(.wide).month(.abbreviated).day())
-                    .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-            }
-            Spacer(minLength: 12)
-            if connected {
-                Text(running > 0 ? "\(running) in progress" : "Mac connected")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(RemoteInstrument.secondaryInk)
-                    .contentTransition(.numericText())
-            }
-        }
-    }
-}
-
-private struct RemoteHomeConsole: View {
+/// The Mac is the subject of the app, so it gets the one glass panel on the
+/// page, with its four destinations laid out like a contact card's actions.
+private struct RemoteHomeMacPanel: View {
     let name: String
-    let subtitle: String
     let connected: Bool
     let connecting: Bool
+    let running: Int
     let working: Bool
     let queued: Int
     let model: String?
     let modelCount: Int
     let onMac: () -> Void
-    let onReconnect: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack(spacing: 6) {
-                        Circle().fill(connected ? RemoteInstrument.signalMint : RemoteInstrument.beacon)
-                            .frame(width: 5, height: 5)
-                        Text(connecting ? "CONNECTING" : connected ? working ? "MAC IS WORKING" : "YOUR MAC" : "MAC OFFLINE")
-                            .font(.system(.caption2, design: .monospaced).weight(.medium)).tracking(1.2)
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                    Text(name).font(.title2.weight(.semibold)).foregroundStyle(.white)
-                        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                    Text(connected ? subtitle : "Reconnect to continue. Your work stays on your Mac.")
-                        .font(.caption).foregroundStyle(.white.opacity(0.75))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 6)
-                RemoteBeaconMark(ink: .white.opacity(0.92), size: 58, isActive: working)
-                    .shadow(color: RemoteInstrument.beacon.opacity(working ? 0.45 : 0.12), radius: working ? 14 : 5)
-            }
-            Rectangle().fill(.white.opacity(0.13)).frame(height: 0.75)
-            HStack(spacing: 10) {
-                Image(systemName: "cpu").font(.subheadline)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model ?? (modelCount > 0 && connected ? "\(modelCount) models available" : "Models & providers"))
-                        .font(.subheadline.weight(.medium)).lineLimit(typeSize.isAccessibilitySize ? nil : 1)
-                    Text(model != nil ? (queued > 0 ? "Loaded on Mac · \(queued) queued" : "Loaded on Mac · Ready") : connected ? "Choose a model or set up a provider" : "Available when your Mac reconnects")
-                        .font(.caption2).foregroundStyle(.white.opacity(0.68))
-                }
-                Spacer(minLength: 4)
-                Button(action: onMac) {
-                    Image(systemName: "arrow.up.right").font(.subheadline.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(RemoteHomeConsoleButtonStyle())
-                .accessibilityLabel("Open your Mac and models")
-                .accessibilityIdentifier("remote.home.models")
-            }
-            .foregroundStyle(.white)
-            if !connected {
-                Button(action: onReconnect) {
-                    Label(connecting ? "Connecting…" : "Reconnect Mac", systemImage: "arrow.clockwise")
-                        .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(RemoteHomeConsoleButtonStyle()).disabled(connecting)
-                .accessibilityIdentifier("remote.home.reconnect")
-            }
-        }
-        .padding(17)
-        .background {
-            RoundedRectangle(cornerRadius: 21, style: .continuous)
-                .fill(LinearGradient(colors: [Color(red: 0.19, green: 0.20, blue: 0.23),
-                    Color(red: 0.065, green: 0.07, blue: 0.085)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 21).fill(RadialGradient(
-                        colors: [RemoteInstrument.beacon.opacity(working ? 0.10 : 0.04), .clear],
-                        center: .topTrailing, startRadius: 10, endRadius: 190))
-                }
-                .overlay { RemoteHomeConsoleTexture(active: working).clipShape(RoundedRectangle(cornerRadius: 21)) }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 21).strokeBorder(
-                LinearGradient(colors: [.white.opacity(0.23), .white.opacity(0.03)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
-        .shadow(color: .black.opacity(0.17), radius: 14, y: 7)
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct RemoteHomeConsoleTexture: View {
-    let active: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 0.08, paused: !active || reduceMotion || scenePhase != .active)) { timeline in
-            Canvas { context, size in
-                let phase = active && !reduceMotion ? timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4) / 4 : 0
-                for x in stride(from: size.width * 0.6, through: size.width, by: 13) {
-                    for y in stride(from: 8.0, through: size.height, by: 13) {
-                        let offset = Double(x / 30 + y / 40) - phase * Double.pi * 2
-                        let intensity = pow(0.5 + 0.5 * sin(offset), 3)
-                        let opacity = 0.035 + (active ? 0.08 * intensity : 0)
-                        context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.5, height: 1.5)), with: .color(.white.opacity(opacity)))
-                    }
-                }
-            }
-        }
-        .allowsHitTesting(false).accessibilityHidden(true)
-    }
-}
-
-private struct RemoteHomeConsoleButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label.foregroundStyle(.white)
-            .background(.white.opacity(configuration.isPressed ? 0.18 : 0.09), in: RoundedRectangle(cornerRadius: 11))
-            .overlay { RoundedRectangle(cornerRadius: 11).strokeBorder(.white.opacity(0.12), lineWidth: 0.75) }
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .opacity(enabled ? 1 : 0.5)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: configuration.isPressed)
-    }
-}
-
-private struct RemoteHomeShortcuts: View {
-    @Environment(\.dynamicTypeSize) private var typeSize
-    let onMac: () -> Void
     let onControl: () -> Void
     let onBots: () -> Void
     let onShare: () -> Void
+    let onReconnect: () -> Void
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var state: String {
+        if connecting { return "Connecting" }
+        if !connected { return "Offline" }
+        if running > 0 { return running == 1 ? "Working" : "\(running) running" }
+        return working ? "Working" : "Online"
+    }
+
+    private var stateColor: Color {
+        if !connected { return connecting ? RemoteInstrument.orange : RemoteInstrument.secondaryInk }
+        return working ? BeetTheme.accentBright : RemoteInstrument.green
+    }
+
     var body: some View {
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 7)) : AnyLayout(HStackLayout(spacing: 7))
-        layout {
-            RemoteHomeShortcut(title: "Models", symbol: "cpu", action: onMac)
-            RemoteHomeShortcut(title: "Control", symbol: "display", action: onControl)
-            RemoteHomeShortcut(title: "Bots", symbol: "person.2", action: onBots)
-            RemoteHomeShortcut(title: "Share", symbol: "square.and.arrow.up", action: onShare)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "desktopcomputer")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 40, height: 40)
+                    .background(RemoteInstrument.ink.opacity(0.07), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.headline)
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 1)
+                    detail.font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
+                        .lineLimit(typeSize.isAccessibilitySize ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 6)
+                HStack(spacing: 5) {
+                    RemoteLivePulse(color: stateColor, active: connected || connecting, fast: working || connecting)
+                    Text(state).font(.caption.weight(.semibold)).foregroundStyle(stateColor)
+                        .contentTransition(.numericText())
+                }
+                .fixedSize()
+                .accessibilityElement(children: .combine)
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: typeSize.isAccessibilitySize ? 2 : 4), spacing: 8) {
+                RemoteHomeAction(title: "Models", symbol: "cpu", action: onMac)
+                RemoteHomeAction(title: "Control", symbol: "display", action: onControl)
+                RemoteHomeAction(title: "Bots", symbol: "person.2", action: onBots)
+                RemoteHomeAction(title: "Share", symbol: "square.and.arrow.up", action: onShare)
+            }
+
+            if !connected {
+                Button(action: onReconnect) {
+                    Label(connecting ? "Connecting…" : "Reconnect Mac", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(RemotePrimaryButtonStyle())
+                .disabled(connecting)
+                .accessibilityIdentifier("remote.home.reconnect")
+            }
         }
-        .padding(5)
-        .background(RemoteInstrument.reading, in: RoundedRectangle(cornerRadius: 17))
-        .overlay { RoundedRectangle(cornerRadius: 17).strokeBorder(RemoteInstrument.seam.opacity(0.3), lineWidth: 0.75) }
-        .shadow(color: .black.opacity(0.06), radius: 6, y: 3)
+        .padding(14)
+        .foregroundStyle(RemoteInstrument.ink)
+        .vampGlass(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The model name stays its own text so it reads (and is found) on its own.
+    @ViewBuilder private var detail: some View {
+        if !connected {
+            Text("Reconnect to continue. Your work stays on your Mac.")
+        } else if let model {
+            HStack(spacing: 4) {
+                Text(model)
+                Text(queued > 0 ? "· \(queued) queued" : "· Ready")
+            }
+        } else {
+            Text(modelCount > 0 ? "\(modelCount) models available" : "Choose a model or set up a provider")
+        }
     }
 }
 
-private struct RemoteHomeShortcut: View {
+private struct RemoteHomeAction: View {
     let title: LocalizedStringKey
     let symbol: String
     let action: () -> Void
-    @Environment(\.dynamicTypeSize) private var typeSize
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 7) {
-                Image(systemName: symbol).font(.system(size: 19, weight: .medium))
+            VStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(BeetTheme.accentBright)
+                    .frame(height: 22)
                 Text(title).font(.caption.weight(.medium))
-                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
-            .foregroundStyle(RemoteInstrument.ink)
-            .frame(maxWidth: .infinity, minHeight: typeSize.isAccessibilitySize ? 88 : 56)
-            .contentShape(Rectangle())
+            .frame(maxWidth: .infinity, minHeight: 58)
+            .background(RemoteInstrument.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .buttonStyle(RemoteHomeShortcutStyle())
+        .buttonStyle(RemoteHomePressStyle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(title)
     }
 }
 
-private struct RemoteHomeShortcutStyle: ButtonStyle {
+/// A status dot that radiates a slow ring while the thing it describes is
+/// alive. Stops under Reduce Motion and in the background.
+struct RemoteLivePulse: View {
+    let color: Color
+    var active = true
+    var fast = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(configuration.isPressed ? RemoteInstrument.recess : .clear, in: RoundedRectangle(cornerRadius: 12))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: configuration.isPressed)
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        let animates = active && !reduceMotion && scenePhase == .active
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !animates)) { context in
+            let period = fast ? 1.4 : 2.6
+            let phase = animates ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period : 1
+            Circle().fill(color).frame(width: 7, height: 7)
+                .background {
+                    Circle().stroke(color, lineWidth: 1.2)
+                        .scaleEffect(1 + phase * 1.6)
+                        .opacity(animates ? (1 - phase) * 0.7 : 0)
+                }
+        }
+        .frame(width: 14, height: 14)
+        .accessibilityHidden(true)
     }
 }
 
-private struct RemoteHomeTileStyle: ButtonStyle {
+struct RemoteHomePressStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var scheme
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .background(RemoteInstrument.reading, in: RoundedRectangle(cornerRadius: 13))
-            .overlay { RoundedRectangle(cornerRadius: 13).strokeBorder(RemoteInstrument.seam.opacity(0.28), lineWidth: 0.75) }
-            .shadow(color: .black.opacity(scheme == .dark ? 0.10 : 0.035), radius: configuration.isPressed ? 0 : 3, y: 2)
-            .opacity(enabled ? 1 : 0.5)
-            .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .opacity(enabled ? 1 : 0.45)
+            .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -254,75 +194,131 @@ private struct RemoteHomeActivity: View {
     let connected: Bool
     let onOpen: (UUID) -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text(connected ? "Happening now" : "Last known activity").font(.subheadline.weight(.semibold))
-                Spacer()
-                if connected { Text("LIVE").font(.system(.caption2, design: .monospaced)).foregroundStyle(BeetTheme.accentBright) }
-            }
-            ForEach(sessions) { session in
-                Button { onOpen(session.id) } label: {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text(session.queueState == "queued" ? "Queued" : session.phase.lowercased().contains("approval") ? "Needs your approval" : "In progress")
-                                .font(.caption.weight(.medium)).foregroundStyle(BeetTheme.accentBright)
-                            Spacer()
-                            Image(systemName: "arrow.up.right").font(.caption)
+        VStack(alignment: .leading, spacing: 7) {
+            RemotePageSectionHeading(title: connected ? "Happening now" : "Last known activity").padding(.horizontal, 4)
+            VStack(spacing: 0) {
+                ForEach(sessions) { session in
+                    Button { onOpen(session.id) } label: {
+                        HStack(spacing: 12) {
+                            Group {
+                                if session.queueState == "queued" {
+                                    Image(systemName: "clock").font(.footnote.weight(.semibold))
+                                        .foregroundStyle(RemoteInstrument.secondaryInk)
+                                } else {
+                                    RemoteChatWorkingDots(active: connected)
+                                }
+                            }
+                            .frame(width: 32, height: 32)
+                            .background(BeetTheme.accentBright.opacity(session.queueState == "queued" ? 0 : 0.12), in: Circle())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(session.title).font(.body.weight(.medium))
+                                    .multilineTextAlignment(.leading).lineLimit(1)
+                                Text(status(session)).font(.footnote)
+                                    .foregroundStyle(session.queueState == "queued" ? RemoteInstrument.secondaryInk : BeetTheme.accentBright)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                                .foregroundStyle(RemoteInstrument.secondaryInk)
                         }
-                        Text(session.title).font(.body.weight(.semibold)).foregroundStyle(RemoteInstrument.ink)
-                            .multilineTextAlignment(.leading).lineLimit(2)
-                    }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(RemoteInstrument.ink)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(RemotePageRowButtonStyle())
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("remote.home.activity.\(session.id)")
+                    if session.id != sessions.last?.id { RemotePageDivider().padding(.leading, 58) }
                 }
-                .buttonStyle(RemoteHomeTileStyle())
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("remote.home.activity.\(session.id)")
             }
+            .remotePageCard()
         }
+    }
+
+    private func status(_ session: RemoteSessionSummary) -> String {
+        if session.queueState == "queued" { return "Queued" }
+        if session.phase.lowercased().contains("approval") { return "Needs your approval" }
+        return session.phase.isEmpty || session.phase == "idle" ? "In progress" : session.phase.capitalized + "…"
     }
 }
 
-private struct RemoteHomeStarters: View {
-    @Environment(\.dynamicTypeSize) private var typeSize
+/// Quick starts fill the new-chat form; nothing is sent until it is started.
+struct RemoteHomeStarters: View {
     let connected: Bool
     let onStart: (String) -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("Quick starts").font(.subheadline.weight(.semibold))
-            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
-            layout {
-                RemoteHomeStarter(title: "Plan & organize", detail: "Turn a to-do into a plan.", symbol: "checklist", connected: connected,
-                    action: { onStart("Help me turn my to-do list into a practical plan. Ask what needs to get done first.") })
-                RemoteHomeStarter(title: "Work on a project", detail: "Build, review, or improve.", symbol: "hammer", connected: connected,
-                    action: { onStart("Help me work on a project. Ask what I’m building and what I’d like to improve.") })
+        VStack(alignment: .leading, spacing: 7) {
+            RemotePageSectionHeading(title: "Start something").padding(.horizontal, 4)
+            VStack(spacing: 0) {
+                starter("Plan & organize", detail: "Turn a to-do into a plan.", symbol: "checklist",
+                    prompt: "Help me turn my to-do list into a practical plan. Ask what needs to get done first.")
+                RemotePageDivider().padding(.leading, 58)
+                starter("Work on a project", detail: "Build, review, or improve.", symbol: "hammer",
+                    prompt: "Help me work on a project. Ask what I’m building and what I’d like to improve.")
             }
+            .remotePageCard()
             if !connected {
                 Text("Reconnect your Mac to start something new.")
-                    .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
+                    .font(.caption).foregroundStyle(RemoteInstrument.secondaryInk).padding(.horizontal, 4)
             }
         }
     }
+
+    private func starter(_ title: LocalizedStringKey, detail: LocalizedStringKey, symbol: String, prompt: String) -> some View {
+        Button { onStart(prompt) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(BeetTheme.accentBright)
+                    .frame(width: 32, height: 32)
+                    .background(BeetTheme.accentBright.opacity(0.12), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.body.weight(.medium)).foregroundStyle(RemoteInstrument.ink)
+                    Text(detail).font(.footnote).foregroundStyle(RemoteInstrument.secondaryInk)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.forward").font(.caption.weight(.semibold))
+                    .foregroundStyle(RemoteInstrument.secondaryInk)
+            }
+            .multilineTextAlignment(.leading)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RemotePageRowButtonStyle())
+        .disabled(!connected)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+        .accessibilityHint("Opens the new-session form. Nothing is sent until you start it.")
+    }
 }
 
-private struct RemoteHomeStarter: View {
-    let title: LocalizedStringKey
-    let detail: LocalizedStringKey
-    let symbol: String
+/// Home ends in the same floating glass field a chat does, so starting one
+/// feels like typing, not filling a form.
+struct RemoteHomeComposeBar: View {
     let connected: Bool
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack { Image(systemName: symbol).foregroundStyle(BeetTheme.accentBright); Spacer(); Image(systemName: "plus").foregroundStyle(RemoteInstrument.secondaryInk) }
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(RemoteInstrument.ink)
-                Text(detail).font(.caption).foregroundStyle(RemoteInstrument.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 10) {
+                Text(connected ? "Message Vamp" : "Reconnect to start a chat")
+                    .font(.body).foregroundStyle(RemoteInstrument.secondaryInk)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: "square.and.pencil").font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(connected ? BeetTheme.accent : RemoteInstrument.secondaryInk.opacity(0.5), in: Circle())
             }
-            .padding(13).frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-            .contentShape(Rectangle())
+            .padding(.leading, 18).padding(.trailing, 7)
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .vampGlass(Capsule(), interactive: true)
+            .contentShape(Capsule())
         }
-        .buttonStyle(RemoteHomeTileStyle()).disabled(!connected)
-        .accessibilityLabel(title)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint("Opens the new-session form. Nothing is sent until you start it.")
+        .buttonStyle(RemoteHomePressStyle())
+        .disabled(!connected)
+        .padding(.horizontal, 16).padding(.bottom, 6)
+        .frame(maxWidth: RemoteInstrument.contentWidth)
+        .frame(maxWidth: .infinity)
+        .accessibilityLabel("Start a new session")
     }
 }

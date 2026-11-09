@@ -1,0 +1,53 @@
+{
+  "date": "2026-11-09",
+  "status": "Available in internal TestFlight testing",
+  "release": {
+    "appStoreConnectAppID": "6822249541",
+    "bundle": "com.beetcode.remote.ios",
+    "displayName": "Vamp Companion",
+    "version": "0.10.59",
+    "build": "144",
+    "sourceCommit": "72a6d59 plus the uncommitted iOS redesign in the working tree",
+    "toolchain": "Xcode 27.1 (27A9275), iphoneos27.1 SDK, same as builds 142 and 143",
+    "buildID": "be4cbbcb-b670-4c9c-817b-cc98d4bed139",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "testerGroup": "mes (internal, access to all builds)",
+    "minOS": "18.0",
+    "strictSignatureVerified": true,
+    "getTaskAllow": false,
+    "privacyManifest": true,
+    "weakImportsVsBuild143": "Six added, all iOS 26 SwiftUI Liquid Glass symbols (glassEffect, Glass.regular/tint/interactive), called only behind #available(iOS 26.0, *)",
+    "ipaSHA256": "c30a578c985427a44c2483ebdef35dd447fcd4de48a85c3c4d8c0faa4bf6624b",
+    "testNotes": "verification/ios-0.10.59-build-144-testflight-notes.txt (en-US and en-GB, read back)"
+  },
+  "changesSince143": [
+    "Complete iOS redesign: native Liquid Glass controls, iOS neutrals, ambient accent glow and live status pulses, compact home, same logo",
+    "Floating glass composer; chat status under the title; Stop beside Steer and Queue while drafting",
+    "New chat opens straight into a chat; setup chips (Bot, Permissions, Reasoning, API key, Folder) above the message box"
+  ],
+  "checks": [
+    {
+      "check": "iOS unit tests",
+      "result": "Passed",
+      "passed": 57,
+      "failed": 0
+    },
+    {
+      "check": "iOS UI tests (full run, then Composer, Homepage and secondary pages after fixes)",
+      "result": "Passed",
+      "passed": 29,
+      "skipped": 5,
+      "note": "Skipped tests need a live Mac host"
+    },
+    {
+      "check": "verify-ios-unchanged.py",
+      "result": "Passed"
+    }
+  ],
+  "notVerified": [
+    "Starting a new chat against a real Mac (fixtures only reject starts)",
+    "Control screen while connected to a Mac",
+    "Launch on the iPhone 27.2 beta from TestFlight"
+  ]
+}

@@ -95,32 +95,34 @@ private struct RemoteMacConnectionSection: View {
     let queued: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                RemoteBeaconMark(ink: .white.opacity(0.9), size: 44, isActive: connected && working)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(name).font(.title2.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Text(product).font(.subheadline).foregroundStyle(.white.opacity(0.75))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                RemoteBeaconMark(ink: RemoteInstrument.ink, size: 40, isActive: connected && working)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.title3.weight(.semibold))
+                    Text(product).font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
                 }
+                Spacer(minLength: 4)
+                RemoteLivePulse(color: connected ? (working ? BeetTheme.accentBright : RemoteInstrument.green) : RemoteInstrument.secondaryInk,
+                                active: connected, fast: working)
             }
+            RemotePageDivider()
             Label(connected ? connection : "Mac offline · refresh to reconnect",
                   systemImage: connected ? "checkmark.circle" : "wifi.slash")
-                .font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                .font(.subheadline).foregroundStyle(RemoteInstrument.secondaryInk)
                 .accessibilityIdentifier("remote.mac.connection")
             if connected {
                 HStack(spacing: 10) {
                     Label(working ? "Assistant is working" : "Ready for a session",
                           systemImage: working ? "waveform" : "bolt")
                     if queued > 0 { Text("\(queued) queued").monospacedDigit() }
-                }.font(.footnote).foregroundStyle(.white.opacity(0.75))
+                }.font(.footnote).foregroundStyle(working ? BeetTheme.accentBright : RemoteInstrument.secondaryInk)
             }
         }
+        .foregroundStyle(RemoteInstrument.ink)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(17)
-        .background(RemoteInstrument.console, in: RoundedRectangle(cornerRadius: 21, style: .continuous))
-        .overlay { RoundedRectangle(cornerRadius: 21).strokeBorder(.white.opacity(0.14), lineWidth: 0.75) }
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 6)
+        .padding(16)
+        .vampGlass(RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
 }
 
