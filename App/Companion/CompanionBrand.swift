@@ -4,17 +4,18 @@ import SwiftUI
 /// Companion's brand is independent of the inherited Assistant preferences.
 /// The same screen-and-fangs geometry is used by the app icon and thevamp.app.
 enum CompanionBrand {
-    // Every large surface is neutral and uses the same system greys as the
-    // iPhone app. Red is reserved for a primary action or a live signal.
-    static var canvas: Color { .dynamic(light: 0xF2F2F7, dark: 0x161618, oled: 0x000000) }
-    static var surface: Color { .dynamic(light: 0xFFFFFF, dark: 0x1F1F22, oled: 0x111113) }
-    static var inset: Color { .dynamic(light: 0xEDEDF2, dark: 0x29292D, oled: 0x19191B) }
-    static var control: Color { .dynamic(light: 0xE5E5EA, dark: 0x323236, oled: 0x242426) }
-    static var thumb: Color { .dynamic(light: 0xFFFFFF, dark: 0x5A5A5F, oled: 0x4A4A4F) }
-    static var stroke: Color { .dynamic(light: 0xD8D8DD, dark: 0x3A3A3E, oled: 0x333336) }
-    static let ink = Color.dynamic(light: 0x1C1C1E, dark: 0xF2F2F7, oled: 0xF2F2F7)
-    static let secondary = Color.dynamic(light: 0x6C6C70, dark: 0xAEAEB2, oled: 0xAEAEB2)
-    static let tertiary = Color.dynamic(light: 0x8A8A8E, dark: 0x8E8E93, oled: 0x8E8E93)
+    // Light surfaces are the iPhone app's system greys. Dark surfaces stay
+    // pure neutral greys (AppearanceConvergenceTests holds the canvas to it).
+    // Red is reserved for a primary action or a live signal.
+    static var canvas: Color { .dynamic(light: 0xF2F2F7, dark: 0x171717, oled: 0x000000) }
+    static var surface: Color { .dynamic(light: 0xFFFFFF, dark: 0x202020, oled: 0x121212) }
+    static var inset: Color { .dynamic(light: 0xEDEDF2, dark: 0x2A2A2A, oled: 0x1A1A1A) }
+    static var control: Color { .dynamic(light: 0xE5E5EA, dark: 0x333333, oled: 0x252525) }
+    static var thumb: Color { .dynamic(light: 0xFFFFFF, dark: 0x5A5A5A, oled: 0x4A4A4A) }
+    static var stroke: Color { .dynamic(light: 0xD8D8DD, dark: 0x3B3B3B, oled: 0x343434) }
+    static let ink = Color.dynamic(light: 0x1C1C1E, dark: 0xF2F2F2, oled: 0xF2F2F2)
+    static let secondary = Color.dynamic(light: 0x6C6C70, dark: 0xAEAEAE, oled: 0xAEAEAE)
+    static let tertiary = Color.dynamic(light: 0x8A8A8E, dark: 0x8E8E8E, oled: 0x8E8E8E)
     static let accent = Color.fixed(0xBD2939)
     static let accentInk = Color.dynamic(light: 0xAD2030, dark: 0xF0808D, oled: 0xF0808D)
     static let green = Color.dynamic(light: 0x248A3D, dark: 0x30D158, oled: 0x30D158)
