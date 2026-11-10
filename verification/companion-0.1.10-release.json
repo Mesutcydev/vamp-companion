@@ -1,0 +1,60 @@
+{
+  "product": "Vamp Companion",
+  "version": "0.1.10",
+  "build": "14",
+  "sourceCommit": "13c64e9dde60d0edfdc024f05c6777ba6fc29eb1",
+  "websiteCommit": "524e694",
+  "releaseURL": "https://github.com/Mesutcydev/vamp-companion/releases/tag/v0.1.10",
+  "change": "Fix SIGSEGV in VTEncoderSessionEmitEncodedFrame when Mac Control video stops while frames are in flight (crash report 2026-11-10, 0.1.8).",
+  "archive": {
+    "name": "Vamp-Companion-0.1.10-build-14-public.zip",
+    "bytes": 41180892,
+    "sha256": "79e2fb05646bda3cf14ebb21c9645fb6f4395d1a265cfe0f895ac9d3f1c4935e",
+    "uploadedBytesVerified": true,
+    "publicDownloadVerified": true
+  },
+  "diskImage": {
+    "name": "Vamp-Companion-0.1.10-build-14-notarized.dmg",
+    "bytes": 45757228,
+    "sha256": "6ecf45b71e54c1a27cc2b2d9df1457d5a3eba40bc18ee9bbea833d6a62986529",
+    "uploadedBytesVerified": true,
+    "publicDownloadVerified": true
+  },
+  "notarization": {
+    "appSubmissionID": "7faf9d2f-5576-498b-9baf-413f97c8caaa",
+    "diskImageSubmissionID": "7c12b373-c3f2-4c0e-9637-9c97680bff0b",
+    "status": "Accepted",
+    "stapled": true
+  },
+  "distribution": {
+    "developerIDSigned": true,
+    "hardenedRuntime": true,
+    "gatekeeperAccepted": true,
+    "sparkleArchiveSignatureVerified": true,
+    "sparkleFeedSignatureVerified": true,
+    "liveFeedMatchesSignedBytes": true,
+    "feedKeepsPreviousVersions": true
+  },
+  "tests": {
+    "backendExecuted": 1166,
+    "backendSkipped": 52,
+    "backendFailures": 0,
+    "userDefaultsUnchanged": true,
+    "encoderTeardownTest": "Crashed the 0.1.9 encoder with the reported signature; passed 5 of 5 runs on 0.1.10.",
+    "iOSFrozenFilesVerified": true,
+    "macUICasesVerified": 0,
+    "macUITestsNote": "Not run: XCTest automation mode needs the user's password."
+  },
+  "installedVerification": {
+    "updatedInstalledApp": false,
+    "installedVersion": "0.1.8",
+    "installedBuild": "12",
+    "liveControlSessionVerified": false
+  },
+  "deployments": {
+    "companionRun": 42787759279,
+    "companionConclusion": "success",
+    "canonicalSitePublished": false,
+    "canonicalSiteNote": "thevamp.app copy change prepared in Mesutcydev/vamp-suite; push refused by the permission check."
+  }
+}
