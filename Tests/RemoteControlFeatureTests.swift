@@ -1,3 +1,5 @@
+import CoreMedia
+import CoreVideo
 import Foundation
 import XCTest
 @testable import BeetCode
@@ -103,6 +105,61 @@ final class RemoteControlFeatureTests: XCTestCase {
     func testScreenCaptureCursorDefaultsOnAndCanBeDisabledPerViewer() {
         XCTAssertTrue(RemoteMacScreenCapture.Config().showsCursor)
         XCTAssertFalse(RemoteMacScreenCapture.Config(showsCursor: false).showsCursor)
+    }
+
+    /// Crash report 2026-11-10: the main thread invalidated while the capture
+    /// queue was submitting frames, and VideoToolbox emitted into a torn-down
+    /// session. Teardown must exclude submission and drain in-flight frames.
+    func testEncoderTeardownDrainsInFlightFrames() throws {
+        var buffer: CVPixelBuffer?
+        let attributes = [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()] as CFDictionary
+        XCTAssertEqual(
+            CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, attributes, &buffer),
+            kCVReturnSuccess)
+        let pixelBuffer = try XCTUnwrap(buffer)
+
+        final class Counts: @unchecked Sendable {
+            let lock = NSLock()
+            var emitted = 0
+            var late = 0
+            var tornDown = false
+            var stopped = false
+            var accepted = 0
+        }
+        let counts = Counts()
+        let encoder = RemoteH264Encoder()
+        // Like ScreenCaptureKit's sample queue: submit frames nonstop.
+        let submitter = Thread {
+            var pts: Int64 = 0
+            while !counts.lock.withLock({ counts.stopped }) {
+                pts += 1
+                if encoder.encode(pixelBuffer, presentationTime: CMTime(value: pts, timescale: 600)) {
+                    counts.lock.withLock { counts.accepted += 1 }
+                }
+                usleep(200)
+            }
+        }
+        submitter.start()
+        for _ in 0..<300 {
+            counts.lock.withLock { counts.tornDown = false }
+            encoder.configure(width: 640, height: 360, averageBitrate: 2_000_000, expectedFPS: 30) { _ in
+                counts.lock.withLock {
+                    counts.emitted += 1
+                    if counts.tornDown { counts.late += 1 }
+                }
+            }
+            usleep(UInt32.random(in: 500...4_000))
+            encoder.invalidate()
+            counts.lock.withLock { counts.tornDown = true }
+            usleep(1_000)
+        }
+        counts.lock.withLock { counts.stopped = true }
+        while submitter.isExecuting { usleep(1_000) }
+        counts.lock.withLock {
+            XCTAssertGreaterThan(counts.accepted, 0)
+            XCTAssertGreaterThan(counts.emitted, 0)
+            XCTAssertEqual(counts.late, 0, "frames emitted after invalidate() returned")
+        }
     }
 
     func testAnnexBParameterSetRoundTrip() {

@@ -324,6 +324,8 @@ final class RemoteMacScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, 
     }
 
     private func finishListeners() {
+        // Drain first so a frame finishing mid-teardown can't refill `latest`.
+        encoder.invalidate()
         let (stream, listeners) = state.withLock { state -> (SCStream?, [AsyncStream<Frame>.Continuation]) in
             let stream = state.stream
             state.stream = nil
@@ -334,7 +336,6 @@ final class RemoteMacScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, 
             state.continuations.removeAll()
             return (stream, listeners)
         }
-        encoder.invalidate()
         if let stream { Task { try? await stream.stopCapture() } }
         listeners.forEach { $0.finish() }
     }

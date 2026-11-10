@@ -16,6 +16,9 @@ final class RemoteH264Encoder: @unchecked Sendable {
     typealias OutputHandler = @Sendable (EncodedFrame) -> Void
 
     private let lock = NSLock()
+    /// Serializes frame submission against session teardown. The output
+    /// handler never takes it, so teardown can wait for in-flight frames.
+    private let sessionLock = NSLock()
     private var session: VTCompressionSession?
     private var outputHandler: OutputHandler?
     private var width = 0
@@ -41,8 +44,9 @@ final class RemoteH264Encoder: @unchecked Sendable {
         expectedFPS: Int,
         outputHandler: @escaping OutputHandler
     ) {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
         lock.lock()
-        defer { lock.unlock() }
         let w = max(width, 2) & ~1
         let h = max(height, 2) & ~1
         let bitrate = max(averageBitrate, 250_000)
@@ -56,11 +60,14 @@ final class RemoteH264Encoder: @unchecked Sendable {
         self.outputHandler = outputHandler
         self.averageBitrate = bitrate
         self.expectedFPS = fps
+        lock.unlock()
         guard needsRebuild else { return }
-        invalidateLocked()
+        shutDownSession()
+        lock.lock()
         self.width = w
         self.height = h
         createSessionLocked()
+        lock.unlock()
     }
 
     func forceKeyframe() {
@@ -72,6 +79,8 @@ final class RemoteH264Encoder: @unchecked Sendable {
     /// Returns false when the encoder is busy (caller should drop / keep latest).
     @discardableResult
     func encode(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) -> Bool {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
         lock.lock()
         guard let session, !busy else {
             lock.unlock()
@@ -159,9 +168,9 @@ final class RemoteH264Encoder: @unchecked Sendable {
     }
 
     func invalidate() {
-        lock.lock()
-        defer { lock.unlock() }
-        invalidateLocked()
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        shutDownSession()
     }
 
     /// Annex-B SPS/PPS with `00 00 00 01` start codes (H.264 only).
@@ -275,15 +284,26 @@ final class RemoteH264Encoder: @unchecked Sendable {
         return false
     }
 
-    private func invalidateLocked() {
-        if let session {
-            VTCompressionSessionInvalidate(session)
-        }
+    /// Caller holds `sessionLock` but not `lock`: the drained frames' output
+    /// handler takes `lock`.
+    private func shutDownSession() {
+        lock.lock()
+        let old = session
         session = nil
+        lock.unlock()
+        if let old {
+            // Emit in-flight frames before invalidating. A frame VideoToolbox
+            // delivers after Invalidate crashes in VTEncoderSessionEmitEncodedFrame
+            // (seen when the Mac session resigned active mid-stream).
+            VTCompressionSessionCompleteFrames(old, untilPresentationTimeStamp: .invalid)
+            VTCompressionSessionInvalidate(old)
+        }
+        lock.lock()
         busy = false
         framesSinceKeyframe = 0
         forceNextKeyframe = true
         lastParameterSets = nil
+        lock.unlock()
     }
 
     private func createSessionLocked() {

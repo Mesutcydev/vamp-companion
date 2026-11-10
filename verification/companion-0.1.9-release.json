@@ -1,0 +1,58 @@
+{
+  "product": "Vamp Companion",
+  "version": "0.1.9",
+  "build": "13",
+  "sourceCommit": "8a4b62316bf5ff56750eba8069f5bbf52c45015c",
+  "websiteCommit": "4808c5109c5d2079876ed385d16aed488022d7c7",
+  "releaseURL": "https://github.com/Mesutcydev/vamp-companion/releases/tag/v0.1.9",
+  "archive": {
+    "name": "Vamp-Companion-0.1.9-build-13-public.zip",
+    "bytes": 41181651,
+    "sha256": "af94c75390c1934fa4f23adcdfae973eb1e3bbc6fda92e74b9672024b1f1b9e4",
+    "uploadedBytesVerified": true,
+    "publicDownloadVerified": true
+  },
+  "diskImage": {
+    "name": "Vamp-Companion-0.1.9-build-13-notarized.dmg",
+    "bytes": 45757432,
+    "sha256": "4a71bfd0768ae868fab5ef4556a19d09de7c259500d147a4ae4c0119fcaa8202",
+    "uploadedBytesVerified": true,
+    "publicDownloadVerified": true
+  },
+  "notarization": {
+    "appSubmissionID": "40cf0a02-87ff-4c06-ae25-301f5a3333e3",
+    "diskImageSubmissionID": "94813408-3610-4b3a-b0e1-88cb21c2c1d5",
+    "status": "Accepted",
+    "stapled": true
+  },
+  "distribution": {
+    "developerIDSigned": true,
+    "hardenedRuntime": true,
+    "gatekeeperAccepted": true,
+    "sparkleArchiveSignatureVerified": true,
+    "sparkleFeedSignatureVerified": true,
+    "liveFeedMatchesSignedBytes": true
+  },
+  "tests": {
+    "backendExecuted": 1165,
+    "backendSkipped": 52,
+    "backendFailuresBeforeColorFix": 1,
+    "appearanceConvergenceCasesAfterFix": 7,
+    "macUICasesVerified": 0,
+    "macUITestsNote": "Not run: XCTest automation mode needs the user's password."
+  },
+  "installedVerification": {
+    "updatedInstalledApp": false,
+    "installedVersion": "0.1.8",
+    "installedBuild": "12"
+  },
+  "deployments": {
+    "companionRun": 42782656424,
+    "companionConclusion": "success",
+    "canonicalSitePublished": false,
+    "canonicalSiteNote": "thevamp.app copy change prepared in Mesutcydev/vamp-suite but not pushed."
+  },
+  "knownIssues": [
+    "Control live video can crash on encoder teardown when the Mac session resigns active (crash report 2026-11-10, 0.1.8); code unchanged in 0.1.9."
+  ]
+}
