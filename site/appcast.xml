@@ -6,6 +6,16 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Vamp Companion</title>
         <item>
+            <title>0.1.10</title>
+            <pubDate>Tue, 10 Nov 2026 12:02:50 +0300</pubDate>
+            <link>https://mesutcydev.github.io/vamp-companion/</link>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>0.1.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/Mesutcydev/vamp-companion/releases/download/v0.1.10/Vamp-Companion-0.1.10-build-14-public.zip" length="41180892" type="application/octet-stream" sparkle:edSignature="DXNsvpqmD/rh1zMvVQTLmjpz4vNNLKAq4Ny+TyadGOJ5u1bm+JHgOip3SGm+/M7Qlk/GgJje06fsgP9LQ/JlBg=="/>
+        </item>
+        <item>
             <title>0.1.9</title>
             <pubDate>Mon, 09 Nov 2026 22:47:09 +0300</pubDate>
             <link>https://mesutcydev.github.io/vamp-companion/</link>
@@ -98,6 +108,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: bQxa/kCg0bDEyk6Rhyy0Nu3E9yNtkgvNT/JhJocVfVlIkYQpCUFtv/284sDmAJ2SPxQB1Nau6K0ITfGDD24hCA==
-length: 7464
+edSignature: nthXN3WXNGgZcILiC6N5jedVo8B95d9ybTzsdJ0ioVxpFPKYMYO4LKUnk83+gfPB+kOPfsRrtgCeNp/YWXAgCA==
+length: 8250
 -->
